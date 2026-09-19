@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildAnthropicRequest, buildGeminiRequest, buildLocalSignalsBlock, buildOpenAIRequest,
-  cheapestModel, computeScanCost, isGeminiFreeTierBlocked, PROMPT_VERSION, providersByPrice,
-  PROVIDER_MODELS, SYSTEM_PROMPT,
+  buildAnthropicRequest, buildGeminiRequest, buildLabelScanRequest, buildLocalSignalsBlock,
+  buildOpenAIRequest, buildReceiptScanRequest, buildTextJsonRequest, buildVisionJsonRequest,
+  buildWebLookupRequest, cheapestModel, computeScanCost, isGeminiFreeTierBlocked, joinUrl,
+  PROMPT_VERSION, providersByPrice, PROVIDER_MODELS, SYSTEM_PROMPT,
 } from './index.js'
 
 const base = {
@@ -146,5 +147,80 @@ describe('cost', () => {
 
   it('returns zero for an unknown model rather than inventing a price', () => {
     expect(computeScanCost('openai', 'not-a-model', 1000, 1000)).toBe(0)
+  })
+})
+
+describe('base URL override', () => {
+  const key = { kind: 'api_key' as const, value: 'k' }
+  const PUBLIK = 'https://publikhq.com/api/v1'
+
+  it('joinUrl composes exactly one /v1 whether the base carries it or not', () => {
+    expect(joinUrl(PUBLIK, '/v1/responses')).toBe('https://publikhq.com/api/v1/responses')
+    expect(joinUrl(`${PUBLIK}/`, '/v1/chat/completions')).toBe('https://publikhq.com/api/v1/chat/completions')
+    expect(joinUrl('https://api.openai.com', '/v1/responses')).toBe('https://api.openai.com/v1/responses')
+    expect(joinUrl('https://api.anthropic.com/', '/v1/messages')).toBe('https://api.anthropic.com/v1/messages')
+  })
+
+  it('with no baseUrl every builder emits the pre-patch vendor literal', () => {
+    // The eval harness diffs request bytes; these fifteen URLs are the contract.
+    expect(buildAnthropicRequest(base, key).url).toBe('https://api.anthropic.com/v1/messages')
+    expect(buildOpenAIRequest(base, 'k').url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(buildGeminiRequest(base, 'k').url).toBe('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent')
+
+    const text = { model: 'x', instruction: 'i' }
+    expect(buildTextJsonRequest('anthropic', text, key, 'v').url).toBe('https://api.anthropic.com/v1/messages')
+    expect(buildTextJsonRequest('openai', text, key, 'v').url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(buildTextJsonRequest('google', text, key, 'v').url).toBe('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent')
+
+    const vision = { model: 'x', imageBase64: 'AAAA', instruction: 'i' }
+    expect(buildVisionJsonRequest('anthropic', vision, key, 'v').url).toBe('https://api.anthropic.com/v1/messages')
+    expect(buildVisionJsonRequest('openai', vision, key, 'v').url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(buildVisionJsonRequest('google', vision, key, 'v').url).toBe('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent')
+
+    const label = { model: 'x', imageBase64: 'AAAA' }
+    expect(buildLabelScanRequest('anthropic', label, key).url).toBe('https://api.anthropic.com/v1/messages')
+    expect(buildLabelScanRequest('openai', label, key).url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(buildLabelScanRequest('google', label, key).url).toBe('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent')
+
+    const web = { model: 'x', itemName: 'n', brand: null }
+    expect(buildWebLookupRequest('anthropic', web, key).url).toBe('https://api.anthropic.com/v1/messages')
+    expect(buildWebLookupRequest('openai', web, key).url).toBe('https://api.openai.com/v1/responses')
+    expect(buildWebLookupRequest('google', web, key).url).toBe('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent')
+
+    expect(buildReceiptScanRequest('openai', label, key).url).toBe('https://api.openai.com/v1/chat/completions')
+  })
+
+  it('with baseUrl the OpenAI vision builder targets publik and the body is byte-identical', () => {
+    const vendor = buildOpenAIRequest(base, 'k')
+    const proxied = buildOpenAIRequest({ ...base, baseUrl: PUBLIK }, 'k')
+    expect(proxied.url).toBe('https://publikhq.com/api/v1/chat/completions')
+    expect(JSON.stringify(proxied.body)).toBe(JSON.stringify(vendor.body))
+    expect(proxied.headers).toEqual(vendor.headers)
+  })
+
+  it('threads baseUrl through every other builder', () => {
+    const text = { model: 'x', instruction: 'i', baseUrl: PUBLIK }
+    expect(buildTextJsonRequest('openai', text, key, 'v').url).toBe('https://publikhq.com/api/v1/chat/completions')
+    const vision = { model: 'x', imageBase64: 'AAAA', instruction: 'i', baseUrl: PUBLIK }
+    expect(buildVisionJsonRequest('openai', vision, key, 'v').url).toBe('https://publikhq.com/api/v1/chat/completions')
+    const label = { model: 'x', imageBase64: 'AAAA', baseUrl: PUBLIK }
+    expect(buildLabelScanRequest('openai', label, key).url).toBe('https://publikhq.com/api/v1/chat/completions')
+    expect(buildReceiptScanRequest('openai', label, key).url).toBe('https://publikhq.com/api/v1/chat/completions')
+    const web = { model: 'x', itemName: 'n', brand: null, baseUrl: PUBLIK }
+    expect(buildWebLookupRequest('openai', web, key).url).toBe('https://publikhq.com/api/v1/responses')
+    expect(buildWebLookupRequest('anthropic', web, key).url).toBe('https://publikhq.com/api/v1/messages')
+  })
+
+  it('webSearch: false drops the Responses tool and uses Chat Completions', () => {
+    const web = { model: 'publik-fast', itemName: 'n', brand: null, baseUrl: PUBLIK, webSearch: false }
+    const r = buildWebLookupRequest('openai', web, key)
+    expect(r.url).toBe('https://publikhq.com/api/v1/chat/completions')
+    const body = r.body as any
+    expect(body.tools).toBeUndefined()
+    expect(body.messages[0].role).toBe('user')
+    expect(body.response_format).toEqual({ type: 'json_object' })
+    // Default (and explicit true) keeps the search tool for a BYO OpenAI key.
+    const t = buildWebLookupRequest('openai', { ...web, webSearch: true }, key).body as any
+    expect(t.tools).toEqual([{ type: 'web_search' }])
   })
 })

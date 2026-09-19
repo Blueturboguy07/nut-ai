@@ -1,5 +1,5 @@
 import { router } from 'expo-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -11,7 +11,6 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ExerciseEstimateZ } from '@nutai/core-schema'
-import { cheapestModel, type ProviderId } from '@nutai/prompt'
 import { Icon, type IconName } from '../src/components/Icon'
 import { db, localDate, setting, weightHistory } from '../src/data/repo'
 import {
@@ -20,8 +19,10 @@ import {
   type ExerciseKind,
   type Intensity,
 } from '../src/exercise/met'
-import { loadCredential } from '../src/inference/credentials'
 import { runExerciseEstimate } from '../src/inference/pathA/client'
+import { notePublikWallet, publikAvailable } from '../src/inference/publik'
+import { DISCONNECTED_MESSAGE } from '../src/inference/publik-copy'
+import { baseUrlOf, resolveInference } from '../src/inference/resolve'
 import { useTheme } from '../src/theme/ThemeProvider'
 import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
 
@@ -267,6 +268,11 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [viaPublik, setViaPublik] = useState(false)
+
+  useEffect(() => {
+    void setting('provider').then((p) => setViaPublik(p === 'publik'))
+  }, [])
 
   async function add() {
     const desc = text.trim()
@@ -274,17 +280,26 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
     setBusy(true)
     setError(null)
 
-    const provider = (await setting('provider')) as ProviderId | 'none' | ''
-    const credential = provider && provider !== 'none' ? await loadCredential(provider) : null
-    if (!credential || !provider || provider === 'none') {
+    const r = await resolveInference()
+    if (!r.ok) {
       setBusy(false)
-      setError('Describing a workout needs an API key — add one in Profile, or use Run, Weight lifting or Manual instead.')
+      setError(
+        r.error.kind === 'publik-disconnected'
+          ? DISCONNECTED_MESSAGE
+          : r.error.kind === 'key-missing'
+            ? 'Your saved key is missing. Re-enter it in Profile.'
+            : `Describing a workout needs ${publikAvailable() ? 'publik API or ' : ''}an AI key — connect one in Profile, or use Run, Weight lifting or Manual instead.`,
+      )
       return
     }
 
-    const model = (await setting('provider_model')) || cheapestModel(provider).id
     const kg = await latestWeightKg()
-    const outcome = await runExerciseEstimate(provider, { model, description: desc, weightKg: kg }, credential)
+    const outcome = await runExerciseEstimate(
+      r.value.dialect,
+      { model: r.value.textModel, description: desc, weightKg: kg, ...baseUrlOf(r.value) },
+      r.value.credential,
+    )
+    if (outcome.wallet) void notePublikWallet(outcome.wallet)
     const parsed = outcome.ok ? ExerciseEstimateZ.safeParse(outcome.raw) : null
 
     if (!parsed?.success) {
@@ -316,7 +331,9 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
 
         <View style={[styles.aiPill, { borderColor: theme.border }]}>
           <Icon name="scan" size={14} color={theme.text} />
-          <Text style={[type.label, { color: theme.text }]}>Estimated with your API key</Text>
+          <Text style={[type.label, { color: theme.text }]}>
+            {viaPublik ? 'Estimated with publik API' : 'Estimated with your API key'}
+          </Text>
         </View>
 
         <View style={[styles.example, { backgroundColor: theme.bgSunken }]}>

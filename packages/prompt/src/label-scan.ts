@@ -1,4 +1,4 @@
-import { ANTHROPIC_OAUTH_BETA } from './providers.js'
+import { ANTHROPIC_BASE_URL, ANTHROPIC_OAUTH_BETA, GEMINI_BASE_URL, joinUrl, OPENAI_BASE_URL } from './providers.js'
 import type { ProviderId, ProviderRequest } from './providers.js'
 
 /**
@@ -29,6 +29,8 @@ export const LABEL_SCAN_INSTRUCTION = [
 export interface LabelScanInput {
   model: string
   imageBase64: string
+  /** Proxy origin; absent means the vendor's own host. */
+  baseUrl?: string
 }
 
 export function buildLabelScanRequest(
@@ -47,7 +49,7 @@ export function buildLabelScanRequest(
             'content-type': 'application/json',
           }
     return {
-      url: 'https://api.anthropic.com/v1/messages',
+      url: joinUrl(input.baseUrl ?? ANTHROPIC_BASE_URL, '/v1/messages'),
       headers,
       body: {
         model: input.model,
@@ -68,7 +70,7 @@ export function buildLabelScanRequest(
 
   if (provider === 'openai') {
     return {
-      url: 'https://api.openai.com/v1/chat/completions',
+      url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/chat/completions'),
       headers: { authorization: `Bearer ${credential.value}`, 'content-type': 'application/json' },
       body: {
         model: input.model,
@@ -89,7 +91,7 @@ export function buildLabelScanRequest(
   }
 
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    url: joinUrl(input.baseUrl ?? GEMINI_BASE_URL, `/v1beta/models/${encodeURIComponent(input.model)}:generateContent`),
     headers: { 'x-goog-api-key': credential.value, 'content-type': 'application/json' },
     body: {
       contents: [

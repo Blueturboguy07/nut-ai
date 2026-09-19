@@ -69,8 +69,12 @@ export interface OnboardingAnswers {
   accomplish: Accomplish | null
   rolloverCalories: boolean | null
   healthConnected: boolean
-  /** 'none' means no cloud key — barcode, label OCR, search and manual still work. */
-  provider: ProviderId | 'none' | undefined
+  /**
+   * 'publik' is the app's own default supply (publik API); a vendor is the
+   * user's own key; 'none' means no cloud path — barcode, label OCR, search
+   * and manual still work.
+   */
+  provider: ProviderId | 'publik' | 'none' | undefined
   providerModel: string | null
 }
 

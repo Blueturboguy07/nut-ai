@@ -1,0 +1,10 @@
+{
+  "appToken": "pat_nut-ai_g9hzcl4qy3k2ebkc4akwj9485kzqs2x2",
+  "appSlug": "nut-ai",
+  "baseUrl": "https://publikhq.com/api/v1",
+  "disclosureVersion": 1,
+  "models": {
+    "scan": "publik-balanced",
+    "text": "publik-fast"
+  }
+}

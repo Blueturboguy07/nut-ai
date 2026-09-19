@@ -11,7 +11,6 @@ import {
 import type { PersonalPriors } from '@nutai/gram-engine'
 import {
   anthropicWireSchema,
-  cheapestModel,
   geminiWireSchema,
   openAiWireSchema,
   LABEL_SCAN_PROMPT_VERSION,
@@ -21,9 +20,10 @@ import {
 import { recomputeAfterEdit, runPipeline, validatePayload, type ScanResult } from '@nutai/pipeline'
 import { openNutritionDb } from '../db/expo-adapter'
 import { loadFoodDb } from '../db/portions'
-import { setting } from '../data/repo'
-import { loadCredential, type StoredCredential } from '../inference/credentials'
-import { runLabelScan, runReceiptScan, runScanWithFallback, runWebLookup } from '../inference/pathA/client'
+import { runLabelScan, runReceiptScan, runScanWithFallback, runWebLookup, type ScanFailure } from '../inference/pathA/client'
+import { connectPublik, notePublikWallet, publikAvailable } from '../inference/publik'
+import { DISCONNECTED_MESSAGE, OWN_KEY_HINT } from '../inference/publik-copy'
+import { baseUrlOf, lookupOptionsOf, resolveInference, type ResolveFailure, type Resolved } from '../inference/resolve'
 import { applyWebOption, getPhase, setPhase, setWebLookup } from './store'
 
 /**
@@ -55,18 +55,66 @@ function wireSchemaFor(provider: ProviderId): Record<string, unknown> {
   return geminiWireSchema(VISION_WIRE_SCHEMA)
 }
 
+/**
+ * Inline base64 stays under 1 MB: publik API asks for it, and no vendor
+ * needs more for a 1024-px meal photo. A 1024-px JPEG at q0.8 is ~200–600 KB;
+ * the steps below only run on an unusually busy frame.
+ */
+const MAX_INLINE_BASE64_BYTES = 1_000_000
+const JPEG_QUALITY_STEPS = [0.8, 0.6, 0.45] as const
+
 async function preprocess(photoUri: string): Promise<string> {
-  const ctx = ImageManipulator.ImageManipulator.manipulate(photoUri)
-  // Resize BEFORE encoding — the order is what bounds memory, not the format.
-  ctx.resize({ width: 1024 })
-  const image = await ctx.renderAsync()
-  const saved = await image.saveAsync({
-    compress: 0.8,
-    format: ImageManipulator.SaveFormat.JPEG,
-    base64: true,
-  })
-  if (!saved.base64) throw new Error('preprocess produced no base64')
-  return saved.base64
+  let base64: string | null = null
+  for (const compress of JPEG_QUALITY_STEPS) {
+    const ctx = ImageManipulator.ImageManipulator.manipulate(photoUri)
+    // Resize BEFORE encoding — the order is what bounds memory, not the format.
+    ctx.resize({ width: 1024 })
+    const image = await ctx.renderAsync()
+    const saved = await image.saveAsync({
+      compress,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    })
+    if (!saved.base64) throw new Error('preprocess produced no base64')
+    base64 = saved.base64
+    if (base64.length <= MAX_INLINE_BASE64_BYTES) break
+  }
+  return base64!
+}
+
+/** The copy for "nothing to scan with", per feature. */
+function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'label' | 'receipt'): { message: string; failureKind: 'no-key' | 'key-invalid' } {
+  if (err.kind === 'key-missing') return { message: 'Your saved key is missing. Re-enter it in Profile.', failureKind: 'key-invalid' }
+  if (err.kind === 'publik-disconnected') return { message: DISCONNECTED_MESSAGE, failureKind: 'no-key' }
+  const publikHint = publikAvailable() ? ' Or turn on publik API in Profile — no key needed.' : ''
+  const base =
+    feature === 'scan'
+      ? 'Photo scans need an API key. Add one in Profile — barcode, search and manual logging work without one.'
+      : feature === 'label'
+        ? 'Reading a label needs an API key. Add one in Profile — or find the product by barcode or search instead.'
+        : 'Reading a receipt needs an API key. Add one in Profile.'
+  return { message: base + publikHint, failureKind: 'no-key' }
+}
+
+/** On publik, every dead end also names the way out (the user's own key). */
+function failureMessage(err: ScanFailure, r: Resolved): string {
+  if (!r.metered || err.retryable || err.action || /own key/i.test(err.message)) return err.message
+  return err.message.replace(/\.?$/, '') + OWN_KEY_HINT
+}
+
+/**
+ * `401 key_revoked { reprovision: true }` is the idle sweep: the key died of
+ * disuse, the 401 arrived before any model ran, and one re-mint against the
+ * stored install identity gets the same install back (no second starter).
+ * Bounded to once per app session — this is the one exception to "never
+ * auto-retry", and it is not a retry of a billed request.
+ */
+let reprovisionedThisSession = false
+async function maybeReprovision(err: ScanFailure | undefined, r: Resolved): Promise<boolean> {
+  if (!r.metered || !err?.reprovision || reprovisionedThisSession) return false
+  reprovisionedThisSession = true
+  const re = await connectPublik({ force: true })
+  return re.ok
 }
 
 export async function startScan(photoUri: string): Promise<void> {
@@ -106,53 +154,37 @@ interface AnalyzeOpts {
 }
 
 async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {}): Promise<void> {
-  const provider = (await setting('provider')) as ProviderId | 'none' | ''
-  if (!provider || provider === 'none') {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message:
-        'Photo scans need an API key. Add one in Profile — barcode, search and manual logging work without one.',
-      canRetry: false,
-      failureKind: 'no-key',
-    })
+  const resolved = await resolveInference()
+  if (!resolved.ok) {
+    setPhase({ kind: 'failed', photoUri, canRetry: false, ...resolveFailureCopy(resolved.error, 'scan') })
     return
   }
-
-  const credential = await loadCredential(provider)
-  if (!credential) {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message: 'Your saved key is missing. Re-enter it in Profile.',
-      canRetry: false,
-      failureKind: 'key-invalid',
-    })
-    return
-  }
-
-  const model = (await setting('provider_model')) || cheapestModel(provider).id
+  const r = resolved.value
 
   setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
   const outcome = await runScanWithFallback({
-    provider,
-    model,
-    credential,
+    provider: r.dialect,
+    model: r.model,
+    credential: r.credential,
+    ...baseUrlOf(r),
     imagesBase64: [base64],
     localSignalsBlock: opts.fixBlock ?? '',
-    jsonSchema: wireSchemaFor(provider),
+    jsonSchema: wireSchemaFor(r.dialect),
   })
 
   if (!outcome.ok) {
+    if (await maybeReprovision(outcome.error, r)) return analyze(photoUri, base64, opts)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: outcome.error.message,
+      message: failureMessage(outcome.error, r),
       canRetry: outcome.error.retryable,
       failureKind: outcome.error.kind,
+      ...(outcome.error.action ? { action: outcome.error.action } : {}),
     })
     return
   }
+  if (outcome.value.wallet) void notePublikWallet(outcome.value.wallet)
 
   setPhase({ kind: 'analyzing', photoUri, stage: 'matching' })
 
@@ -208,8 +240,8 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
     result,
     bands: result.items.map((i) => i.band),
     meta: {
-      provider,
-      model,
+      provider: r.selected,
+      model: r.model,
       inputTokens: outcome.value.inputTokens + (opts.priorMeta?.inputTokens ?? 0),
       outputTokens: outcome.value.outputTokens + (opts.priorMeta?.outputTokens ?? 0),
       costUsd: outcome.value.costUsd + (opts.priorMeta?.costUsd ?? 0),
@@ -219,7 +251,7 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
   })
 
   // Fire-and-forget: refinement upgrades rows underneath the review screen.
-  void refineMisses(result, outcome.value.raw, provider, model, credential)
+  void refineMisses(result, outcome.value.raw, r)
 }
 
 /** How many corpus misses we will pay to look up per scan. */
@@ -230,13 +262,7 @@ const MAX_LOOKUPS_PER_SCAN = 2
  * upgraded from "AI estimate" to "transcribed from the brand's published
  * nutrition facts". One option auto-applies; several become a question card.
  */
-async function refineMisses(
-  result: ScanResult,
-  rawPayload: unknown,
-  provider: ProviderId,
-  model: string,
-  credential: StoredCredential,
-): Promise<void> {
+async function refineMisses(result: ScanResult, rawPayload: unknown, r: Resolved): Promise<void> {
   const payload = validatePayload(rawPayload)
   // Two triggers: the corpus missed entirely, or the model saw a BRAND (a logo
   // counts — golden arches on the wrapper). A branded item that matched some
@@ -256,15 +282,17 @@ async function refineMisses(
 
       const source = payload?.items[index]
       const lookup = await runWebLookup(
-        provider,
+        r.dialect,
         {
-          model,
+          model: r.textModel,
           itemName: source?.name ?? item.row.displayName,
           brand: source?.brand ?? null,
           visualContext: source?.legible_label_text ?? null,
+          ...lookupOptionsOf(r),
         },
-        credential,
+        r.credential,
       )
+      if (lookup.wallet) void notePublikWallet(lookup.wallet)
 
       if (!lookup.ok) {
         setWebLookup(rowId, { status: 'failed' })
@@ -442,9 +470,8 @@ export async function startBarcodeScan(gtin: string): Promise<void> {
   }
 
   // Not in the corpus. One web search, if we have the means.
-  const provider = (await setting('provider')) as ProviderId | 'none' | ''
-  const credential = provider && provider !== 'none' ? await loadCredential(provider) : null
-  if (!credential || !provider || provider === 'none') {
+  const resolved = await resolveInference()
+  if (!resolved.ok) {
     setPhase({
       kind: 'failed',
       photoUri: '',
@@ -453,13 +480,14 @@ export async function startBarcodeScan(gtin: string): Promise<void> {
     })
     return
   }
+  const r = resolved.value
 
-  const model = (await setting('provider_model')) || cheapestModel(provider).id
   const lookup = await runWebLookup(
-    provider,
-    { model, itemName: `the packaged food product with barcode (GTIN/UPC/EAN) ${gtin}`, brand: null },
-    credential,
+    r.dialect,
+    { model: r.textModel, itemName: `the packaged food product with barcode (GTIN/UPC/EAN) ${gtin}`, brand: null, ...lookupOptionsOf(r) },
+    r.credential,
   )
+  if (lookup.wallet) void notePublikWallet(lookup.wallet)
   const parsed = lookup.ok ? WebLookupResultZ.safeParse(lookup.raw) : null
   const opt = parsed?.success && parsed.data.found ? parsed.data.options[0] : undefined
   if (!opt) {
@@ -522,30 +550,25 @@ export async function startLabelScan(photoUri: string): Promise<void> {
   }
   lastCapture = { photoUri, base64 }
 
-  const provider = (await setting('provider')) as ProviderId | 'none' | ''
-  const credential = provider && provider !== 'none' ? await loadCredential(provider) : null
-  if (!credential || !provider || provider === 'none') {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message: 'Reading a label needs an API key. Add one in Profile — or find the product by barcode or search instead.',
-      canRetry: false,
-      failureKind: 'no-key',
-    })
+  const resolved = await resolveInference()
+  if (!resolved.ok) {
+    setPhase({ kind: 'failed', photoUri, canRetry: false, ...resolveFailureCopy(resolved.error, 'label') })
     return
   }
-
-  const model = (await setting('provider_model')) || cheapestModel(provider).id
+  const r = resolved.value
   setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
 
-  const outcome = await runLabelScan(provider, { model, imageBase64: base64 }, credential)
+  const outcome = await runLabelScan(r.dialect, { model: r.model, imageBase64: base64, ...baseUrlOf(r) }, r.credential)
+  if (outcome.wallet) void notePublikWallet(outcome.wallet)
   if (!outcome.ok) {
+    if (await maybeReprovision(outcome.error, r)) return startLabelScan(photoUri)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: outcome.error?.message ?? 'The label could not be read.',
+      message: outcome.error ? failureMessage(outcome.error, r) : 'The label could not be read.',
       canRetry: outcome.error?.retryable ?? false,
       failureKind: outcome.error?.kind,
+      ...(outcome.error?.action ? { action: outcome.error.action } : {}),
     })
     return
   }
@@ -625,29 +648,25 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
   }
   lastCapture = { photoUri, base64 }
 
-  const provider = (await setting('provider')) as ProviderId | 'none' | ''
-  const credential = provider && provider !== 'none' ? await loadCredential(provider) : null
-  if (!credential || !provider || provider === 'none') {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message: 'Reading a receipt needs an API key. Add one in Profile.',
-      canRetry: false,
-      failureKind: 'no-key',
-    })
+  const resolved = await resolveInference()
+  if (!resolved.ok) {
+    setPhase({ kind: 'failed', photoUri, canRetry: false, ...resolveFailureCopy(resolved.error, 'receipt') })
     return
   }
-  const model = (await setting('provider_model')) || cheapestModel(provider).id
+  const r = resolved.value
 
   setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
-  const outcome = await runReceiptScan(provider, { model, imageBase64: base64 }, credential)
+  const outcome = await runReceiptScan(r.dialect, { model: r.model, imageBase64: base64, ...baseUrlOf(r) }, r.credential)
+  if (outcome.wallet) void notePublikWallet(outcome.wallet)
   if (!outcome.ok) {
+    if (await maybeReprovision(outcome.error, r)) return startReceiptScan(photoUri)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: outcome.error?.message ?? 'The receipt could not be read.',
+      message: outcome.error ? failureMessage(outcome.error, r) : 'The receipt could not be read.',
       canRetry: outcome.error?.retryable ?? false,
       failureKind: outcome.error?.kind,
+      ...(outcome.error?.action ? { action: outcome.error.action } : {}),
     })
     return
   }
@@ -671,9 +690,9 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
     items.map(async (item) => ({
       item,
       lookup: await runWebLookup(
-        provider,
-        { model, itemName: item.name, brand: merchant },
-        credential,
+        r.dialect,
+        { model: r.textModel, itemName: item.name, brand: merchant, ...lookupOptionsOf(r) },
+        r.credential,
       ),
     })),
   )
@@ -683,6 +702,7 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
   const unresolved: string[] = []
 
   for (const { item, lookup } of looked) {
+    if (lookup.wallet) void notePublikWallet(lookup.wallet)
     const parsed = lookup.ok ? WebLookupResultZ.safeParse(lookup.raw) : null
     const data = parsed?.success && parsed.data.found && parsed.data.options.length > 0 ? parsed.data : null
     if (!data) {
@@ -738,14 +758,13 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
  * what the user typed.
  */
 export async function lookupOther(rowId: string, typed: string): Promise<void> {
-  const provider = (await setting('provider')) as ProviderId | 'none' | ''
-  if (!provider || provider === 'none') return
-  const credential = await loadCredential(provider)
-  if (!credential) return
-  const model = (await setting('provider_model')) || cheapestModel(provider).id
+  const resolved = await resolveInference()
+  if (!resolved.ok) return
+  const r = resolved.value
 
   setWebLookup(rowId, { status: 'running' })
-  const lookup = await runWebLookup(provider, { model, itemName: typed, brand: null }, credential)
+  const lookup = await runWebLookup(r.dialect, { model: r.textModel, itemName: typed, brand: null, ...lookupOptionsOf(r) }, r.credential)
+  if (lookup.wallet) void notePublikWallet(lookup.wallet)
   if (!lookup.ok) {
     setWebLookup(rowId, { status: 'failed' })
     return

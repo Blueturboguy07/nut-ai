@@ -11,6 +11,13 @@ import {
   EXERCISE_ESTIMATE_PROMPT_VERSION,
   type ProviderId,
 } from '@nutai/prompt'
+import {
+  chargeUsdFromHeaders,
+  classifyGatewayError,
+  isPublikResponse,
+  walletPatchFromHeaders,
+  type PublikWalletPatch,
+} from '../publik-core'
 
 /**
  * Path A — the cloud inference client.
@@ -22,7 +29,9 @@ import {
  * the core feature.
  *
  * This is the ONLY place in the app that reads an API key, and the key travels to
- * exactly one destination: the provider the user named.
+ * exactly one destination: the provider the user named — or, on publik mode,
+ * publik API's gateway (`baseUrl`), which speaks the OpenAI dialect and stamps
+ * every answer with `x-publik-*` headers the ledger reads for the real charge.
  */
 
 /**
@@ -52,6 +61,10 @@ export interface ScanFailure {
   message: string
   retryable: boolean
   httpStatus?: number
+  /** publik API's one link (CONTRACT §1: `top_up_url`), origin-checked at classification. */
+  action?: { label: string; url: string }
+  /** `401 key_revoked { reprovision: true }` — the idle sweep; one bounded re-mint is allowed. */
+  reprovision?: boolean
 }
 
 export interface ScanSuccess {
@@ -61,6 +74,10 @@ export interface ScanSuccess {
   costUsd: number
   latencyMs: number
   promptVersion: string
+  /** The gateway's settled charge (`x-publik-charge-micros`); null off publik. */
+  chargeUsd: number | null
+  /** The balance after this call, from the response headers; absent off publik. */
+  wallet?: PublikWalletPatch
 }
 
 export type ScanOutcome = { ok: true; value: ScanSuccess } | { ok: false; error: ScanFailure }
@@ -78,11 +95,17 @@ export interface ScanRequest {
   localSignalsBlock: string
   jsonSchema: unknown
   timeoutMs?: number
+  /** Proxy origin (publik API); absent means the vendor's own host. */
+  baseUrl?: string
 }
 
 const DEFAULT_TIMEOUT_MS = 45_000
 
 function classify(status: number, body: string): ScanFailure {
+  // A publik envelope names its own state and its one link; it runs before
+  // the status switch so a 402 keeps the link and a 401 keeps `reprovision`.
+  const gateway = classifyGatewayError(status, body)
+  if (gateway) return gateway
   if (status === 401 || status === 403) {
     return { kind: 'key-invalid', message: 'That key was rejected by the provider.', retryable: false, httpStatus: status }
   }
@@ -135,12 +158,21 @@ function extractPayload(provider: ProviderId, json: unknown): { raw: unknown; in
   }
 }
 
+/** The metered facts a publik response carries; nothing when it is a vendor response. */
+function metered(res: Response): { chargeUsd: number | null; wallet?: PublikWalletPatch } {
+  if (!isPublikResponse(res.headers)) return { chargeUsd: null }
+  // A PATCH, not a snapshot: this layer has no storage, so it reports only
+  // what the headers named and lets the store decide what to keep.
+  return { chargeUsd: chargeUsdFromHeaders(res.headers), wallet: walletPatchFromHeaders(res.headers) }
+}
+
 export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch): Promise<ScanOutcome> {
   const input = {
     model: req.model,
     imagesBase64: req.imagesBase64,
     localSignalsBlock: req.localSignalsBlock,
     jsonSchema: req.jsonSchema,
+    ...(req.baseUrl ? { baseUrl: req.baseUrl } : {}),
   }
 
   const built =
@@ -177,6 +209,7 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned an unexpected shape.', retryable: false } }
     }
 
+    const m = metered(res)
     return {
       ok: true,
       value: {
@@ -184,10 +217,13 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
         inputTokens: extracted.inputTokens,
         outputTokens: extracted.outputTokens,
         // Real token counts, never an estimate, so the ledger shows an actual
-        // dollar figure rather than a guess.
-        costUsd: computeScanCost(req.provider, req.model, extracted.inputTokens, extracted.outputTokens),
+        // dollar figure rather than a guess. On publik the gateway's settled
+        // charge is the figure — it knows cached-token pricing the table does not.
+        costUsd: m.chargeUsd ?? computeScanCost(req.provider, req.model, extracted.inputTokens, extracted.outputTokens),
         latencyMs: Date.now() - started,
         promptVersion: built.promptVersion,
+        chargeUsd: m.chargeUsd,
+        ...(m.wallet ? { wallet: m.wallet } : {}),
       },
     }
   } catch (err) {
@@ -239,7 +275,7 @@ export async function runScanWithFallback(
  */
 export async function runLabelScan(
   provider: ProviderId,
-  input: { model: string; imageBase64: string },
+  input: { model: string; imageBase64: string; baseUrl?: string },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = 30_000,
@@ -253,14 +289,18 @@ export async function runLabelScan(
  */
 export async function runExerciseEstimate(
   provider: ProviderId,
-  input: { model: string; description: string; weightKg: number | null },
+  input: { model: string; description: string; weightKg: number | null; baseUrl?: string },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = 20_000,
 ): Promise<WebLookupOutcome> {
   const built = buildTextJsonRequest(
     provider,
-    { model: input.model, instruction: buildExerciseEstimateInstruction(input.description, input.weightKg) },
+    {
+      model: input.model,
+      instruction: buildExerciseEstimateInstruction(input.description, input.weightKg),
+      ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+    },
     credential,
     EXERCISE_ESTIMATE_PROMPT_VERSION,
   )
@@ -270,7 +310,7 @@ export async function runExerciseEstimate(
 /** Receipt transcription: same transport, different instruction and validator. */
 export async function runReceiptScan(
   provider: ProviderId,
-  input: { model: string; imageBase64: string },
+  input: { model: string; imageBase64: string; baseUrl?: string },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = 30_000,
@@ -295,6 +335,7 @@ async function postVisionJson(
     })
     const text = await res.text()
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
+    const m = metered(res)
 
     let j: Record<string, any>
     try {
@@ -323,7 +364,7 @@ async function postVisionJson(
       return { ok: false, error: { kind: 'schema-violation', message: 'No JSON in the response.', retryable: false } }
     }
     try {
-      return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)) }
+      return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)), ...m }
     } catch {
       return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
     }
@@ -349,11 +390,23 @@ export interface WebLookupOutcome {
   ok: boolean
   raw?: unknown
   error?: ScanFailure
+  /** The gateway's settled charge for this call; null or absent off publik. */
+  chargeUsd?: number | null
+  /** The balance after this call; absent off publik. */
+  wallet?: PublikWalletPatch
 }
 
 export async function runWebLookup(
   provider: ProviderId,
-  input: { model: string; itemName: string; brand: string | null; visualContext?: string | null },
+  input: {
+    model: string
+    itemName: string
+    brand: string | null
+    visualContext?: string | null
+    baseUrl?: string
+    /** OpenAI only: false = Chat Completions without the web_search tool (publik mode). */
+    webSearch?: boolean
+  },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = 30_000,
@@ -370,6 +423,7 @@ export async function runWebLookup(
     })
     const text = await res.text()
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
+    const m = metered(res)
 
     let j: Record<string, any>
     try {
@@ -385,8 +439,9 @@ export async function runWebLookup(
       out = texts.length ? texts[texts.length - 1].text : null
     } else if (provider === 'openai') {
       // Responses API: output[] items; the message item holds output_text parts.
+      // Chat Completions (the tool-less publik path): choices[0].message.content.
       const msg = (j.output ?? []).find((o: any) => o?.type === 'message')
-      out = msg?.content?.map((c: any) => c?.text ?? '').join('') ?? j.output_text ?? null
+      out = j.choices?.[0]?.message?.content ?? msg?.content?.map((c: any) => c?.text ?? '').join('') ?? j.output_text ?? null
     } else {
       out = (j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('') || null
     }
@@ -401,7 +456,7 @@ export async function runWebLookup(
       return { ok: false, error: { kind: 'schema-violation', message: 'No JSON in the response.', retryable: false } }
     }
     try {
-      return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)) }
+      return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)), ...m }
     } catch {
       return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
     }

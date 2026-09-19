@@ -14,6 +14,7 @@ import { ONBOARDING_DONE_KEY } from '../onboarding/done-key'
 import { EXPORT_TABLES, WIPE_ONLY_TABLES } from './backup-core'
 import { localDate, slotFor } from './date-utils'
 import { clearCredential } from '../inference/credentials'
+import { disconnectPublik } from '../inference/publik'
 import { openUserDb } from '../db/expo-adapter'
 
 export { localDate, slotFor }
@@ -41,8 +42,9 @@ export async function db(): Promise<DbAdapter> {
 /**
  * Wipe every local trace and send the app back to the first onboarding screen.
  *
- * Deletes user data, drops the stored API credentials out of the Keychain, and
- * clears the completion flag. The bundled nutrition corpus is left alone — it is
+ * Deletes user data, drops the stored API credentials out of the Keychain,
+ * disconnects publik API (revoking this phone's key on the server, best
+ * effort), and clears the completion flag. The bundled nutrition corpus is left alone — it is
  * a read-only build artifact, not user data, and re-importing 4.7 MB to prove a
  * point would just make this slow.
  */
@@ -66,6 +68,7 @@ export async function resetEverything(): Promise<void> {
   for (const p of ['anthropic', 'openai', 'google'] as const) {
     await clearCredential(p)
   }
+  await disconnectPublik()
 
   await Storage.removeItem(ONBOARDING_DONE_KEY)
 }
@@ -137,6 +140,12 @@ export async function setting(key: string, fallback = ''): Promise<string> {
 export async function putSetting(key: string, value: string): Promise<void> {
   const h = await db()
   await h.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', [key, value])
+}
+
+/** A consent the user gave, with when and to which version of the text. */
+export async function recordConsent(key: string, detail: string): Promise<void> {
+  const h = await db()
+  await h.run('INSERT OR REPLACE INTO consents (key, granted, granted_at, detail) VALUES (?, 1, ?, ?)', [key, Date.now(), detail])
 }
 
 /** Manual target override from the plan screen's pencil icons. */
