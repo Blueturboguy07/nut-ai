@@ -24,7 +24,8 @@ import type { ScanFailureKind } from '../inference/pathA/client'
 
 /** What the scan cost and where it ran — carried to the ledger at log time. */
 export interface ScanMeta {
-  provider: ProviderId
+  /** What the user selected — a vendor, or publik API. */
+  provider: ProviderId | 'publik'
   model: string
   inputTokens: number
   outputTokens: number
@@ -61,6 +62,8 @@ export type ScanPhase =
       message: string
       canRetry: boolean
       failureKind?: ScanFailureKind | 'no-key'
+      /** One link, when the failure has a next step (publik API's top_up_url). */
+      action?: { label: string; url: string }
     }
 
 let phase: ScanPhase = { kind: 'idle' }

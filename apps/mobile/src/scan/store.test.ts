@@ -179,3 +179,19 @@ describe('setWebLookup', () => {
     expect(readyPhase().webLookups['r1']).toEqual({ status: 'running' })
   })
 })
+
+describe('a failed phase', () => {
+  it('carries its one action link through setPhase/getPhase', () => {
+    setPhase({
+      kind: 'failed',
+      photoUri: 'p',
+      message: 'Not enough publik credit for this request.',
+      canRetry: false,
+      failureKind: 'quota-exhausted',
+      action: { label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/AB' },
+    })
+    const p = getPhase()
+    expect(p.kind).toBe('failed')
+    if (p.kind === 'failed') expect(p.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/AB' })
+  })
+})
