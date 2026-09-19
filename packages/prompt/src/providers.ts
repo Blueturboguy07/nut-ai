@@ -23,6 +23,25 @@ import { SYSTEM_PROMPT, PROMPT_VERSION } from './system-prompt.js'
 
 export type ProviderId = 'anthropic' | 'openai' | 'google'
 
+/**
+ * Vendor defaults. A caller that routes through a proxy (publik API) passes
+ * `baseUrl`; the emitted bytes are otherwise identical, which the eval harness
+ * relies on.
+ */
+export const OPENAI_BASE_URL = 'https://api.openai.com'
+export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com'
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
+
+/**
+ * The dialect paths are `/v1/chat/completions`, `/v1/responses`, `/v1/messages`.
+ * Vendor bases have no version segment; publik's base already ends in `/v1`
+ * (`https://publikhq.com/api/v1`). Strip a trailing slash and a trailing `/v1`
+ * so both shapes compose to exactly one `/v1/` in the result.
+ */
+export function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '')}${path}`
+}
+
 export interface ProviderModel {
   id: string
   label: string
@@ -101,6 +120,8 @@ export interface BuildRequestInput {
    */
   jsonSchema: unknown
   maxTokens?: number
+  /** Proxy origin; absent means the vendor's own host. */
+  baseUrl?: string
 }
 
 export interface ProviderRequest {
@@ -142,7 +163,7 @@ export function buildAnthropicRequest(input: BuildRequestInput, credential: { ki
   content.push({ type: 'text', text })
 
   return {
-    url: 'https://api.anthropic.com/v1/messages',
+    url: joinUrl(input.baseUrl ?? ANTHROPIC_BASE_URL, '/v1/messages'),
     headers,
     body: {
       model: input.model,
@@ -168,7 +189,7 @@ export function buildOpenAIRequest(input: BuildRequestInput, apiKey: string): Pr
   content.unshift({ type: 'text', text })
 
   return {
-    url: 'https://api.openai.com/v1/chat/completions',
+    url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/chat/completions'),
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: {
       model: input.model,
@@ -200,7 +221,7 @@ export function buildGeminiRequest(input: BuildRequestInput, apiKey: string): Pr
   parts.push({ text })
 
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${input.model}:generateContent`,
+    url: joinUrl(input.baseUrl ?? GEMINI_BASE_URL, `/v1beta/models/${encodeURIComponent(input.model)}:generateContent`),
     headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
     body: {
       system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },

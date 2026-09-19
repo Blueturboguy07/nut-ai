@@ -1,4 +1,4 @@
-import { ANTHROPIC_OAUTH_BETA } from './providers.js'
+import { ANTHROPIC_BASE_URL, ANTHROPIC_OAUTH_BETA, GEMINI_BASE_URL, joinUrl, OPENAI_BASE_URL } from './providers.js'
 import type { ProviderId, ProviderRequest } from './providers.js'
 
 /**
@@ -59,6 +59,16 @@ export interface WebLookupRequestInput {
   itemName: string
   brand: string | null
   visualContext?: string | null
+  /** Proxy origin; absent means the vendor's own host. */
+  baseUrl?: string
+  /**
+   * OpenAI only. `false` skips the server-side web_search tool and asks the
+   * model on Chat Completions instead — the route publik API takes, because
+   * the tool's per-call surcharge is not metered there yet. The instruction
+   * already tells the model to answer `found: false` rather than guess, so a
+   * lookup without search degrades to "not found", never to an invention.
+   */
+  webSearch?: boolean
 }
 
 export function buildAnthropicWebLookupRequest(
@@ -75,7 +85,7 @@ export function buildAnthropicWebLookupRequest(
           'content-type': 'application/json',
         }
   return {
-    url: 'https://api.anthropic.com/v1/messages',
+    url: joinUrl(input.baseUrl ?? ANTHROPIC_BASE_URL, '/v1/messages'),
     headers,
     body: {
       model: input.model,
@@ -92,8 +102,9 @@ export function buildAnthropicWebLookupRequest(
  * a different url, request shape, and response envelope from the scan call.
  */
 export function buildOpenAIWebLookupRequest(input: WebLookupRequestInput, apiKey: string): ProviderRequest {
+  if (input.webSearch === false) return buildOpenAIWebLookupNoToolRequest(input, apiKey)
   return {
-    url: 'https://api.openai.com/v1/responses',
+    url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/responses'),
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: {
       model: input.model,
@@ -104,9 +115,28 @@ export function buildOpenAIWebLookupRequest(input: WebLookupRequestInput, apiKey
   }
 }
 
+/**
+ * The tool-less sibling: same instruction, Chat Completions envelope, no
+ * `tools`. The response is `choices[0].message.content`, which the client's
+ * OpenAI branch already reads.
+ */
+export function buildOpenAIWebLookupNoToolRequest(input: WebLookupRequestInput, apiKey: string): ProviderRequest {
+  return {
+    url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/chat/completions'),
+    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    body: {
+      model: input.model,
+      max_tokens: 2048,
+      messages: [{ role: 'user', content: buildWebLookupInstruction(input) }],
+      response_format: { type: 'json_object' },
+    },
+    promptVersion: WEB_LOOKUP_PROMPT_VERSION,
+  }
+}
+
 export function buildGeminiWebLookupRequest(input: WebLookupRequestInput, apiKey: string): ProviderRequest {
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    url: joinUrl(input.baseUrl ?? GEMINI_BASE_URL, `/v1beta/models/${encodeURIComponent(input.model)}:generateContent`),
     headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
     body: {
       contents: [{ role: 'user', parts: [{ text: buildWebLookupInstruction(input) }] }],

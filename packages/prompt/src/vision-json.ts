@@ -1,4 +1,4 @@
-import { ANTHROPIC_OAUTH_BETA } from './providers.js'
+import { ANTHROPIC_BASE_URL, ANTHROPIC_OAUTH_BETA, GEMINI_BASE_URL, joinUrl, OPENAI_BASE_URL } from './providers.js'
 import type { ProviderId, ProviderRequest } from './providers.js'
 
 /**
@@ -11,6 +11,8 @@ export interface VisionJsonInput {
   imageBase64: string
   instruction: string
   maxTokens?: number
+  /** Proxy origin; absent means the vendor's own host. */
+  baseUrl?: string
 }
 
 /**
@@ -19,7 +21,7 @@ export interface VisionJsonInput {
  */
 export function buildTextJsonRequest(
   provider: ProviderId,
-  input: { model: string; instruction: string; maxTokens?: number },
+  input: { model: string; instruction: string; maxTokens?: number; baseUrl?: string },
   credential: { kind: 'api_key' | 'oauth'; value: string },
   promptVersion: string,
 ): ProviderRequest {
@@ -36,7 +38,7 @@ export function buildTextJsonRequest(
             'content-type': 'application/json',
           }
     return {
-      url: 'https://api.anthropic.com/v1/messages',
+      url: joinUrl(input.baseUrl ?? ANTHROPIC_BASE_URL, '/v1/messages'),
       headers,
       body: {
         model: input.model,
@@ -49,7 +51,7 @@ export function buildTextJsonRequest(
 
   if (provider === 'openai') {
     return {
-      url: 'https://api.openai.com/v1/chat/completions',
+      url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/chat/completions'),
       headers: { authorization: `Bearer ${credential.value}`, 'content-type': 'application/json' },
       body: {
         model: input.model,
@@ -62,7 +64,7 @@ export function buildTextJsonRequest(
   }
 
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    url: joinUrl(input.baseUrl ?? GEMINI_BASE_URL, `/v1beta/models/${encodeURIComponent(input.model)}:generateContent`),
     headers: { 'x-goog-api-key': credential.value, 'content-type': 'application/json' },
     body: {
       contents: [{ role: 'user', parts: [{ text: input.instruction }] }],
@@ -108,7 +110,7 @@ export function buildVisionJsonRequest(
             'content-type': 'application/json',
           }
     return {
-      url: 'https://api.anthropic.com/v1/messages',
+      url: joinUrl(input.baseUrl ?? ANTHROPIC_BASE_URL, '/v1/messages'),
       headers,
       body: {
         model: input.model,
@@ -129,7 +131,7 @@ export function buildVisionJsonRequest(
 
   if (provider === 'openai') {
     return {
-      url: 'https://api.openai.com/v1/chat/completions',
+      url: joinUrl(input.baseUrl ?? OPENAI_BASE_URL, '/v1/chat/completions'),
       headers: { authorization: `Bearer ${credential.value}`, 'content-type': 'application/json' },
       body: {
         model: input.model,
@@ -150,7 +152,7 @@ export function buildVisionJsonRequest(
   }
 
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    url: joinUrl(input.baseUrl ?? GEMINI_BASE_URL, `/v1beta/models/${encodeURIComponent(input.model)}:generateContent`),
     headers: { 'x-goog-api-key': credential.value, 'content-type': 'application/json' },
     body: {
       contents: [

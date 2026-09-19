@@ -29,7 +29,7 @@ export const RECEIPT_SCAN_INSTRUCTION = [
 
 export function buildReceiptScanRequest(
   provider: ProviderId,
-  input: { model: string; imageBase64: string },
+  input: { model: string; imageBase64: string; baseUrl?: string },
   credential: { kind: 'api_key' | 'oauth'; value: string },
 ): ProviderRequest {
   return buildVisionJsonRequest(
