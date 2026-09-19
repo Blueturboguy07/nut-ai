@@ -128,9 +128,12 @@ npm run data:build
 cd apps/mobile && npx expo run:android --variant release   # phone plugged in, USB debugging on
 ```
 
-Photo scans use your own AI key (Anthropic, OpenAI, or Google), added during onboarding or later in
-Profile — typically well under a cent per scan, and the app works without one for barcode, label,
-search and manual logging.
+Photo scans run on **publik API** out of the box — no account, no key; priced per scan at 50% of the
+model's published list price, the first $0.25 free, every charge visible on your publik dashboard —
+or on your own Anthropic, OpenAI or Google key, added during onboarding or later in Profile.
+Either way it is typically well under a cent per scan, and the app works without any of it for
+barcode, label, search and manual logging. Builders: see `docs/PUBLIK-API.md` for the one value a
+build needs before publik mode shows up.
 
 ## Your data stays yours
 
@@ -142,7 +145,8 @@ search and manual logging.
   it all back — that is the move-to-a-new-phone path.
 - Your API key is the one thing a backup never contains: keys live in the OS Keychain/Keystore,
   out-of-band from your data, and are never written to any file. Re-enter the key once after a
-  restore.
+  restore. The same goes for the publik API key this phone minted: a restored backup remembers
+  that you chose publik, and Profile → AI provider → Connect mints a fresh one for the new phone.
 
 ## Development
 

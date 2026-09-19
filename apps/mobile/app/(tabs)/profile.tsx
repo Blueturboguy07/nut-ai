@@ -8,6 +8,8 @@ import { availability, requestPermissions } from '../../src/health/healthkit'
 import { exportAndShareBackup, finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { currentGoal, resetEverything, setting, type CurrentGoal } from '../../src/data/repo'
 import { loadCredential, maskCredential } from '../../src/inference/credentials'
+import { loadPublikWallet, publikConnected } from '../../src/inference/publik'
+import { formatMicros } from '../../src/inference/publik-core'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -54,6 +56,10 @@ export default function Profile() {
         setHealthAvail(avail === 'available' ? 'available' : avail === 'not-ios' ? 'not-ios' : 'unavailable')
         if (!p || p === 'none') {
           setProviderLabel('Not connected')
+        } else if (p === 'publik') {
+          const [connected, wallet] = await Promise.all([publikConnected(), loadPublikWallet()])
+          if (!alive) return
+          setProviderLabel(connected ? `publik API · ${formatMicros(wallet?.balanceMicros)} left` : 'publik API · disconnected')
         } else {
           const cred = await loadCredential(p as ProviderId)
           if (!alive) return
@@ -237,7 +243,7 @@ export default function Profile() {
           onPress={() => {
             Alert.alert(
               'Erase everything and start over?',
-              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device. It cannot be undone, and there is no backup on a server because there is no server.',
+              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and disconnects publik API. It cannot be undone, and there is no backup on a server because there is no server of ours.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {

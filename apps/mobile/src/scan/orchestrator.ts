@@ -113,7 +113,7 @@ let reprovisionedThisSession = false
 async function maybeReprovision(err: ScanFailure | undefined, r: Resolved): Promise<boolean> {
   if (!r.metered || !err?.reprovision || reprovisionedThisSession) return false
   reprovisionedThisSession = true
-  const re = await connectPublik()
+  const re = await connectPublik({ force: true })
   return re.ok
 }
 

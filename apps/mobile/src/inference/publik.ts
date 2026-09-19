@@ -106,12 +106,26 @@ function deviceFacts() {
  * A stored install identity is reused (a Reconnect after a revoke gets the
  * same install, no second starter). If the server answers 200-replay for an
  * install whose key this phone no longer holds, a fresh install_id is minted
- * exactly once.
+ * exactly once. `force` skips the local short-circuit (Reconnect after a
+ * server-side revoke, the bounded re-mint after key_revoked{reprovision}).
  */
-export async function connectPublik(fetchImpl: typeof fetch = fetch): Promise<ProvisionResult> {
+export async function connectPublik(
+  opts: { force?: boolean } = {},
+  fetchImpl: typeof fetch = fetch,
+): Promise<ProvisionResult> {
   const cfg = publikBuildConfig()
   const existing = await loadPublikInstall()
   const facts = deviceFacts()
+
+  // Already connected and not told otherwise (a user stepping back and forth
+  // in onboarding): hand back what this phone holds instead of a re-mint.
+  if (!opts.force && existing) {
+    const cred = await loadCredential('publik')
+    if (cred) {
+      const wallet = (await loadPublikWallet()) ?? emptyWallet(existing.claimState)
+      return { ok: true, key: cred.value, install: existing, wallet, starterMicros: 0 }
+    }
+  }
 
   let res = await provision({ cfg, installId: existing?.installId ?? Crypto.randomUUID(), ...facts }, fetchImpl)
   if (!res.ok && res.kind === 'replayed') {

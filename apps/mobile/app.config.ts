@@ -47,8 +47,9 @@ const config: ExpoConfig = {
     bundleIdentifier: BUNDLE_ID,
     supportsTablet: false,
     infoPlist: {
-      // Required by App Store review, and true: there is no server we operate,
-      // so there is no non-exempt encryption to declare.
+      // Required by App Store review, and true: the app talks only to HTTPS
+      // APIs (a vendor the user named, or publik API), which are exempt, so
+      // there is no non-exempt encryption to declare.
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription:
         'Nut AI uses your camera to photograph meals and scan barcodes. Photos stay on your device unless you choose a cloud provider during setup.',
