@@ -22,7 +22,7 @@ export function disclosureCostSentence(app = APP_NAME): string {
 
 /** Where a meal photo goes on publik mode — the second disclosure a phone owes. */
 export const DISCLOSURE_DATA_PATH =
-  "Your meal photo and the text around it go through publik's servers to a shared model account. publik never trains on them and does not keep request bodies beyond a 24-hour de-duplication fingerprint. You can switch to your own key at any time in Profile."
+  "Your meal photo and the text around it go through publik's servers to a shared model account. publik does not store request bodies beyond a 24-hour idempotency fingerprint; the model provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
 
 export const TERMS_URL = 'https://publikhq.com/terms#api'
 

@@ -7,6 +7,7 @@ import {
   isUsableAppToken,
   provision,
   walletFromHeaders,
+  walletPatchFromHeaders,
   walletFromJson,
   emptyWallet,
   type PublikBuildConfig,
@@ -166,6 +167,41 @@ describe('wallet from headers', () => {
     const prev = { ...emptyWallet('anonymous'), balanceMicros: 5, weekUsedMicros: 6, weekBudgetMicros: 7, weekResetsAt: 'x', starterRemainingMicros: 8 }
     const w = walletFromHeaders(new Headers({}), prev)
     expect(w).toEqual(prev)
+  })
+
+  it('patches only what the headers named, so silence and "none" differ', () => {
+    // Silence: nothing but the request id. Every field is left to the store.
+    expect(walletPatchFromHeaders(new Headers({ 'x-publik-request-id': 'r1' }))).toEqual({
+      // ...except the starter, whose absence on a metered response IS the news.
+      starterRemainingMicros: null,
+    })
+
+    // "none": the gateway says there is no week budget any more.
+    const lapsed = walletPatchFromHeaders(
+      new Headers({ 'x-publik-request-id': 'r2', 'x-publik-week-budget': 'none', 'x-publik-starter-remaining': '10' }),
+    )
+    expect('weekBudgetMicros' in lapsed).toBe(true)
+    expect(lapsed.weekBudgetMicros).toBeNull()
+    expect(lapsed.starterRemainingMicros).toBe(10)
+    expect('balanceMicros' in lapsed).toBe(false)
+    expect('claimState' in lapsed).toBe(false)
+
+    // A non-publik response names nothing at all — not even the starter.
+    expect(walletPatchFromHeaders(new Headers({}))).toEqual({})
+  })
+
+  it('a lapsed plan clears the stored budget; a silent response keeps it', () => {
+    const stored = { ...emptyWallet('claimed'), balanceMicros: 3_120_000, weekBudgetMicros: 4_600_000, weekUsedMicros: 1_200_000 }
+
+    // Silence about the week keeps the budget on the card.
+    const quiet = { ...stored, ...walletPatchFromHeaders(new Headers({ 'x-publik-request-id': 'r1', 'x-publik-balance': '3000000' })) }
+    expect(quiet.weekBudgetMicros).toBe(4_600_000)
+    expect(quiet.balanceMicros).toBe(3_000_000)
+
+    // "none" takes it off.
+    const lapsed = { ...stored, ...walletPatchFromHeaders(new Headers({ 'x-publik-request-id': 'r2', 'x-publik-week-budget': 'none' })) }
+    expect(lapsed.weekBudgetMicros).toBeNull()
+    expect(lapsed.balanceMicros).toBe(3_120_000)
   })
 
   it('chargeUsdFromHeaders and formatMicros', () => {

@@ -170,25 +170,45 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
 }
 
 /** Every metered response carries the balance; read it without a second call (CONTRACT §1). */
-export function walletFromHeaders(h: Headers, prev: PublikWallet): PublikWallet {
-  const n = (name: string): number | null => {
+/**
+ * What a response's headers ACTUALLY named. A key is present only when its
+ * header was, so a caller can tell "the gateway said nothing about the week
+ * budget" (keep what you knew) from "the gateway said `none`" (there is no
+ * budget any more — a lapsed plan must not linger on the settings card).
+ * `null` is therefore a value here, not an absence.
+ */
+export type PublikWalletPatch = Partial<PublikWallet>
+
+export function walletPatchFromHeaders(h: Headers): PublikWalletPatch {
+  const num = (name: string): number | null => {
     const v = h.get(name)
     if (v == null || v === 'none') return null
     const parsed = Number(v)
     return Number.isFinite(parsed) ? parsed : null
   }
+  const patch: PublikWalletPatch = {}
+
+  if (h.has('x-publik-balance')) patch.balanceMicros = num('x-publik-balance')
+  else if (h.has('x-publik-balance-micros')) patch.balanceMicros = num('x-publik-balance-micros')
+
+  if (h.has('x-publik-week-used')) patch.weekUsedMicros = num('x-publik-week-used')
+  if (h.has('x-publik-week-budget')) patch.weekBudgetMicros = num('x-publik-week-budget')
+  const resets = h.get('x-publik-week-resets-at')
+  if (resets != null) patch.weekResetsAt = resets
+
+  // Sent only while the starter has something left (CONTRACT §1), so on a
+  // metered response its ABSENCE is the news: the starter is spent.
+  if (h.has('x-publik-request-id')) patch.starterRemainingMicros = num('x-publik-starter-remaining')
+
   const claim = h.get('x-publik-claim-state')
-  return {
-    balanceMicros: n('x-publik-balance') ?? n('x-publik-balance-micros') ?? prev.balanceMicros,
-    weekUsedMicros: n('x-publik-week-used') ?? prev.weekUsedMicros,
-    weekBudgetMicros: h.has('x-publik-week-budget') ? n('x-publik-week-budget') : prev.weekBudgetMicros,
-    weekResetsAt: h.get('x-publik-week-resets-at') ?? prev.weekResetsAt,
-    // Present only while the starter has something left; absent means spent.
-    starterRemainingMicros: h.has('x-publik-request-id') ? n('x-publik-starter-remaining') : prev.starterRemainingMicros,
-    claimState: claim === 'claimed' || claim === 'anonymous' ? claim : prev.claimState,
-    claimUrl: prev.claimUrl,
-    addCreditUrl: prev.addCreditUrl,
-  }
+  if (claim === 'claimed' || claim === 'anonymous') patch.claimState = claim
+
+  return patch
+}
+
+/** The same reading, resolved against a snapshot. */
+export function walletFromHeaders(h: Headers, prev: PublikWallet): PublikWallet {
+  return { ...prev, ...walletPatchFromHeaders(h) }
 }
 
 /** The settled charge for this call, in USD; null when the header is absent (streams). */
@@ -251,7 +271,10 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
         ? e.add_credit_url
         : null
   const action = (label: string) => (topUp ? { action: { label, url: topUp } } : {})
-  const serverMessage = typeof e.message === 'string' && e.message.trim() ? e.message.trim() : null
+  // The gateway's message carries the justification (CONTRACT §12.3); its
+  // device noun is written for desktops, this is a phone.
+  const serverMessage =
+    typeof e.message === 'string' && e.message.trim() ? e.message.trim().replace(/\bthis computer\b/g, 'this phone') : null
 
   switch (e.type) {
     case 'insufficient_credit':

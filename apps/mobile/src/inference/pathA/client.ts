@@ -14,10 +14,9 @@ import {
 import {
   chargeUsdFromHeaders,
   classifyGatewayError,
-  emptyWallet,
   isPublikResponse,
-  walletFromHeaders,
-  type PublikWallet,
+  walletPatchFromHeaders,
+  type PublikWalletPatch,
 } from '../publik-core'
 
 /**
@@ -78,7 +77,7 @@ export interface ScanSuccess {
   /** The gateway's settled charge (`x-publik-charge-micros`); null off publik. */
   chargeUsd: number | null
   /** The balance after this call, from the response headers; absent off publik. */
-  wallet?: PublikWallet
+  wallet?: PublikWalletPatch
 }
 
 export type ScanOutcome = { ok: true; value: ScanSuccess } | { ok: false; error: ScanFailure }
@@ -160,9 +159,11 @@ function extractPayload(provider: ProviderId, json: unknown): { raw: unknown; in
 }
 
 /** The metered facts a publik response carries; nothing when it is a vendor response. */
-function metered(res: Response): { chargeUsd: number | null; wallet?: PublikWallet } {
+function metered(res: Response): { chargeUsd: number | null; wallet?: PublikWalletPatch } {
   if (!isPublikResponse(res.headers)) return { chargeUsd: null }
-  return { chargeUsd: chargeUsdFromHeaders(res.headers), wallet: walletFromHeaders(res.headers, emptyWallet()) }
+  // A PATCH, not a snapshot: this layer has no storage, so it reports only
+  // what the headers named and lets the store decide what to keep.
+  return { chargeUsd: chargeUsdFromHeaders(res.headers), wallet: walletPatchFromHeaders(res.headers) }
 }
 
 export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch): Promise<ScanOutcome> {
@@ -392,7 +393,7 @@ export interface WebLookupOutcome {
   /** The gateway's settled charge for this call; null or absent off publik. */
   chargeUsd?: number | null
   /** The balance after this call; absent off publik. */
-  wallet?: PublikWallet
+  wallet?: PublikWalletPatch
 }
 
 export async function runWebLookup(

@@ -14,6 +14,7 @@ import {
   type PublikBuildConfig,
   type PublikInstall,
   type PublikWallet,
+  type PublikWalletPatch,
 } from './publik-core'
 
 /**
@@ -190,14 +191,23 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
   }
 }
 
-/** Merge a header-derived wallet into the snapshot (called after every metered call). */
-export async function notePublikWallet(w: PublikWallet): Promise<void> {
-  const prev = (await loadPublikWallet()) ?? emptyWallet(w.claimState)
-  await savePublikWallet({ ...prev, ...w, claimUrl: w.claimUrl ?? prev.claimUrl, addCreditUrl: w.addCreditUrl ?? prev.addCreditUrl })
-  if (w.claimState !== prev.claimState) {
+/**
+ * Fold a header PATCH into the stored snapshot (after every metered call).
+ *
+ * The patch carries only the fields the response named, so a field the
+ * gateway stayed silent about keeps its last known value, while a field it
+ * explicitly set to `none` — a lapsed week budget, a spent starter — is
+ * written as null instead of lingering on the settings card.
+ */
+export async function notePublikWallet(w: PublikWalletPatch): Promise<void> {
+  const prev = (await loadPublikWallet()) ?? emptyWallet(w.claimState ?? 'anonymous')
+  const merged: PublikWallet = { ...prev, ...w }
+  await savePublikWallet(merged)
+  const claimState = w.claimState
+  if (claimState && claimState !== prev.claimState) {
     const install = await loadPublikInstall()
-    if (install && install.claimState !== w.claimState) {
-      await savePublikInstall({ ...install, claimState: w.claimState, claimUrl: w.claimState === 'claimed' ? null : install.claimUrl })
+    if (install && install.claimState !== claimState) {
+      await savePublikInstall({ ...install, claimState, claimUrl: claimState === 'claimed' ? null : install.claimUrl })
     }
   }
 }
