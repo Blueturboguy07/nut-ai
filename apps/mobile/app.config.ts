@@ -20,12 +20,26 @@ const SCHEME = 'nutai'
  * profile ... doesn't include the HealthKit capability / entitlement" — a
  * platform restriction, not a bug in this project's signing config.) HealthKit
  * is additive (README: "Health reconnect"), and src/health/healthkit.ts is
- * already written to degrade gracefully when it is unavailable, so a free-team
- * builder can opt out of the entitlement entirely and get everything else:
+ * already written to degrade gracefully when it is unavailable.
  *
- *   SKIP_HEALTHKIT=1 npm run prebuild
+ * The README's own documented "Put it on your phone" path is `npm run
+ * prebuild` with no env vars at all, signed with "your free Apple ID" — that
+ * is the default builder this repo ships for, not an edge case someone has
+ * to already know to route around. Defaulting to *include* HealthKit meant
+ * the documented, default path failed automatic signing outright (bug
+ * reports: "Signing ... requires a development team" /
+ * "Failed Registering Bundle Identifier"; Apple's registration error here is
+ * generic and does not itself name HealthKit as the cause). So HealthKit now
+ * defaults to OFF; a builder who has confirmed their team is a paid Apple
+ * Developer Program membership (the only tier Apple grants HealthKit to)
+ * opts back in with:
+ *
+ *   SKIP_HEALTHKIT=0 npm run prebuild
+ *
+ * SKIP_HEALTHKIT=1 keeps working — now a no-op — for anyone who already has
+ * it in a script or a bookmark from before this default flipped.
  */
-const SKIP_HEALTHKIT = process.env.SKIP_HEALTHKIT === '1'
+const SKIP_HEALTHKIT = process.env.SKIP_HEALTHKIT !== '0'
 
 const config: ExpoConfig = {
   name: NAME,
