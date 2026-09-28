@@ -185,7 +185,7 @@ describe('a failed phase', () => {
     setPhase({
       kind: 'failed',
       photoUri: 'p',
-      message: 'Not enough publik credit for this request.',
+      message: 'Your publik balance is too low for this request.',
       canRetry: false,
       failureKind: 'quota-exhausted',
       action: { label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/AB' },

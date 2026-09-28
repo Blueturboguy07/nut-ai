@@ -3,6 +3,7 @@ import {
   APP_NAME,
   DISCLOSURE_DATA_PATH,
   disclosureCostSentence,
+  LINK_STARTER_HINT,
   linkButtonLabel,
   TERMS_URL,
   whyItCostsSentence,
@@ -82,7 +83,15 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
   )
 }
 
-/** The balance line, from the wallet snapshot (CONTRACT §12.1(a)). */
+/**
+ * The balance line, from the wallet snapshot (CONTRACT §12.1(a)).
+ *
+ * Since publik migration 0059 an unlinked phone starts at $0.00, and linking
+ * it is the one thing that gives free use ($0.05, once per publik account).
+ * So a $0.00 or unknown unlinked balance names that next step instead of a
+ * starter the phone does not have. A nonzero unlinked balance can only be
+ * what is left of a pre-0059 starter, and it still reads as free use.
+ */
 export function balanceLine(wallet: PublikWallet | null, starterMicros: number | null): string {
   const bal = wallet?.balanceMicros ?? null
   if (wallet?.claimState === 'claimed') {
@@ -92,9 +101,10 @@ export function balanceLine(wallet: PublikWallet | null, starterMicros: number |
         : ''
     return `${formatMicros(bal)} left${week}`
   }
-  if (bal == null) return 'Free starter usage'
+  if (bal == null) return LINK_STARTER_HINT.charAt(0).toUpperCase() + LINK_STARTER_HINT.slice(1)
+  if (bal <= 0) return `${formatMicros(0)} · ${LINK_STARTER_HINT}`
   const untouched = starterMicros != null && starterMicros > 0 && bal >= starterMicros
-  return untouched ? `${formatMicros(bal)} of free starter usage` : `${formatMicros(bal)} of free starter usage left`
+  return untouched ? `${formatMicros(bal)} of free use` : `${formatMicros(bal)} of free use left`
 }
 
 export function PublikCard({
@@ -146,7 +156,7 @@ export function PublikCard({
       </Pressable>
       {claimState === 'anonymous' ? (
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.sm, lineHeight: 18 }]}>
-          Not now? Keep scanning on the free starter — nothing is charged behind your back.
+          Not now? Link this phone any time for $0.05 of free use, once, or add your own key in Profile.
         </Text>
       ) : null}
 

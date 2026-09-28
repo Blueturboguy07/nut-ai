@@ -57,7 +57,7 @@ export default function ProviderScreen() {
       title="How should Nut AI recognize your food?"
       subtitle={
         publik
-          ? 'Scans run on publik API out of the box. Prefer your own key? Pick a provider — your photo goes only to the one you name; we run no server of our own.'
+          ? 'Scans run on publik API by default: link your publik account for $0.05 of free use, once. Prefer your own key? Pick a provider — your photo goes only to the one you name; we run no server of our own.'
           : 'Bring your own API key. Your photo goes to the provider you name and nowhere else — we run no server.'
       }
       ctaDisabled={a.provider === undefined}
@@ -71,7 +71,7 @@ export default function ProviderScreen() {
         {publik ? (
           <OptionCard
             label="publik API"
-            sublabel="Ready to use — no account or key. Priced per scan at 50% of the model's list price; starts with free usage."
+            sublabel="No key to paste. Starts at $0.00; link your publik account for $0.05 of free use, once. Priced per scan at 50% of the model's list price."
             glyph="scan"
             selected={a.provider === 'publik'}
             onPress={() => setAnswer('provider', 'publik')}

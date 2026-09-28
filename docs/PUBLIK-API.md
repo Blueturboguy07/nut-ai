@@ -5,7 +5,11 @@ Photo scans, label and receipt transcription, the branded-food lookup and the
 **publik API** (`https://publikhq.com/api/v1`): the phone mints its own
 bounded key on first run, after the user accepts a two-part disclosure, and
 every call is metered at 50% of the model's published list price against a
-publik balance that starts with $0.25 free. A user who prefers their own
+publik balance. A new install starts at $0.00 (publik migration 0059), and
+every metered call answers 402 `insufficient_credit` until the phone is linked
+to a publik account, a plan or pack is added, or the user pastes their own
+key. Linking gives $0.05 of free use, once per publik account; it is the only
+free use publik API gives. A user who prefers their own
 Anthropic, OpenAI or Google key still gets the neutral vendor picker; a
 user-entered key always wins and publik code never touches the vendor slots.
 

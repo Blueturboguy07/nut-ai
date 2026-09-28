@@ -274,7 +274,7 @@ describe('publik mode', () => {
     const body = JSON.stringify({
       error: {
         type: 'insufficient_credit',
-        message: 'Not enough publik credit for this request. Link this phone and pick a plan at the link below, or use your own key.',
+        message: 'Your publik balance is too low for this request. Link this computer to your publik account at the link below for $0.05 of free use, pick a plan there, or use your own key.',
         claim_state: 'anonymous',
         top_up_url: 'https://publikhq.com/claim/HK7F-2QWD',
         claim_url: 'https://publikhq.com/claim/HK7F-2QWD',
@@ -287,7 +287,7 @@ describe('publik mode', () => {
     if (!r.ok) {
       expect(r.error.kind).toBe('quota-exhausted')
       expect(r.error.retryable).toBe(false)
-      expect(r.error.message).toMatch(/^Not enough publik credit/)
+      expect(r.error.message).toMatch(/^Your publik balance is too low/)
       expect(r.error.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
     }
   })
