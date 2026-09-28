@@ -233,6 +233,8 @@ describe('publik mode', () => {
   })
 
   it('takes the cost from x-publik-charge-micros and the balance from the headers', async () => {
+    // publik 0059: an unlinked phone starts at $0.00, so a starter balance
+    // belongs to a linked phone — here the $0.05 link starter after one scan.
     const { impl } = scriptedWithHeaders([
       {
         status: 200,
@@ -240,9 +242,9 @@ describe('publik mode', () => {
         headers: {
           'x-publik-request-id': 'r1',
           'x-publik-charge-micros': '41000',
-          'x-publik-balance': '209000',
-          'x-publik-claim-state': 'anonymous',
-          'x-publik-starter-remaining': '209000',
+          'x-publik-balance': '9000',
+          'x-publik-claim-state': 'claimed',
+          'x-publik-starter-remaining': '9000',
           'x-publik-week-budget': 'none',
         },
       },
@@ -252,10 +254,10 @@ describe('publik mode', () => {
     if (r.ok) {
       expect(r.value.chargeUsd).toBe(0.041)
       expect(r.value.costUsd).toBe(0.041)
-      expect(r.value.wallet?.balanceMicros).toBe(209000)
-      expect(r.value.wallet?.starterRemainingMicros).toBe(209000)
+      expect(r.value.wallet?.balanceMicros).toBe(9000)
+      expect(r.value.wallet?.starterRemainingMicros).toBe(9000)
       expect(r.value.wallet?.weekBudgetMicros).toBeNull()
-      expect(r.value.wallet?.claimState).toBe('anonymous')
+      expect(r.value.wallet?.claimState).toBe('claimed')
     }
   })
 
@@ -274,7 +276,7 @@ describe('publik mode', () => {
     const body = JSON.stringify({
       error: {
         type: 'insufficient_credit',
-        message: 'Not enough publik credit for this request. Link this phone and pick a plan at the link below, or use your own key.',
+        message: 'Your publik balance is too low for this request. Link this computer to your publik account at the link below for $0.05 of free use, pick a plan there, or use your own key.',
         claim_state: 'anonymous',
         top_up_url: 'https://publikhq.com/claim/HK7F-2QWD',
         claim_url: 'https://publikhq.com/claim/HK7F-2QWD',
@@ -287,7 +289,7 @@ describe('publik mode', () => {
     if (!r.ok) {
       expect(r.error.kind).toBe('quota-exhausted')
       expect(r.error.retryable).toBe(false)
-      expect(r.error.message).toMatch(/^Not enough publik credit/)
+      expect(r.error.message).toMatch(/^Your publik balance is too low/)
       expect(r.error.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
     }
   })

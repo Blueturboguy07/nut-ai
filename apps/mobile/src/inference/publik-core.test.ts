@@ -46,6 +46,8 @@ function scripted(status: number, body: unknown, headers: Record<string, string>
   return { calls, impl: impl as unknown as typeof fetch }
 }
 
+// publik migration 0059: an anonymous install is minted at $0.00. The one
+// free thing is $0.05 of use, once per account, when the phone is linked.
 const MINT_201 = {
   install_id: INPUT.installId,
   key: KEY,
@@ -54,13 +56,13 @@ const MINT_201 = {
   claim_code: 'HK7F-2QWD',
   claim_url: 'https://publikhq.com/claim/HK7F-2QWD',
   claim_state: 'anonymous',
-  starter_micros: 250_000,
-  balance_micros: 250_000,
-  starting_credit_micros: 250_000,
+  starter_micros: 0,
+  balance_micros: 0,
+  starting_credit_micros: 0,
   wallet: {
-    balance_micros: 250_000,
+    balance_micros: 0,
     claim_state: 'anonymous',
-    starter: { remaining_micros: 250_000, expires_at: null },
+    starter: { remaining_micros: 0, expires_at: null },
     week: { used_micros: 0, budget_micros: null, resets_at: '2026-09-26T00:00:00Z' },
     claim_url: 'https://publikhq.com/claim/HK7F-2QWD',
     add_credit_url: 'https://publikhq.com/dashboard/api/add',
@@ -82,15 +84,36 @@ describe('provision', () => {
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.key).toBe(KEY)
-      expect(r.starterMicros).toBe(250_000)
+      expect(r.starterMicros).toBe(0)
       expect(r.install.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
       expect(r.install.claimState).toBe('anonymous')
       expect(r.install.baseUrl).toBe('https://publikhq.com/api/v1')
       expect(r.install.models.fast).toBe('publik-fast')
-      expect(r.wallet.balanceMicros).toBe(250_000)
-      expect(r.wallet.starterRemainingMicros).toBe(250_000)
+      expect(r.wallet.balanceMicros).toBe(0)
+      expect(r.wallet.starterRemainingMicros).toBe(0)
       expect(r.wallet.weekBudgetMicros).toBeNull()
       expect(r.wallet.addCreditUrl).toBe('https://publikhq.com/dashboard/api/add')
+    }
+  })
+
+  it('a mint bound to a signed-in account reads the linked balance ($0.05 link starter) from the wallet', async () => {
+    const bound = {
+      ...MINT_201,
+      claim_state: 'claimed',
+      claim_code: null,
+      claim_url: null,
+      starter_micros: 0,
+      starting_credit_micros: 0,
+      balance_micros: 50_000,
+      wallet: { ...MINT_201.wallet, claim_state: 'claimed', balance_micros: 50_000, claim_url: null },
+    }
+    const r = await provision(INPUT, scripted(201, bound).impl)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.starterMicros).toBe(0)
+      expect(r.install.claimState).toBe('claimed')
+      expect(r.wallet.claimState).toBe('claimed')
+      expect(r.wallet.balanceMicros).toBe(50_000)
     }
   })
 
@@ -215,7 +238,7 @@ describe('wallet from headers', () => {
 
   it('walletFromJson reads the GET /wallet shape', () => {
     const w = walletFromJson(MINT_201.wallet, 'anonymous')
-    expect(w.balanceMicros).toBe(250_000)
+    expect(w.balanceMicros).toBe(0)
     expect(w.weekResetsAt).toBe('2026-09-26T00:00:00Z')
     expect(w.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
   })
@@ -237,8 +260,8 @@ describe('classifyGatewayError', () => {
     JSON.stringify({
       error: {
         type: 'insufficient_credit',
-        message: 'Not enough publik credit for this request. Link this phone and pick a plan at the link below, or use your own key.',
-        available_micros: 1240,
+        message: 'Your publik balance is too low for this request. Link this computer to your publik account at the link below for $0.05 of free use, pick a plan there, or use your own key.',
+        available_micros: 0,
         required_micros: 41000,
         claim_state: 'anonymous',
         top_up_url: 'https://publikhq.com/claim/HK7F-2QWD',
@@ -252,7 +275,10 @@ describe('classifyGatewayError', () => {
     const f = classifyGatewayError(402, body402())
     expect(f?.kind).toBe('quota-exhausted')
     expect(f?.retryable).toBe(false)
-    expect(f?.message).toMatch(/^Not enough publik credit/)
+    expect(f?.message).toMatch(/^Your publik balance is too low/)
+    // The gateway writes for desktops; this is a phone.
+    expect(f?.message).toContain('Link this phone to your publik account')
+    expect(f?.message).not.toContain('this computer')
     expect(f?.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
   })
 

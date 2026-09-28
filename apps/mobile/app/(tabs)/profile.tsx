@@ -59,7 +59,16 @@ export default function Profile() {
         } else if (p === 'publik') {
           const [connected, wallet] = await Promise.all([publikConnected(), loadPublikWallet()])
           if (!alive) return
-          setProviderLabel(connected ? `publik API · ${formatMicros(wallet?.balanceMicros)} left` : 'publik API · disconnected')
+          // publik 0059: an unlinked phone sits at $0.00 until it is linked, so
+          // that row says so instead of "$0.00 left".
+          const unlinkedAtZero = wallet?.claimState === 'anonymous' && wallet.balanceMicros != null && wallet.balanceMicros <= 0
+          setProviderLabel(
+            !connected
+              ? 'publik API · disconnected'
+              : unlinkedAtZero
+                ? `publik API · ${formatMicros(0)} · not linked`
+                : `publik API · ${formatMicros(wallet?.balanceMicros)} left`,
+          )
         } else {
           const cred = await loadCredential(p as ProviderId)
           if (!alive) return

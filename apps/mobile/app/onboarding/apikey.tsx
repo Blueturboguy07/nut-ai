@@ -36,7 +36,7 @@ export default function ApiKeyScreen() {
           step={stepIndex('apikey')}
           total={TOTAL_STEPS}
           title="publik API is ready"
-          subtitle="Your first scans run on the free starter. Link this phone whenever you want a plan — or never."
+          subtitle="Your balance starts at $0.00. Link this phone to your publik account for $0.05 of free use, once — or add your own key any time in Profile."
           cta="Continue"
           onCta={() => router.push(nextRoute('apikey') as never)}
           scroll
@@ -50,7 +50,7 @@ export default function ApiKeyScreen() {
         step={stepIndex('apikey')}
         total={TOTAL_STEPS}
         title="Nut AI uses publik API"
-        subtitle="Photo scans need an AI model. By default they run on publik API, so you can start right away without an account or a key."
+        subtitle="Photo scans need an AI model. By default they run on publik API, with no key to paste. Your balance starts at $0.00; linking your publik account gives $0.05 of free use, once."
         cta={busy ? 'Connecting…' : 'Continue with publik API'}
         ctaDisabled={busy}
         onCta={() => {
