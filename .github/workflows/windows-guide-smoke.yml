@@ -1,134 +1,37 @@
-# The two commands the publik Iris guide runs on a Windows PC before the
-# phone build, on a clean runner, with no Visual Studio needed.
-#
-# Nov 1 2026: better-sqlite3 made `npm install` run node-gyp on every fresh
-# install (npm's rebuild set ignores the package's own "gypfile": false when
-# the entry comes from the lockfile), so a PC without the C++ build tools
-# died at "Could not find any Visual Studio installation to use" and the
-# corpus build and the phone build fell over after it. The driver is now
-# node:sqlite, so an install that still prints "gyp" is a regression.
-name: windows guide smoke
+# Blind-verifier probe (not for main): does the guide's Windows path work on
+# every Node that the root preinstall lets through (>= 22.13.0)?
+name: verify node floor
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, 'fix/**']
-    paths:
-      - package.json
-      - package-lock.json
-      - tools/**
-      - packages/db-adapter/**
-      - scripts/check-node-sqlite.mjs
-      - scripts/check-node-version.cjs
-      - .github/workflows/windows-guide-smoke.yml
-  pull_request:
-    paths:
-      - package.json
-      - package-lock.json
-      - tools/**
-      - packages/db-adapter/**
-      - scripts/check-node-sqlite.mjs
-      - scripts/check-node-version.cjs
-      - .github/workflows/windows-guide-smoke.yml
 
 jobs:
-  install-and-build-corpus:
+  floor:
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '22.15.0', '22.16.0']
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
-      # Exactly the guide's step. The output is kept so the next step can
-      # prove no native build ran: this runner HAS Visual Studio, so a
-      # node-gyp rebuild would quietly succeed here and only fail on a
-      # reader's PC.
-      - name: npm install (the guide's "Install dependencies" step)
-        run: npm install 2>&1 | Tee-Object -FilePath npm-install.log
-
-      - name: no native build ran
-        run: |
-          if (Select-String -Path npm-install.log -Pattern 'gyp' -Quiet) {
-            Write-Error 'npm install ran node-gyp; a PC without Visual Studio fails here'
-            exit 1
-          }
-          if (Test-Path node_modules/better-sqlite3) {
-            Write-Error 'better-sqlite3 is back in node_modules'
-            exit 1
-          }
-          node scripts/check-node-sqlite.mjs
-
-      - name: npm run data:build (the guide's "Build the nutrition database" step)
-        run: npm run data:build 2>&1 | Tee-Object -FilePath data-build.log
-
-      - name: the guide's visual check
-        run: |
-          if (-not (Select-String -Path data-build.log -Pattern '^Built ' -Quiet)) {
-            Write-Error "data:build did not print 'Built .../nutrition.db'"
-            exit 1
-          }
-          if (-not (Select-String -Path data-build.log -Pattern 'foods:\s+\d{4,}' -Quiet)) {
-            Write-Error 'data:build did not print a foods count'
-            exit 1
-          }
-
-      - name: npm run data:verify
-        run: npm run data:verify
-
-      - name: db-adapter and resolver tests on node:sqlite
-        run: npx vitest run packages/db-adapter packages/resolver
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-guide-smoke-logs
-          path: |
-            npm-install.log
-            data-build.log
-
-  # The guide's first check sees THAT Node answers, not which version. On
-  # Node 20 the install used to pass with an engines warning and the corpus
-  # build then died on "No such built-in module: node:sqlite". The root
-  # preinstall (scripts/check-node-version.cjs) must stop the install
-  # itself, and say why.
-  old-node-is-stopped:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: npm install on Node 20 stops and names the Node floor
+          node-version: ${{ matrix.node }}
+      - name: npm install (guide step)
         run: |
           node --version
-          npm install *> npm-install-node20.log
-          $code = $LASTEXITCODE
-          Get-Content npm-install-node20.log -Tail 15
-          if ($code -eq 0) {
-            Write-Error 'npm install passed on Node 20; the corpus build would die on node:sqlite later'
-            exit 1
-          }
-          if (-not (Select-String -Path npm-install-node20.log -Pattern 'Nut AI needs Node 22.13.0 or newer' -SimpleMatch -Quiet)) {
-            Write-Error "npm install failed on Node 20 (exit $code) without naming the Node floor"
-            exit 1
-          }
-          Write-Output "stopped as intended (exit $code)"
+          npm install *> npm-install.log
+          Write-Output "npm install exit $LASTEXITCODE"
+          Get-Content npm-install.log -Tail 6
           exit 0
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: old-node-install-log
-          path: npm-install-node20.log
+      - name: npm run data:build (guide step)
+        run: |
+          npm run data:build *> data-build.log
+          $code = $LASTEXITCODE
+          Get-Content data-build.log -Tail 6
+          Write-Output "data:build exit $code on Node $(node --version)"
+          exit $code
