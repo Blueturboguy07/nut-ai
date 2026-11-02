@@ -154,12 +154,12 @@ jobs:
   # 8 first on the machine PATH and JAVA_HOME pointing at it. Guide v16 first
   # only asked whether a java command existed, so it skipped the install and
   # Gradle then stopped with "Gradle requires JVM 17 or later to run" (blind
-  # verify, run 41385115883). The commands run through run-like-iris.ps1, so
-  # each one gets a fresh Windows PowerShell with PATH from the registry, as
-  # in Iris.
+  # verify, run 41385115883). Every command runs through run-like-iris.mjs:
+  # a fresh Windows PowerShell per step, PATH from the registry, done on the
+  # pipe 'close', as in Iris.
   install-jdk-replaces-java-8:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -200,33 +200,34 @@ jobs:
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
           Get-ChildItem "$env:ProgramFiles\Eclipse Adoptium" -ErrorAction SilentlyContinue | ForEach-Object { "already under Program Files: $($_.FullName)" }
           Write-Output "JAVA_HOME for the next steps (what Iris would inherit): $java8"
+          # An empty build: `help` there starts Gradle (this project's wrapper,
+          # Gradle 9.3.1) in seconds and needs no Android SDK or Node.
+          $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
+          New-Item -ItemType Directory -Force $empty | Out-Null
+          Set-Content (Join-Path $empty 'settings.gradle') "rootProject.name = 'jvm-probe'"
 
       # Gradle 9 checks its JVM when it starts a build, not for --version.
-      # `help` on an empty build starts one in seconds, with this project's
-      # own wrapper (Gradle 9.3.1), and needs no Android SDK or Node.
       - name: control - Gradle on this PC before the guide step refuses Java 8
         working-directory: apps/mobile/android
         run: |
           $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
-          New-Item -ItemType Directory -Force $empty | Out-Null
-          Set-Content (Join-Path $empty 'settings.gradle') "rootProject.name = 'jvm-probe'"
-          $probe = "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --console=plain"
-          ./../../../.github/iris-guide/run-like-iris.ps1 -Command $probe -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\control.log
+          $probe = Join-Path $env:RUNNER_TEMP 'control.ps1'
+          Set-Content $probe "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --console=plain"
+          node ../../../.github/iris-guide/run-like-iris.mjs $probe (Get-Location).Path "$env:RUNNER_TEMP\control.log" 600
           $code = $LASTEXITCODE
           if ($code -eq 0) { Write-Error 'Gradle built on Java 8; this runner does not reproduce the reader PC'; exit 1 }
-          if (-not (Select-String -Path $env:RUNNER_TEMP\control.log -Pattern 'Gradle requires JVM 17 or later to run' -SimpleMatch -Quiet)) {
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\control.log" -Pattern 'Gradle requires JVM 17 or later to run' -SimpleMatch -Quiet)) {
             Write-Error "Gradle failed on Java 8 (exit $code) without the JVM 17 message"
             exit 1
           }
-          Write-Output "reproduced: Gradle refuses Java 8 (exit $code)"
+          Write-Output "reproduced: Gradle refuses Java 8 (Iris exit $code)"
           exit 0
 
       - name: the guide's install-jdk command (verbatim), as Iris runs it
         run: |
-          $command = Get-Content .github/iris-guide/install-jdk.ps1 -Raw
-          ./.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory $HOME -LogFile install-jdk.log
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME install-jdk.log 900
           $code = $LASTEXITCODE
-          if ($code -ne 0) { Write-Error "install-jdk failed (exit $code)"; exit 1 }
+          if ($code -ne 0) { Write-Error "install-jdk failed (Iris exit $code)"; exit 1 }
           $last = Select-String -Path install-jdk.log -Pattern 'version "(1\.)?(\d+)' | Select-Object -Last 1
           if (-not $last) { Write-Error 'install-jdk printed no java version'; exit 1 }
           # "1.8.0_504" -> 8, "17.0.20" -> 17: group 2 is the major either way.
@@ -237,26 +238,49 @@ jobs:
           Write-Output "User JAVA_HOME saved by the step: $saved"
           if (-not $saved -or -not (Test-Path "$saved\bin\java.exe")) { Write-Error 'no usable User JAVA_HOME saved'; exit 1 }
 
-      - name: the guide's run-android command (verbatim prelude), as Iris runs it - Gradle runs on 17
+      # The run-android prelude, verbatim, then the same Gradle probe as the
+      # control instead of the 20-minute release build. --no-daemon: a daemon
+      # outlives the step (see the next step).
+      - name: the guide's run-android prelude, as Iris runs it - Gradle builds on 17
         working-directory: apps/mobile/android
         run: |
           $guide = Get-Content ../../../.github/iris-guide/run-android.ps1 -Raw
           $build = 'npx.cmd expo run:android --variant release'
           if (-not $guide.Contains($build)) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
-          # Same prelude, then the same Gradle probe as the control instead of
-          # the 20-minute release build.
           $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
-          $command = $guide.Replace($build, "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --console=plain")
-          ./../../../.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\gradle.log
+          $probe = Join-Path $env:RUNNER_TEMP 'after.ps1'
+          Set-Content $probe $guide.Replace($build, "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --no-daemon --console=plain")
+          node ../../../.github/iris-guide/run-like-iris.mjs $probe (Get-Location).Path "$env:RUNNER_TEMP\gradle.log" 600
           $code = $LASTEXITCODE
-          if ($code -ne 0) { Write-Error "Gradle failed after install-jdk (exit $code)"; exit 1 }
-          $jvm = Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
+          if ($code -ne 0) { Write-Error "Gradle failed after install-jdk (Iris exit $code)"; exit 1 }
+          $jvm = Select-String -Path "$env:RUNNER_TEMP\gradle.log" -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
           if (-not $jvm) { Write-Error 'gradlew --version printed no JVM line'; exit 1 }
           Write-Output "Gradle: $($jvm.Line.Trim())"
           if ([int]$jvm.Matches[0].Groups[1].Value -lt 17) { Write-Error 'Gradle still runs on a JVM older than 17'; exit 1 }
-          if (Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'Gradle requires JVM 17' -SimpleMatch -Quiet) { Write-Error 'Gradle still refuses the JVM'; exit 1 }
-          if (-not (Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet)) { Write-Error 'the Gradle build did not succeed'; exit 1 }
+          if (Select-String -Path "$env:RUNNER_TEMP\gradle.log" -Pattern 'Gradle requires JVM 17' -SimpleMatch -Quiet) { Write-Error 'Gradle still refuses the JVM'; exit 1 }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\gradle.log" -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet)) { Write-Error 'the Gradle build did not succeed'; exit 1 }
           Write-Output 'Gradle builds on Java 17 after the guide step'
+
+      # Information for the Iris lane, not a gate: Iris waits for the pipe
+      # 'close', and a Gradle daemon that started inside the step may keep the
+      # pipe open after the build is done (an earlier run of this job hung
+      # here). Prints what Iris would record within 3 minutes.
+      - name: info - does a Gradle daemon keep Iris waiting after the build?
+        working-directory: apps/mobile/android
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          $guide = Get-Content ../../../.github/iris-guide/run-android.ps1 -Raw
+          $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
+          $probe = Join-Path $env:RUNNER_TEMP 'daemon.ps1'
+          Set-Content $probe $guide.Replace('npx.cmd expo run:android --variant release', ".\gradlew.bat -p '$empty' help --console=plain")
+          node ../../../.github/iris-guide/run-like-iris.mjs $probe (Get-Location).Path "$env:RUNNER_TEMP\daemon.log" 180
+          $code = $LASTEXITCODE
+          $built = Select-String -Path "$env:RUNNER_TEMP\daemon.log" -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet
+          Write-Output "with the Gradle daemon: build finished = $built, Iris exit $code (124 = Iris would time out)"
+          $env:JAVA_HOME = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
+          .\gradlew.bat --stop
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -266,6 +290,7 @@ jobs:
             install-jdk.log
             ${{ runner.temp }}/control.log
             ${{ runner.temp }}/gradle.log
+            ${{ runner.temp }}/daemon.log
 
   # The same command on a PC that already has Java 17 on PATH: nothing is
   # installed and no JAVA_HOME is saved.
@@ -278,6 +303,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -286,9 +315,8 @@ jobs:
       - name: the guide's install-jdk command (verbatim), as Iris runs it
         run: |
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
-          $command = Get-Content .github/iris-guide/install-jdk.ps1 -Raw
-          ./.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory $HOME -LogFile install-jdk.log
-          if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk failed (exit $LASTEXITCODE)"; exit 1 }
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME install-jdk.log 900
+          if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk failed (Iris exit $LASTEXITCODE)"; exit 1 }
           if (-not (Select-String -Path install-jdk.log -Pattern 'version "17\.' -Quiet)) { Write-Error 'no Java 17 version line'; exit 1 }
           if (Select-String -Path install-jdk.log -Pattern 'Found Eclipse Temurin|Successfully installed' -Quiet) { Write-Error 'winget ran on a PC that already had Java 17'; exit 1 }
           $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
