@@ -18,6 +18,9 @@
  *
  * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds]
  * Exit code: the code Iris would record, or 124 when Iris would time out.
+ * It also prints when Gradle's "BUILD SUCCESSFUL" / "BUILD FAILED" line came,
+ * so a log shows how long the step stayed open after the build was done, and
+ * writes the timings to <log-file>.timing.json.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -56,14 +59,21 @@ const child = spawn(
 let stdout = ''
 let stderr = ''
 let exitedAt = null
+let buildLineAt = null
+const BUILD_LINE = /BUILD (SUCCESSFUL|FAILED)/
+function noteBuildLine(chunk) {
+  if (buildLineAt === null && BUILD_LINE.test(chunk)) buildLineAt = seconds()
+}
 child.stdout.setEncoding('utf8')
 child.stderr.setEncoding('utf8')
 child.stdout.on('data', (chunk) => {
   stdout += chunk
+  noteBuildLine(chunk)
   process.stdout.write(chunk)
 })
 child.stderr.on('data', (chunk) => {
   stderr += chunk
+  noteBuildLine(chunk)
   process.stdout.write(chunk)
 })
 child.on('exit', (code) => {
@@ -87,6 +97,12 @@ function finish(kind) {
     }
   }
   writeFileSync(logFile, `${lines.join('\n')}\n${stderr}`.trim() + '\n')
+  if (buildLineAt !== null) console.log(`--- Gradle's BUILD line came at ${buildLineAt} s`)
+  const recordedCode = kind === 'timed_out' ? 124 : (code ?? 1)
+  writeFileSync(
+    `${logFile}.timing.json`,
+    JSON.stringify({ recorded: recordedCode, kind, deadlineSeconds: Number(deadlineSeconds), exitedAt, buildLineAt, endedAt: seconds() }) + '\n',
+  )
   if (kind === 'timed_out') {
     console.log(
       `--- Iris would record timed_out: no 'close' within ${deadlineSeconds} s` +

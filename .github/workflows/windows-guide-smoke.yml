@@ -261,13 +261,13 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP\gradle.log" -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet)) { Write-Error 'the Gradle build did not succeed'; exit 1 }
           Write-Output 'Gradle builds on Java 17 after the guide step'
 
-      # Information for the Iris lane, not a gate: Iris waits for the pipe
-      # 'close', and a Gradle daemon that started inside the step may keep the
-      # pipe open after the build is done (an earlier run of this job hung
-      # here). Prints what Iris would record within 3 minutes.
-      - name: info - does a Gradle daemon keep Iris waiting after the build?
+      # Iris waits for the pipe 'close', and a Gradle daemon that starts inside
+      # the step keeps the pipe open after the build is done (round 3 measured
+      # it here: BUILD SUCCESSFUL in 6 s, no 'close' in 180 s, Iris would
+      # record 124). The guide's run-android now turns the daemon off, so the
+      # same build with its prelude must end on its own.
+      - name: the guide's run-android prelude leaves no daemon - Iris gets the 'close'
         working-directory: apps/mobile/android
-        continue-on-error: true
         timeout-minutes: 10
         run: |
           $guide = Get-Content ../../../.github/iris-guide/run-android.ps1 -Raw
@@ -277,10 +277,12 @@ jobs:
           node ../../../.github/iris-guide/run-like-iris.mjs $probe (Get-Location).Path "$env:RUNNER_TEMP\daemon.log" 180
           $code = $LASTEXITCODE
           $built = Select-String -Path "$env:RUNNER_TEMP\daemon.log" -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet
-          Write-Output "with the Gradle daemon: build finished = $built, Iris exit $code (124 = Iris would time out)"
-          $env:JAVA_HOME = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
-          .\gradlew.bat --stop
-          exit 0
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after the prelude build' -FailOnDaemon -Stop
+          $left = $LASTEXITCODE
+          Write-Output "with the guide's prelude: build finished = $built, Iris exit $code (124 = Iris would time out)"
+          if (-not $built) { Write-Error 'the Gradle build did not succeed'; exit 1 }
+          if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
+          if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -322,3 +324,187 @@ jobs:
           $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
           if ($saved) { Write-Error "a User JAVA_HOME was saved ($saved) although Java 17 was already there"; exit 1 }
           Write-Output 'Java 17 left alone: no winget, no saved JAVA_HOME'
+
+  # Round 4 (Nov 1 2026). Iris for Windows ends a step on the pipe 'close'
+  # (every copy of the child's output pipe closed), not on the process exit.
+  # A Gradle daemon - and maybe a Kotlin compile daemon - that the build
+  # starts inherits that pipe and outlives the step, so Iris recorded a good
+  # run-android as timed out after 15 minutes. The guide's run-android now
+  # turns both daemons off. This job runs the real Nut AI release build the
+  # way that step starts it, through run-like-iris.mjs, with and without the
+  # new lines. No phone or emulator here, so Gradle runs with the arguments
+  # expo run:android --variant release passes it for an arm64 phone
+  # (@expo/cli start/platforms/android/gradle.js assembleAsync). Expo also
+  # sets __EXPO_EAGER_BUNDLE_OPTIONS after bundling itself; without it the
+  # Gradle bundle task bundles. Manual only: a cold release build is long.
+  run-android-gradle-daemons:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      EXPO_GRADLE: '.\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand -PreactNativeDevServerPort=8081 -PreactNativeArchitectures=arm64-v8a'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: npm install and generate the Android project (the guide's earlier steps)
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Select-Object -Last 5
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Set-Location apps/mobile
+          npx expo prebuild --platform android 2>&1 | Select-Object -Last 5
+          if (-not (Test-Path android/gradlew.bat)) { Write-Error 'no android/gradlew.bat'; exit 1 }
+          Get-Content android/gradle.properties | Where-Object { $_ -match '^(org\.gradle|kotlin)\.' }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Iris builds PATH from the registry, so the Node a reader installed is
+      # the one in the machine Path. Put this job's Node 22 there.
+      - name: make this runner a PC with Node 22 and Java 17, and write the commands
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          Write-Output "node: $nodeDir ($(node --version)); JAVA_HOME: $env:JAVA_HOME; ANDROID_HOME: $env:ANDROID_HOME"
+          Get-ChildItem (Join-Path $env:ANDROID_HOME 'ndk') -ErrorAction SilentlyContinue | ForEach-Object { "NDK on the runner: $($_.Name)" }
+          $guide = Get-Content .github/iris-guide/run-android.ps1 -Raw
+          $expo = 'npx.cmd expo run:android --variant release'
+          if (-not $guide.Contains($expo)) { Write-Error 'run-android.ps1 no longer runs the expo build'; exit 1 }
+          $lines = @($guide -split '\r?\n' | Where-Object { $_ -ne '' })
+          $gradleOff = "`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'"
+          $kotlinOff = "`${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'in-process'"
+          if (-not ($lines -contains $gradleOff) -or -not ($lines -contains $kotlinOff)) { Write-Error 'run-android.ps1 lacks the daemon lines'; exit 1 }
+          $dir = Join-Path $env:RUNNER_TEMP 'r4'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          # after: the guide's command, the expo line swapped for the Gradle build it starts.
+          Set-Content "$dir\after.ps1" (($lines -join "`n").Replace($expo, $env:EXPO_GRADLE))
+          # before: the round 3 command (the same lines without the two new ones).
+          Set-Content "$dir\before.ps1" ((@($lines | Where-Object { $_ -ne $gradleOff -and $_ -ne $kotlinOff }) -join "`n").Replace($expo, $env:EXPO_GRADLE))
+          # kotlin-daemon-on: the Gradle daemon off, the Kotlin compile daemon left on.
+          Set-Content "$dir\kotlin-daemon-on.ps1" ((@($lines | Where-Object { $_ -ne $kotlinOff }) -join "`n").Replace($expo, $env:EXPO_GRADLE))
+          foreach ($name in 'after', 'before', 'kotlin-daemon-on') { "== $name.ps1"; Get-Content "$dir\$name.ps1" }
+          "| phase | daemons | deadline (s) | Iris records | BUILD line at (s) | ended at (s) | Gradle says |" >> $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
+
+      # D: the guide's exact command on a PC with no phone plugged in. Expo
+      # looks for a device (adb) before it starts Gradle, and must stop with
+      # its message, not hang on an adb server that holds the pipe.
+      - name: D - the guide's exact run-android command, no phone connected
+        working-directory: apps/mobile
+        timeout-minutes: 10
+        run: |
+          $log = "$env:RUNNER_TEMP\r4\d-no-phone.log"
+          node ../../.github/iris-guide/run-like-iris.mjs ../../.github/iris-guide/run-android.ps1 (Get-Location).Path $log 300
+          $code = $LASTEXITCODE
+          & ../../.github/iris-guide/build-processes.ps1 -Label 'after D' -Stop
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'No Android connected device found' -SimpleMatch | Select-Object -First 1).Line
+          "| D: exact guide command, no phone | off | 300 | $code | - | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          if ($code -eq 124) { Write-Error 'the guide command with no phone never ended: a child holds the pipe'; exit 1 }
+          if ($code -eq 0) { Write-Error 'expo run:android passed with no phone'; exit 1 }
+          if (-not $said) { Write-Error "expo stopped (exit $code) without the no-device message"; exit 1 }
+          Write-Output "no phone: expo stopped with exit $code at $($t.endedAt) s: $said"
+
+      # A: "after", cold. The first build on a fresh PC downloads and compiles
+      # everything; its time is reported against Iris's 900 s, not hidden.
+      - name: A - after, cold build - the guide's run-android lines, daemons off
+        working-directory: apps/mobile/android
+        timeout-minutes: 75
+        run: |
+          $log = "$env:RUNNER_TEMP\r4\a-after-cold.log"
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 3600
+          $code = $LASTEXITCODE
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after A' -FailOnDaemon -Stop
+          $left = $LASTEXITCODE
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
+          "| A: after, cold | off | 3600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          Select-String -Path $log -Pattern 'single-use Daemon|Kotlin compiler execution strategy|in-process' | Select-Object -First 5 | ForEach-Object { $_.Line }
+          if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
+          if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
+          if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
+          $over = if ([double]$t.endedAt -gt 900) { 'MORE than' } else { 'within' }
+          Write-Output "cold build: ended with exit 0 at $($t.endedAt) s, $over Iris's 900 s"
+
+      # B: the Gradle daemon off but the Kotlin compile daemon on, after a
+      # Kotlin change so the Kotlin compiler runs. Information: does the
+      # Kotlin daemon alone hold the pipe?
+      - name: B - info - Gradle daemon off, Kotlin compile daemon on
+        working-directory: apps/mobile/android
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
+          Add-Content $kt.FullName '// windows-guide-smoke phase B'
+          $log = "$env:RUNNER_TEMP\r4\b-kotlin-daemon-on.log"
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\kotlin-daemon-on.ps1" (Get-Location).Path $log 900
+          $code = $LASTEXITCODE
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after B' -Stop
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
+          "| B: Kotlin daemon only | Gradle off, Kotlin on | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "Kotlin daemon on: Iris exit $code (124 = Iris would time out), BUILD line at $($t.buildLineAt) s"
+
+      # C: "before" - the round 3 command (daemons on), after a Kotlin change.
+      # The bug: the build succeeds, then the step never ends and Iris
+      # records a timeout at 900 s. This step passes only if that happens.
+      - name: C - before - the round 3 run-android lines, daemons on
+        working-directory: apps/mobile/android
+        timeout-minutes: 25
+        run: |
+          $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
+          Add-Content $kt.FullName '// windows-guide-smoke phase C'
+          $log = "$env:RUNNER_TEMP\r4\c-before.log"
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\before.ps1" (Get-Location).Path $log 900
+          $code = $LASTEXITCODE
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after C'
+          .\gradlew.bat --stop 2>&1 | Out-Host
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after gradlew --stop' -Stop
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
+          "| C: before (round 3 command) | on | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'the before build did not succeed, so it proves nothing'; exit 1 }
+          if ($code -ne 124) { Write-Error "before: Iris would record $code, the daemon bug did not reproduce"; exit 1 }
+          Write-Output "reproduced: BUILD SUCCESSFUL at $($t.buildLineAt) s, then no 'close' until the 900 s deadline (Iris 124)"
+
+      # E: "after", warm, after a Kotlin change - the case a reader hits when
+      # the step runs again. Must end with exit 0 well within 900 s.
+      - name: E - after, warm build - the guide's run-android lines, daemons off
+        working-directory: apps/mobile/android
+        timeout-minutes: 20
+        run: |
+          $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
+          Add-Content $kt.FullName '// windows-guide-smoke phase E'
+          $log = "$env:RUNNER_TEMP\r4\e-after-warm.log"
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 900
+          $code = $LASTEXITCODE
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after E' -FailOnDaemon -Stop
+          $left = $LASTEXITCODE
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
+          "| E: after, warm | off | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
+          if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
+          if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
+          Write-Output "after: BUILD SUCCESSFUL at $($t.buildLineAt) s, 'close' at $($t.endedAt) s, Iris exit 0"
+
+      - name: the build made an APK
+        if: always()
+        working-directory: apps/mobile/android
+        run: Get-ChildItem app/build/outputs/apk -Recurse -Filter *.apk -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName) $([math]::Round($_.Length / 1MB, 1)) MB" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run-android-gradle-daemon-logs
+          path: ${{ runner.temp }}/r4/
