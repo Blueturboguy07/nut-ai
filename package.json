@@ -22,6 +22,7 @@
     "check": "npm run lint && npm run typecheck && npm run test && npm run check:node-purity && npm run data:verify",
     "data:build": "node --disable-warning=ExperimentalWarning tools/nutrition-data/src/build.mjs",
     "data:verify": "node --disable-warning=ExperimentalWarning tools/nutrition-data/src/golden-queries.mjs",
+    "preinstall": "node scripts/check-node-version.cjs",
     "postinstall": "node scripts/patch-expo-modules-jsi.mjs"
   },
   "devDependencies": {

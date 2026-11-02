@@ -19,6 +19,7 @@ on:
       - tools/**
       - packages/db-adapter/**
       - scripts/check-node-sqlite.mjs
+      - scripts/check-node-version.cjs
       - .github/workflows/windows-guide-smoke.yml
   pull_request:
     paths:
@@ -27,6 +28,7 @@ on:
       - tools/**
       - packages/db-adapter/**
       - scripts/check-node-sqlite.mjs
+      - scripts/check-node-version.cjs
       - .github/workflows/windows-guide-smoke.yml
 
 jobs:
@@ -89,3 +91,44 @@ jobs:
           path: |
             npm-install.log
             data-build.log
+
+  # The guide's first check sees THAT Node answers, not which version. On
+  # Node 20 the install used to pass with an engines warning and the corpus
+  # build then died on "No such built-in module: node:sqlite". The root
+  # preinstall (scripts/check-node-version.cjs) must stop the install
+  # itself, and say why.
+  old-node-is-stopped:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: npm install on Node 20 stops and names the Node floor
+        run: |
+          node --version
+          npm install *> npm-install-node20.log
+          $code = $LASTEXITCODE
+          Get-Content npm-install-node20.log -Tail 15
+          if ($code -eq 0) {
+            Write-Error 'npm install passed on Node 20; the corpus build would die on node:sqlite later'
+            exit 1
+          }
+          if (-not (Select-String -Path npm-install-node20.log -Pattern 'Nut AI needs Node 22.13.0 or newer' -SimpleMatch -Quiet)) {
+            Write-Error "npm install failed on Node 20 (exit $code) without naming the Node floor"
+            exit 1
+          }
+          Write-Output "stopped as intended (exit $code)"
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: old-node-install-log
+          path: npm-install-node20.log
