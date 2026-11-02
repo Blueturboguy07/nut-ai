@@ -1,14 +1,15 @@
-# Blind-verifier probe (not for main): the guide v16 "Install Java 17" step on
-# a Windows PC that already has Java 8 on PATH, then the Android build.
+# Blind-verifier probe (not for main): how long is the first Android release
+# build when only ONE ABI is built (what expo run:android does with a phone
+# attached)? Iris on Windows stops a command after 15 minutes.
 name: windows guide smoke
 
 on:
   workflow_dispatch:
 
 jobs:
-  java8:
+  one-abi-build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     defaults:
       run:
         shell: pwsh
@@ -19,28 +20,27 @@ jobs:
           node-version: '22'
       - name: npm install
         run: npm install *> npm-install.log; Write-Output "npm install exit $LASTEXITCODE"
-      - name: Generate the Android project (guide step prebuild-android)
+      - name: prebuild
         working-directory: apps/mobile
-        run: npx.cmd expo prebuild --platform android *> prebuild.log; Write-Output "prebuild exit $LASTEXITCODE"; Get-Content prebuild.log -Tail 5
-      - name: Guide step install-jdk, with Java 8 first on PATH and as JAVA_HOME
-        run: |
-          $j8 = $env:JAVA_HOME_8_X64
-          Write-Output "JAVA_HOME_8_X64=$j8"
-          "JAVA_HOME=$j8" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$j8\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-      - name: The guide's exact Windows install-jdk command
-        run: |
-          Write-Output "java on PATH: $((Get-Command java).Source)"
-          if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
-            winget install --id EclipseAdoptium.Temurin.17.JDK -e --accept-source-agreements --accept-package-agreements
-            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-          }
-          java -version
-      - name: The Android release build Expo runs (gradlew app:assembleRelease)
+        run: npx.cmd expo prebuild --platform android *> prebuild.log; Write-Output "prebuild exit $LASTEXITCODE"
+      - name: first release build, arm64-v8a only
         working-directory: apps/mobile/android
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
         run: |
-          .\gradlew.bat app:assembleRelease --no-daemon *> gradle.log
+          $t0 = Get-Date
+          .\gradlew.bat app:assembleRelease *> gradle.log
           $code = $LASTEXITCODE
-          Get-Content gradle.log -Tail 25
-          Write-Output "gradle exit $code with JAVA_HOME=$env:JAVA_HOME"
-          exit 0
+          $min = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
+          Get-Content gradle.log -Tail 8
+          Write-Output "FIRST BUILD gradle exit $code after $min min (arm64-v8a only)"
+      - name: second release build (caches warm)
+        working-directory: apps/mobile/android
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+        run: |
+          $t0 = Get-Date
+          .\gradlew.bat app:assembleRelease *> gradle2.log
+          $code = $LASTEXITCODE
+          $min = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
+          Write-Output "SECOND BUILD gradle exit $code after $min min"
