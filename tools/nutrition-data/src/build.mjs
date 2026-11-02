@@ -22,7 +22,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { SOURCES, FDC_DIR, findExtracted, ensureSource } from './fetch.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -232,18 +232,31 @@ async function main() {
   }
 
   await mkdir(dirname(OUT), { recursive: true })
-  const db = new Database(OUT)
-  db.pragma('journal_mode = DELETE')
+  // node:sqlite, built into Node 22.13+: no native module, no compiler, so
+  // `npm install` on a fresh Windows PC no longer needs Visual Studio.
+  const db = new DatabaseSync(OUT)
+  db.exec('PRAGMA journal_mode = DELETE')
   // This build recreates the artifact from scratch on every run, including
   // re-runs against a nutrition.db a previous run already populated (a user
   // retrying `npm run data:build` after fixing an earlier failure is exactly
-  // that case). food_portions.food_id REFERENCES foods(id), and this
-  // better-sqlite3 build defaults `foreign_keys` ON — so on a second run
-  // `DROP TABLE foods` failed with "FOREIGN KEY constraint failed" because
-  // food_portions (which still held rows referencing it) hadn't been dropped
-  // yet. FK enforcement only matters for the app's live writes, not this
-  // one-shot rebuild, so it is turned off for the DROP + rebuild.
-  db.pragma('foreign_keys = OFF')
+  // that case). food_portions.food_id REFERENCES foods(id), and node:sqlite
+  // defaults `foreign_keys` ON — so on a second run `DROP TABLE foods` would
+  // fail with "FOREIGN KEY constraint failed" because food_portions (which
+  // still held rows referencing it) hadn't been dropped yet. FK enforcement
+  // only matters for the app's live writes, not this one-shot rebuild, so it
+  // is turned off for the DROP + rebuild.
+  db.exec('PRAGMA foreign_keys = OFF')
+  /** One transaction around a synchronous body; rolled back if it throws. */
+  const transaction = (fn) => () => {
+    db.exec('BEGIN')
+    try {
+      fn()
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  }
   db.exec('DROP TABLE IF EXISTS foods; DROP TABLE IF EXISTS food_portions; DROP TABLE IF EXISTS food_fts; DROP TABLE IF EXISTS food_fts_trigram; DROP TABLE IF EXISTS build_manifest; DROP TABLE IF EXISTS brands; DROP TABLE IF EXISTS food_micros; DROP TABLE IF EXISTS food_synonyms;')
 
   // Schema is imported from the app's own package so the artifact can never
@@ -284,7 +297,7 @@ async function main() {
   let rowId = 0
   const now = Date.now()
 
-  const tx = db.transaction(() => {
+  const tx = transaction(() => {
     for (const f of state.foods.values()) {
       // Every FDC value is already per 100 g by definition of the dataset. No
       // conversion is applied, and none should be invented.
@@ -320,7 +333,7 @@ async function main() {
     foods: db.prepare('SELECT COUNT(*) c FROM foods').get().c,
     portions: db.prepare('SELECT COUNT(*) c FROM food_portions').get().c,
   }
-  db.transaction(() => {
+  transaction(() => {
     manifest.run('tier', 'generic')
     manifest.run('sources', resolved.map((s) => s.label).join(' | '))
     manifest.run('licenses', 'CC0-1.0 (USDA FoodData Central)')

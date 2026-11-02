@@ -1,8 +1,8 @@
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import type { DbAdapter, RunResult, SqlValue } from './types.js'
 
 /**
- * The better-sqlite3 implementation. NODE ONLY.
+ * The node:sqlite implementation. NODE ONLY.
  *
  * This file is never imported by apps/mobile. It is reachable as
  * `@nutai/db-adapter/node`, which the app does not import and Metro therefore
@@ -11,19 +11,28 @@ import type { DbAdapter, RunResult, SqlValue } from './types.js'
  * Its whole reason to exist is the eval harness: the harness runs the REAL
  * resolver and the REAL gram engine against the golden set under Node, and
  * scoring raw model output instead would measure the wrong thing.
+ *
+ * Why node:sqlite and not better-sqlite3 (Nov 1 2026): better-sqlite3 is a
+ * native module, and npm rebuilt it with node-gyp on every install even though
+ * the tarball ships a prebuilt binary — on a Windows PC without the Visual
+ * Studio C++ build tools `npm install` died with "Could not find any Visual
+ * Studio installation to use", and the nutrition-corpus build and the phone
+ * build fell over after it. node:sqlite is built into Node 22.13+, needs no
+ * compiler, and carries FTS5 with the trigram tokenizer the resolver depends
+ * on (detectCapabilities checks, never assumes).
  */
 
 /**
- * better-sqlite3 is synchronous. The shared interface is async because
+ * node:sqlite is synchronous. The shared interface is async because
  * expo-sqlite is. Wrapping sync calls in resolved promises costs a microtask and
  * keeps one honest interface instead of two divergent ones.
  */
 class NodeDbAdapter implements DbAdapter {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: DatabaseSync) {}
 
   // Every method is declared `async` rather than returning Promise.resolve(...).
   //
-  // That is not a style choice. better-sqlite3 throws SYNCHRONOUSLY on a
+  // That is not a style choice. node:sqlite throws SYNCHRONOUSLY on a
   // constraint violation, so `return Promise.resolve(stmt.run(...))` throws before
   // a promise ever exists — and a caller writing `db.run(...).catch(...)` against
   // an async-looking interface would never see it. `async` converts those throws
@@ -44,7 +53,7 @@ class NodeDbAdapter implements DbAdapter {
 
   async run(sql: string, params: readonly SqlValue[] = []): Promise<RunResult> {
     const info = this.db.prepare(sql).run(...params)
-    return { changes: info.changes, lastInsertRowId: info.lastInsertRowid }
+    return { changes: Number(info.changes), lastInsertRowId: info.lastInsertRowid }
   }
 
   async exec(sql: string): Promise<void> {
@@ -52,9 +61,9 @@ class NodeDbAdapter implements DbAdapter {
   }
 
   /**
-   * better-sqlite3's own `transaction()` helper cannot wrap an async function —
-   * it would commit before the promise settled. Drive the statements directly
-   * instead, which is correct for an async body.
+   * Driven with plain BEGIN/COMMIT/ROLLBACK statements: an async body must
+   * settle before the commit, and no synchronous transaction helper can wait
+   * for it.
    */
   async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
     this.db.exec('BEGIN')
@@ -85,10 +94,10 @@ export interface OpenOptions {
 }
 
 export function openNodeDb(filename: string, options: OpenOptions = {}): DbAdapter {
-  const db = new Database(filename, options.readonly === true ? { readonly: true } : {})
-  db.pragma('foreign_keys = ON')
+  const db = new DatabaseSync(filename, { readOnly: options.readonly === true })
+  db.exec('PRAGMA foreign_keys = ON')
   if (options.wal === true && filename !== ':memory:') {
-    db.pragma('journal_mode = WAL')
+    db.exec('PRAGMA journal_mode = WAL')
   }
   return new NodeDbAdapter(db)
 }

@@ -1,0 +1,89 @@
+# The two commands the publik Iris guide runs on a Windows PC before the
+# phone build, on a clean runner, with no Visual Studio needed.
+#
+# Nov 1 2026: better-sqlite3 made `npm install` run node-gyp on every fresh
+# install (npm's rebuild set ignores the package's own "gypfile": false when
+# the entry comes from the lockfile), so a PC without the C++ build tools
+# died at "Could not find any Visual Studio installation to use" and the
+# corpus build and the phone build fell over after it. The driver is now
+# node:sqlite, so an install that still prints "gyp" is a regression.
+name: windows guide smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'fix/**']
+    paths:
+      - package.json
+      - package-lock.json
+      - tools/**
+      - packages/db-adapter/**
+      - .github/workflows/windows-guide-smoke.yml
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - tools/**
+      - packages/db-adapter/**
+      - .github/workflows/windows-guide-smoke.yml
+
+jobs:
+  install-and-build-corpus:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Exactly the guide's step. The output is kept so the next step can
+      # prove no native build ran: this runner HAS Visual Studio, so a
+      # node-gyp rebuild would quietly succeed here and only fail on a
+      # reader's PC.
+      - name: npm install (the guide's "Install dependencies" step)
+        run: npm install 2>&1 | Tee-Object -FilePath npm-install.log
+
+      - name: no native build ran
+        run: |
+          if (Select-String -Path npm-install.log -Pattern 'gyp' -Quiet) {
+            Write-Error 'npm install ran node-gyp; a PC without Visual Studio fails here'
+            exit 1
+          }
+          if (Test-Path node_modules/better-sqlite3) {
+            Write-Error 'better-sqlite3 is back in node_modules'
+            exit 1
+          }
+          node -e "const {DatabaseSync}=require('node:sqlite'); const d=new DatabaseSync(':memory:'); d.exec('create virtual table t using fts5(x, tokenize=\"trigram\")'); console.log('node:sqlite ok, fts5 trigram ok, sqlite', d.prepare('select sqlite_version() v').get().v)"
+
+      - name: npm run data:build (the guide's "Build the nutrition database" step)
+        run: npm run data:build 2>&1 | Tee-Object -FilePath data-build.log
+
+      - name: the guide's visual check
+        run: |
+          if (-not (Select-String -Path data-build.log -Pattern '^Built ' -Quiet)) {
+            Write-Error "data:build did not print 'Built .../nutrition.db'"
+            exit 1
+          }
+          if (-not (Select-String -Path data-build.log -Pattern 'foods:\s+\d{4,}' -Quiet)) {
+            Write-Error 'data:build did not print a foods count'
+            exit 1
+          }
+
+      - name: npm run data:verify
+        run: npm run data:verify
+
+      - name: db-adapter and resolver tests on node:sqlite
+        run: npx vitest run packages/db-adapter packages/resolver
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-guide-smoke-logs
+          path: |
+            npm-install.log
+            data-build.log

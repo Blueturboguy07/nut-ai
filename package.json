@@ -11,7 +11,7 @@
     "tools/*"
   ],
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "lint": "eslint . --max-warnings=0",
@@ -20,14 +20,12 @@
     "test:watch": "vitest",
     "check:node-purity": "node scripts/check-node-purity.mjs",
     "check": "npm run lint && npm run typecheck && npm run test && npm run check:node-purity && npm run data:verify",
-    "data:build": "node tools/nutrition-data/src/build.mjs",
-    "data:verify": "node tools/nutrition-data/src/golden-queries.mjs",
+    "data:build": "node --disable-warning=ExperimentalWarning tools/nutrition-data/src/build.mjs",
+    "data:verify": "node --disable-warning=ExperimentalWarning tools/nutrition-data/src/golden-queries.mjs",
     "postinstall": "node scripts/patch-expo-modules-jsi.mjs"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.2",
-    "better-sqlite3": "^13.0.2",
     "eslint": "^9.17.0",
     "fast-check": "^4.9.0",
     "typescript": "^5.7.0",
@@ -35,7 +33,6 @@
     "vitest": "^3.0.0"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
-    "better-sqlite3@13.0.2": true
+    "esbuild@0.28.1": true
   }
 }

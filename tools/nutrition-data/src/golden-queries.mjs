@@ -13,7 +13,7 @@
 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = process.env.DB ?? join(HERE, '../../../apps/mobile/assets/nutrition.db')
@@ -64,7 +64,7 @@ function match(db, query) {
     .all(expr)
 }
 
-const db = new Database(DB_PATH, { readonly: true })
+const db = new DatabaseSync(DB_PATH, { readOnly: true })
 let failures = 0
 let checked = 0
 

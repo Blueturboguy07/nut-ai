@@ -2,7 +2,7 @@
 //
 // This entry point is PURE: interface, schema, migrations. No driver.
 //
-// The better-sqlite3 implementation is at `@nutai/db-adapter/node` and is Node
+// The node:sqlite implementation is at `@nutai/db-adapter/node` and is Node
 // only. The expo-sqlite implementation lives in apps/mobile/src/db and NOT in
 // this package, because packages/* must stay importable under bare Node with
 // zero React Native surface (PLAN.md §4.1) — an `import 'expo-sqlite'` here

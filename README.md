@@ -90,7 +90,7 @@ packages/         pure TypeScript, importable under plain Node:
   repair          the question bank and expected-value gating
   goals           BMR/TDEE/macros, EWMA trend, adaptive TDEE
   prompt          system prompt, few-shots, prompt versioning
-  db-adapter      one interface, two impls: expo-sqlite | better-sqlite3
+  db-adapter      one interface, two impls: expo-sqlite | node:sqlite
   clamp           the deterministic sanity clamp
 eval/             accuracy harness — imports the real engine, runs under Node
 ```
@@ -157,7 +157,8 @@ build needs before publik mode shows up.
 
 ## Development
 
-Requires Node ≥ 20.19.
+Requires Node ≥ 22.13: the corpus build and the test harness use the built-in `node:sqlite`,
+so there is no native module to compile and no C++ toolchain to install on Windows.
 
 ```bash
 npm install

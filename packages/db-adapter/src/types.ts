@@ -12,7 +12,7 @@
  *
  * WHERE THE TWO IMPLEMENTATIONS LIVE, and why they are split:
  *
- *   - better-sqlite3  -> `@nutai/db-adapter/node`, in this package. Node only.
+ *   - node:sqlite     -> `@nutai/db-adapter/node`, in this package. Node only.
  *   - expo-sqlite     -> `apps/mobile/src/db`, NOT here.
  *
  * The expo implementation deliberately does not live in this package. `packages/*`
@@ -21,7 +21,7 @@
  * is exactly the gate doing its job. apps/mobile is the only package allowed to
  * hold React Native imports.
  *
- * The interface is ASYNC even though better-sqlite3 is synchronous, because
+ * The interface is ASYNC even though node:sqlite is synchronous, because
  * expo-sqlite is not. Making the shared interface async costs the Node side one
  * trivially-resolved promise per call and saves the app side from a lie.
  */

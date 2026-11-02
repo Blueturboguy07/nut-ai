@@ -189,7 +189,7 @@ async function main() {
         '  under plain Node — see PLAN.md §4.1. If you need platform behaviour here,\n' +
         '  put it behind an interface and implement it in apps/mobile.\n' +
         '  Storage specifically: use packages/db-adapter, which has both an\n' +
-        '  expo-sqlite implementation and a better-sqlite3 one.\n',
+        '  expo-sqlite implementation and a node:sqlite one.\n',
     )
   }
 
