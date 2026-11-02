@@ -201,11 +201,24 @@ jobs:
           Get-ChildItem "$env:ProgramFiles\Eclipse Adoptium" -ErrorAction SilentlyContinue | ForEach-Object { "already under Program Files: $($_.FullName)" }
           Write-Output "JAVA_HOME for the next steps (what Iris would inherit): $java8"
 
-      - name: control - Gradle on this PC before the guide step (Java 8)
+      # Gradle 9 checks its JVM when it starts a build, not for --version.
+      # `help` on an empty build starts one in seconds, with this project's
+      # own wrapper (Gradle 9.3.1), and needs no Android SDK or Node.
+      - name: control - Gradle on this PC before the guide step refuses Java 8
         working-directory: apps/mobile/android
         run: |
-          ./../../../.github/iris-guide/run-like-iris.ps1 -Command 'java -version; .\gradlew.bat --version' -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\control.log
-          Write-Output "control exit $LASTEXITCODE (expected non-zero: Gradle refuses JVM 8)"
+          $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
+          New-Item -ItemType Directory -Force $empty | Out-Null
+          Set-Content (Join-Path $empty 'settings.gradle') "rootProject.name = 'jvm-probe'"
+          $probe = "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --console=plain"
+          ./../../../.github/iris-guide/run-like-iris.ps1 -Command $probe -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\control.log
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { Write-Error 'Gradle built on Java 8; this runner does not reproduce the reader PC'; exit 1 }
+          if (-not (Select-String -Path $env:RUNNER_TEMP\control.log -Pattern 'Gradle requires JVM 17 or later to run' -SimpleMatch -Quiet)) {
+            Write-Error "Gradle failed on Java 8 (exit $code) without the JVM 17 message"
+            exit 1
+          }
+          Write-Output "reproduced: Gradle refuses Java 8 (exit $code)"
           exit 0
 
       - name: the guide's install-jdk command (verbatim), as Iris runs it
@@ -230,16 +243,20 @@ jobs:
           $guide = Get-Content ../../../.github/iris-guide/run-android.ps1 -Raw
           $build = 'npx.cmd expo run:android --variant release'
           if (-not $guide.Contains($build)) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
-          # Same prelude, and Gradle's own report of its JVM instead of the
-          # 20-minute release build.
-          $command = $guide.Replace($build, "java -version`n.\gradlew.bat --version")
+          # Same prelude, then the same Gradle probe as the control instead of
+          # the 20-minute release build.
+          $empty = Join-Path $env:RUNNER_TEMP 'empty-build'
+          $command = $guide.Replace($build, "java -version`n.\gradlew.bat --version`n.\gradlew.bat -p '$empty' help --console=plain")
           ./../../../.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\gradle.log
           $code = $LASTEXITCODE
-          if ($code -ne 0) { Write-Error "gradlew --version failed (exit $code)"; exit 1 }
+          if ($code -ne 0) { Write-Error "Gradle failed after install-jdk (exit $code)"; exit 1 }
           $jvm = Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
           if (-not $jvm) { Write-Error 'gradlew --version printed no JVM line'; exit 1 }
           Write-Output "Gradle: $($jvm.Line.Trim())"
           if ([int]$jvm.Matches[0].Groups[1].Value -lt 17) { Write-Error 'Gradle still runs on a JVM older than 17'; exit 1 }
+          if (Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'Gradle requires JVM 17' -SimpleMatch -Quiet) { Write-Error 'Gradle still refuses the JVM'; exit 1 }
+          if (-not (Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'BUILD SUCCESSFUL' -SimpleMatch -Quiet)) { Write-Error 'the Gradle build did not succeed'; exit 1 }
+          Write-Output 'Gradle builds on Java 17 after the guide step'
 
       - uses: actions/upload-artifact@v4
         if: always()
