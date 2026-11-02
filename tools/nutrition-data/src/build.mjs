@@ -20,7 +20,7 @@
 import { createReadStream } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { SOURCES, FDC_DIR, findExtracted, ensureSource } from './fetch.mjs'
@@ -225,7 +225,7 @@ async function main() {
   const resolved = []
   for (const source of SOURCES) {
     const dir = await resolveSourceDir(source)
-    const label = `${source.label} (${dir.split('/').pop()})`
+    const label = `${source.label} (${basename(dir)})`
     resolved.push({ label })
     console.log(`Ingesting ${label}`)
     await ingest(dir, label, state)

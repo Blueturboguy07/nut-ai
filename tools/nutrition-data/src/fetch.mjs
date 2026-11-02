@@ -26,6 +26,7 @@
 
 import { createWriteStream } from 'node:fs'
 import { mkdir, readdir, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -33,8 +34,17 @@ import { pipeline } from 'node:stream/promises'
 
 const execFileAsync = promisify(execFile)
 
-/** Where extracted CSV directories live and where zip downloads are cached. */
-export const FDC_DIR = process.env.FDC_DIR ?? '/tmp/fdc'
+/**
+ * Where extracted CSV directories live and where zip downloads are cached.
+ *
+ * A real OS path on Windows, never the POSIX string: `/tmp/fdc` handed to
+ * the unzip that Git for Windows puts on the PATH lands in MSYS's own /tmp
+ * (the user's Temp folder), while Node reads `D:\tmp\fdc` — so the download
+ * "succeeded" and the build then found nothing (windows-guide-smoke run
+ * 41376403373, Nov 1 2026). macOS and Linux keep /tmp/fdc, so an existing
+ * cache there is still found.
+ */
+export const FDC_DIR = process.env.FDC_DIR ?? (process.platform === 'win32' ? join(tmpdir(), 'fdc') : '/tmp/fdc')
 const CACHE_DIR = join(FDC_DIR, '.cache')
 
 /**
@@ -142,13 +152,16 @@ async function readMagic(path) {
   }
 }
 
-/** Extracts a zip cross-platform: tries `unzip` (mac/linux), falls back to `tar` (also present on Windows 10+). */
+/**
+ * Extracts a zip cross-platform: `unzip` first on mac/linux with `tar` as
+ * the fallback; on Windows the built-in `tar` (bsdtar, Windows 10+) first,
+ * because an MSYS `unzip` from Git for Windows reads paths its own way.
+ */
 async function extractZip(zipPath, destDir) {
   await mkdir(destDir, { recursive: true })
-  const attempts = [
-    ['unzip', ['-o', '-q', zipPath, '-d', destDir]],
-    ['tar', ['-xf', zipPath, '-C', destDir]],
-  ]
+  const unzip = ['unzip', ['-o', '-q', zipPath, '-d', destDir]]
+  const tar = ['tar', ['-xf', zipPath, '-C', destDir]]
+  const attempts = process.platform === 'win32' ? [tar, unzip] : [unzip, tar]
   let lastErr
   for (const [cmd, args] of attempts) {
     try {
