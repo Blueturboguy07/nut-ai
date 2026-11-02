@@ -127,9 +127,12 @@ export const SCAN_TIMEOUT_MS = 150_000
 export const VISION_TIMEOUT_MS = 90_000
 
 /**
- * The output cap was hit: the JSON is cut mid-item and the call is already
- * billed. Each dialect names this differently; a payload that merely parses
- * wrong is NOT this, and must not be reported as it.
+ * The output cap was hit. Each dialect names this differently. The call is
+ * billed either way, so the answer is still READ: when its JSON is complete
+ * (a cap the gateway shrank to fit a low balance can land just after the
+ * closing brace) it is used. Only an answer that does not parse is reported
+ * as cut short — and a payload that merely parses wrong without a cap is
+ * NOT this, and must not be reported as it.
  */
 function hitOutputCap(provider: ProviderId, j: Record<string, any>): boolean {
   if (provider === 'anthropic') return j.stop_reason === 'max_tokens'
@@ -150,6 +153,11 @@ function truncatedFailure(res: Response): ScanFailure {
   return isPublikResponse(res.headers)
     ? { kind: 'output-truncated', message: TRUNCATED_CHARGED_MESSAGE, retryable: false, action: USAGE_ACTION }
     : { kind: 'output-truncated', message: TRUNCATED_MESSAGE, retryable: false }
+}
+
+/** The failure a text-JSON call returns: "cut short" when the cap was hit, else its own. */
+function failOrTruncated(capped: boolean, res: Response): (e: ScanFailure) => WebLookupOutcome {
+  return (e) => ({ ok: false, error: capped ? truncatedFailure(res) : e })
 }
 
 /**
@@ -276,12 +284,13 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned malformed JSON.', retryable: false } }
     }
 
-    // Before the payload is read: a capped answer is cut mid-JSON, and
-    // reporting that as "unexpected shape" hid a billed call.
-    if (hitOutputCap(req.provider, json as Record<string, any>)) return { ok: false, error: truncatedFailure(res) }
-
+    // A capped answer that does not parse is cut mid-JSON: reporting that as
+    // "unexpected shape" hid a billed call. A capped answer that DOES parse
+    // is complete and is used.
+    const capped = hitOutputCap(req.provider, json as Record<string, any>)
     const extracted = extractPayload(req.provider, json)
     if (!extracted || extracted.raw == null) {
+      if (capped) return { ok: false, error: truncatedFailure(res) }
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned an unexpected shape.', retryable: false } }
     }
 
@@ -411,7 +420,9 @@ async function postVisionJson(
 
     // A reasoning tier can spend the whole cap thinking and return NO text
     // at all (seen twice on label scans, Oct 13 2026) — billed either way.
-    if (hitOutputCap(provider, j)) return { ok: false, error: truncatedFailure(res) }
+    // A capped answer whose JSON is complete is still used.
+    const capped = hitOutputCap(provider, j)
+    const fail = failOrTruncated(capped, res)
 
     let out: string | null = null
     if (provider === 'anthropic') {
@@ -422,20 +433,19 @@ async function postVisionJson(
     } else {
       out = (j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('') || null
     }
-    if (!out) {
-      return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned no text.', retryable: false } }
-    }
+    if (!out) return fail({ kind: 'schema-violation', message: 'The provider returned no text.', retryable: false })
 
     const fenced = out.replace(/```(?:json)?/g, '').trim()
     const start = fenced.indexOf('{')
     const end = fenced.lastIndexOf('}')
-    if (start < 0 || end <= start) {
-      return { ok: false, error: { kind: 'schema-violation', message: 'No JSON in the response.', retryable: false } }
-    }
+    if (start < 0 || end <= start) return fail({ kind: 'schema-violation', message: 'No JSON in the response.', retryable: false })
+    // Capped text that runs on past its last brace was cut inside a later
+    // object; the slice would be an inner one, not the answer.
+    if (capped && end !== fenced.length - 1) return fail({ kind: 'schema-violation', message: 'No JSON in the response.', retryable: false })
     try {
       return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)), ...m }
     } catch {
-      return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
+      return fail({ kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false })
     }
   } catch (err) {
     return { ok: false, error: transportFailure(err, isPublikUrl(built.url), timeoutMs, 'The scan') }
@@ -497,7 +507,8 @@ export async function runWebLookup(
     } catch {
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned malformed JSON.', retryable: false } }
     }
-    if (hitOutputCap(provider, j)) return { ok: false, error: truncatedFailure(res) }
+    const capped = hitOutputCap(provider, j)
+    const fail = failOrTruncated(capped, res)
 
     let out: string | null = null
     if (provider === 'anthropic') {
@@ -513,20 +524,19 @@ export async function runWebLookup(
     } else {
       out = (j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('') || null
     }
-    if (!out) {
-      return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned no text.', retryable: false } }
-    }
+    if (!out) return fail({ kind: 'schema-violation', message: 'The provider returned no text.', retryable: false })
 
     const fenced = out.replace(/```(?:json)?/g, '').trim()
     const start = fenced.indexOf('{')
     const end = fenced.lastIndexOf('}')
-    if (start < 0 || end <= start) {
-      return { ok: false, error: { kind: 'schema-violation', message: 'No JSON in the response.', retryable: false } }
-    }
+    if (start < 0 || end <= start) return fail({ kind: 'schema-violation', message: 'No JSON in the response.', retryable: false })
+    // Capped text that runs on past its last brace was cut inside a later
+    // object; the slice would be an inner one, not the answer.
+    if (capped && end !== fenced.length - 1) return fail({ kind: 'schema-violation', message: 'No JSON in the response.', retryable: false })
     try {
       return { ok: true, raw: JSON.parse(fenced.slice(start, end + 1)), ...m }
     } catch {
-      return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
+      return fail({ kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false })
     }
   } catch (err) {
     return { ok: false, error: transportFailure(err, input.baseUrl != null, timeoutMs, 'The lookup') }

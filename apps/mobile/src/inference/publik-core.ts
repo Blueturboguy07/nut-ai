@@ -34,9 +34,44 @@ export interface PublikBuildConfig {
   appSlug: string
   baseUrl: string
   disclosureVersion: number
-  /** Tier aliases by job. `scan` is a config default so it can be flipped
-   *  to `publik-fast` once vision on the fast tier is verified. */
+  /** Tier aliases by job. `scan` is the build's default for photos; a
+   *  phone follows it unless its owner picked a tier in Profile
+   *  (`publikScanModel`). publik-fast since Nov 2026 (docs/PUBLIK-API.md). */
   models: { scan: string; text: string }
+}
+
+/**
+ * The setting a tap in Profile's publik model list writes — and nothing
+ * else does. Connecting publik (onboarding or Profile) leaves it empty, so
+ * the phone follows the build's `models.scan`.
+ */
+export const PUBLIK_MODEL_PICK_SETTING = 'publik_model_pick'
+
+/**
+ * What builds before Nov 2026 wrote into `provider_model` by themselves when
+ * a phone connected publik: the then-default, not a choice.
+ */
+const OLD_AUTO_SCAN_MODEL = PUBLIK_MODELS.balanced
+
+function isPublikTier(m: string): boolean {
+  return (Object.values(PUBLIK_MODELS) as string[]).includes(m)
+}
+
+/**
+ * The photo-scan model a publik phone uses.
+ *
+ * 1. A tier picked in Profile (`publik_model_pick`) wins.
+ * 2. Else a publik tier in the legacy `provider_model` slot, EXCEPT
+ *    `publik-balanced`: builds up to 71ee482 wrote that value there at
+ *    connect time, so it is the old default, not a pick. A phone built at
+ *    71ee482 and rebuilt kept the reasoning tier — 72 s and $0.067 a scan
+ *    (Nov 1 2026) — if this slot won. Any other tier there was a Profile tap.
+ * 3. Else the build's `models.scan`.
+ */
+export function publikScanModel(cfg: Pick<PublikBuildConfig, 'models'>, pick: string, legacyProviderModel: string): string {
+  if (isPublikTier(pick)) return pick
+  if (isPublikTier(legacyProviderModel) && legacyProviderModel !== OLD_AUTO_SCAN_MODEL) return legacyProviderModel
+  return cfg.models.scan
 }
 
 export function isUsableAppToken(token: unknown): token is string {
@@ -306,7 +341,7 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
         kind: 'model-unavailable',
         httpStatus: status,
         retryable: false,
-        message: 'That model needs a linked publik account. Link this phone, or pick publik-balanced in Profile.',
+        message: 'That model needs a linked publik account. Link this phone, or pick publik-fast in Profile.',
         ...action(linkButtonLabel('anonymous')),
       }
     case 'key_revoked':

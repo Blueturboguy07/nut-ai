@@ -23,11 +23,11 @@ vi.mock('./publik', () => ({
     appSlug: 'nut-ai',
     baseUrl: 'https://publikhq.com/api/v1',
     disclosureVersion: 1,
-    models: { scan: 'publik-balanced', text: 'publik-fast' },
+    models: { scan: 'publik-fast', text: 'publik-fast' },
   }),
 }))
 
-import { baseUrlOf, lookupOptionsOf, resolveInference } from './resolve'
+import { baseUrlOf, lookupOptionsOf, publikScanModelSetting, resolveInference } from './resolve'
 
 const INSTALL = { installId: 'i', claimUrl: 'https://publikhq.com/claim/A', claimState: 'anonymous', disclosureVersion: 1, models: { fast: 'publik-fast', balanced: 'publik-balanced' }, baseUrl: 'https://publikhq.com/api/v1' }
 
@@ -53,7 +53,7 @@ describe('resolveInference', () => {
     if (r.ok) {
       expect(r.value.dialect).toBe('openai')
       expect(r.value.selected).toBe('publik')
-      expect(r.value.model).toBe('publik-balanced')
+      expect(r.value.model).toBe('publik-fast')
       expect(r.value.textModel).toBe('publik-fast')
       expect(r.value.baseUrl).toBe('https://publikhq.com/api/v2')
       expect(r.value.metered).toBe(true)
@@ -71,9 +71,45 @@ describe('resolveInference', () => {
     expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'publik-disconnected' } })
   })
 
-  it('a chosen provider_model is honoured on publik', async () => {
+  it('a model picked in Profile is honoured on publik — publik-balanced included', async () => {
     settings.set('provider', 'publik')
-    settings.set('provider_model', 'publik-fast')
+    settings.set('publik_model_pick', 'publik-balanced')
+    creds.set('publik', { kind: 'api_key', value: 'pk_x' })
+    install = INSTALL
+    const r = await resolveInference()
+    expect(r.ok && r.value.model).toBe('publik-balanced')
+    expect(await publikScanModelSetting()).toBe('publik-balanced')
+  })
+
+  /**
+   * Nov 1 2026: builds up to 71ee482 wrote the then-default publik-balanced
+   * into provider_model at connect time, and the resolver preferred that slot
+   * over publik-build.json. A phone rebuilt from the fix kept the reasoning
+   * tier: 72 s and $0.067 a scan, measured through the gateway.
+   */
+  it('a phone connected on an old build (provider_model = publik-balanced, no pick) follows the build default', async () => {
+    settings.set('provider', 'publik')
+    settings.set('provider_model', 'publik-balanced')
+    creds.set('publik', { kind: 'api_key', value: 'pk_x' })
+    install = INSTALL
+    const r = await resolveInference()
+    expect(r.ok && r.value.model).toBe('publik-fast')
+    expect(await publikScanModelSetting()).toBe('publik-fast')
+  })
+
+  it('any other publik tier in the old slot was a Profile tap and is kept', async () => {
+    settings.set('provider', 'publik')
+    settings.set('provider_model', 'publik-smart')
+    creds.set('publik', { kind: 'api_key', value: 'pk_x' })
+    install = INSTALL
+    const r = await resolveInference()
+    expect(r.ok && r.value.model).toBe('publik-smart')
+  })
+
+  it('a vendor model left in provider_model, or junk in the pick, never reaches the gateway', async () => {
+    settings.set('provider', 'publik')
+    settings.set('provider_model', 'gpt-4o-mini')
+    settings.set('publik_model_pick', 'claude-x')
     creds.set('publik', { kind: 'api_key', value: 'pk_x' })
     install = INSTALL
     const r = await resolveInference()

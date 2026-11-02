@@ -5,6 +5,7 @@ import {
   disclosureCostSentence,
   LINK_STARTER_HINT,
   linkButtonLabel,
+  provisionFailureMessage,
   TERMS_URL,
   whyItCostsSentence,
 } from '../inference/publik-copy'
@@ -35,19 +36,9 @@ import { Icon } from './Icon'
  *   the moment the key exists, with the real balance on it.
  */
 
+/** The copy lives in publik-copy.ts (pure, tested); this name is kept for the screens. */
 export function explainProvision(r: Extract<ProvisionResult, { ok: false }>): string {
-  switch (r.kind) {
-    case 'offline':
-      return 'No connection. Nothing was set up — try again when you are back online, or use your own key.'
-    case 'rate-limited':
-      return `publik API is busy setting up new phones. Try again in ${r.retryAfterSec && r.retryAfterSec > 60 ? 'a few minutes' : 'a minute'}, or use your own key.`
-    case 'token-revoked':
-    case 'unavailable':
-      return 'publik API is not available for this build right now. Use your own key for now — you can switch later in Profile.'
-    case 'replayed':
-    case 'malformed':
-      return `publik API answered in a shape this build does not understand. Update ${APP_NAME}, or use your own key.`
-  }
+  return provisionFailureMessage(r)
 }
 
 export function PublikDisclosureBody({ error }: { error: string | null }) {

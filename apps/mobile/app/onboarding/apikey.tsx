@@ -5,8 +5,8 @@ import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { CredentialForm, PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { explainProvision, PublikCard, PublikDisclosureBody } from '../../src/components/PublikDisclosure'
 import { putSetting, recordConsent } from '../../src/data/repo'
-import { connectPublik, publikBuildConfig } from '../../src/inference/publik'
-import type { ProvisionResult } from '../../src/inference/publik-core'
+import { connectPublik } from '../../src/inference/publik'
+import { PUBLIK_MODEL_PICK_SETTING, type ProvisionResult } from '../../src/inference/publik-core'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
 
@@ -64,10 +64,14 @@ export default function ApiKeyScreen() {
               setError(explainProvision(r))
               return
             }
-            const scanModel = publikBuildConfig().models.scan
-            setAnswer('providerModel', scanModel)
+            // No model is written: an empty pick follows the build's
+            // `models.scan` (publikScanModel). Writing the default here is
+            // what kept phones built at 71ee482 on the slow tier after a
+            // rebuild changed it.
+            setAnswer('providerModel', '')
             await putSetting('provider', 'publik')
-            await putSetting('provider_model', scanModel)
+            await putSetting('provider_model', '')
+            await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
             await recordConsent('publik.disclosure', String(r.install.disclosureVersion))
             setBusy(false)
             setMinted(r)

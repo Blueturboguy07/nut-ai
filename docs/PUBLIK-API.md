@@ -59,6 +59,22 @@ Nut AI sends publik's tier aliases, never a vendor slug: `models.scan`
 Profile → AI provider; `publik-smart` appears there only once the phone is
 linked to a publik account (anonymous keys cannot use it).
 
+Which tier a phone uses (`publikScanModel` in
+`apps/mobile/src/inference/publik-core.ts`):
+
+1. A tier tapped in Profile, stored as the `publik_model_pick` setting. Only
+   that tap writes it.
+2. Else a publik tier in the old `provider_model` setting, except
+   `publik-balanced`. Builds up to 71ee482 wrote `publik-balanced` there by
+   themselves when the phone connected, so that value is the old default,
+   not a choice. A phone built at 71ee482 and rebuilt now moves to the
+   fast tier; before this rule it kept the reasoning tier (72 s and $0.067
+   for one plate, Nov 1 2026).
+3. Else `models.scan` from `publik-build.json`.
+
+Connecting publik (onboarding or Profile) writes no model, so a later change
+of `models.scan` reaches every phone that did not pick one.
+
 Why scans default to the fast tier (measured against the live gateway on
 Nov 1 2026, with the app's own request bytes):
 
@@ -72,8 +88,9 @@ The app also asks for `reasoning_effort: "low"` on publik mode (the tiers
 default a reasoning model to "medium", whose thinking counts inside
 `max_tokens`), sends `max_tokens` 8,192 for a scan, 2,048 for a label and
 4,096 for a lookup, waits 150 s for a scan and 90 s for the smaller calls,
-and names a `finish_reason: "length"` answer as a billed, cut-short call
-instead of "unexpected shape".
+and names a `finish_reason: "length"` answer whose JSON does not parse as a
+billed, cut-short call instead of "unexpected shape". A capped answer whose
+JSON is complete (the gateway shrinks the cap to fit a low balance) is used.
 
 The Responses `web_search` tool is **not** sent on publik mode (its surcharge
 is not metered on the gateway yet): the branded-food lookup runs the same

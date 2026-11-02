@@ -10,8 +10,10 @@ import {
   walletPatchFromHeaders,
   walletFromJson,
   emptyWallet,
+  publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
+import { provisionFailureMessage, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -26,7 +28,7 @@ const CFG: PublikBuildConfig = {
   appSlug: 'nut-ai',
   baseUrl: 'https://publikhq.com/api/v1',
   disclosureVersion: 1,
-  models: { scan: 'publik-balanced', text: 'publik-fast' },
+  models: { scan: 'publik-fast', text: 'publik-fast' },
 }
 const INPUT = { cfg: CFG, installId: '11111111-2222-4333-8444-555555555555', appVersion: '0.2.0', os: 'ios' as const, osVersion: '18.6', deviceName: 'iPhone' }
 
@@ -313,5 +315,52 @@ describe('classifyGatewayError', () => {
     expect(classifyGatewayError(402, 'Payment Required')).toBeNull()
     expect(classifyGatewayError(400, JSON.stringify({ error: { message: 'bad', type: 'invalid_request_error' } }))).toBeNull()
     expect(classifyGatewayError(400, JSON.stringify({ error: 'string' }))).toBeNull()
+  })
+})
+
+describe('publikScanModel', () => {
+  it('no pick and no old value → the build default', () => {
+    expect(publikScanModel(CFG, '', '')).toBe('publik-fast')
+  })
+
+  it('the old auto-written publik-balanced is not a pick (phones connected up to 71ee482)', () => {
+    expect(publikScanModel(CFG, '', 'publik-balanced')).toBe('publik-fast')
+  })
+
+  it('a Profile pick wins over everything', () => {
+    expect(publikScanModel(CFG, 'publik-balanced', '')).toBe('publik-balanced')
+    expect(publikScanModel(CFG, 'publik-smart', 'publik-balanced')).toBe('publik-smart')
+  })
+
+  it('another publik tier in the old slot was a Profile tap and is kept', () => {
+    expect(publikScanModel(CFG, '', 'publik-smart')).toBe('publik-smart')
+  })
+
+  it('a value that is not a publik tier is ignored in both slots', () => {
+    expect(publikScanModel(CFG, 'gpt-4o-mini', 'claude-haiku')).toBe('publik-fast')
+  })
+})
+
+describe('provisionFailureMessage', () => {
+  it('a 429 names the real wait from Retry-After, not "a minute" (2216 s seen Nov 1 2026)', () => {
+    const m = provisionFailureMessage({ ok: false, kind: 'rate-limited', status: 429, retryAfterSec: 2216 })
+    expect(m).toContain('about 37 minutes')
+    expect(m).toContain('this network')
+    expect(m).toContain('use your own key')
+  })
+
+  it('waitPhrase rounds up and never says less than a minute', () => {
+    expect(waitPhrase(undefined)).toBe('about a minute')
+    expect(waitPhrase(0)).toBe('about a minute')
+    expect(waitPhrase(30)).toBe('about a minute')
+    expect(waitPhrase(61)).toBe('about 2 minutes')
+    expect(waitPhrase(3600)).toBe('about 60 minutes')
+  })
+
+  it('every other kind keeps its own sentence', () => {
+    expect(provisionFailureMessage({ ok: false, kind: 'offline' })).toMatch(/^No connection\. Nothing was set up/)
+    expect(provisionFailureMessage({ ok: false, kind: 'unavailable' })).toContain('not available for this build')
+    expect(provisionFailureMessage({ ok: false, kind: 'token-revoked', status: 401 })).toContain('not available for this build')
+    expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update Nut AI')
   })
 })

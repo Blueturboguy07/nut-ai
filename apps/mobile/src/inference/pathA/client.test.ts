@@ -431,14 +431,19 @@ describe('a billed call never fails silently', () => {
     }
   })
 
-  it('a dropped connection on publik says the call may have been charged; a vendor key keeps "No connection"', async () => {
+  it('a failed connection on publik names both cases — offline (no charge) and dropped (maybe charged); a vendor key keeps "No connection"', async () => {
+    // RN fetch rejects with this same TypeError in airplane mode (nothing
+    // sent) and when the socket dies mid-call (maybe billed), so the copy may
+    // not claim a charge outright.
     const dead = vi.fn(async () => { throw new TypeError('Network request failed') }) as unknown as typeof fetch
     const onPublik = await runScan(PUBLIK_REQ(), dead)
     expect(onPublik.ok).toBe(false)
     if (!onPublik.ok) {
       expect(onPublik.error.kind).toBe('offline')
       expect(onPublik.error.retryable).toBe(true)
-      expect(onPublik.error.message).toContain('may still have been charged')
+      expect(onPublik.error.message).toContain('Check the connection on this phone')
+      expect(onPublik.error.message).toContain('If the phone was online during the scan, publik may still have charged the call')
+      expect(onPublik.error.message).not.toMatch(/dropped/)
       expect(onPublik.error.action?.url).toBe('https://publikhq.com/wallet')
     }
     const onVendor = await runScan(SCAN_REQ(), dead)
@@ -492,6 +497,56 @@ describe('a billed call never fails silently', () => {
     expect(r.ok).toBe(false)
     expect(r.error?.kind).toBe('output-truncated')
     expect(r.error?.message).toContain('This call was charged')
+  })
+
+  /**
+   * Verifier, Nov 1 2026: a capped answer whose JSON had closed was thrown
+   * away as "cut short". The gateway shrinks max_tokens to fit a low
+   * balance, so a complete answer can arrive with finish_reason "length".
+   * It is billed and usable: use it.
+   */
+  it('finish_reason "length" with complete JSON is a result, not "cut short"', async () => {
+    const whole = '{"schema_version":"1.0.0","is_food":true,"items":[]}'
+    const { impl } = scriptedWithHeaders([
+      {
+        status: 200,
+        body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: whole } }], usage: { prompt_tokens: 10, completion_tokens: 512 } }),
+        headers: { 'x-publik-request-id': 'r7', 'x-publik-charge-micros': '900' },
+      },
+    ])
+    const r = await runScan(PUBLIK_REQ(), impl)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value.raw).toEqual(JSON.parse(whole))
+      expect(r.value.chargeUsd).toBe(0.0009)
+    }
+  })
+
+  it('a label scan capped after its closing brace is used; capped text running past it is still cut short', async () => {
+    const label = { per_serving: { calories_kcal: 200 } }
+    const done = scriptedWithHeaders([
+      {
+        status: 200,
+        body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: JSON.stringify(label) } }], usage: {} }),
+        headers: { 'x-publik-request-id': 'r8', 'x-publik-charge-micros': '500' },
+      },
+    ])
+    const ok = await runLabelScan('openai', { model: 'publik-fast', imageBase64: 'AAAA', baseUrl: 'https://publikhq.com/api/v1' }, { kind: 'api_key', value: 'pk' }, done.impl)
+    expect(ok.ok).toBe(true)
+    expect(ok.raw).toEqual(label)
+
+    // Cut inside a second object: the slice from the first to the last brace
+    // parses, but it is not the whole answer.
+    const cut = scriptedWithHeaders([
+      {
+        status: 200,
+        body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'Draft: {"per_serving":{"calories_kcal":200}} Final: {"per_serving":{"calories_kcal":2' } }], usage: {} }),
+        headers: { 'x-publik-request-id': 'r9', 'x-publik-charge-micros': '500' },
+      },
+    ])
+    const bad = await runLabelScan('openai', { model: 'publik-fast', imageBase64: 'AAAA', baseUrl: 'https://publikhq.com/api/v1' }, { kind: 'api_key', value: 'pk' }, cut.impl)
+    expect(bad.ok).toBe(false)
+    expect(bad.error?.kind).toBe('output-truncated')
   })
 
   it('a stopped answer is still parsed as before', async () => {

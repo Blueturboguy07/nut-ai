@@ -3,7 +3,7 @@ import { setting } from '../data/repo'
 import { loadCredential } from './credentials'
 import type { Credential } from './pathA/client'
 import { loadPublikInstall, publikBuildConfig } from './publik'
-import { asCredential } from './publik-core'
+import { asCredential, PUBLIK_MODEL_PICK_SETTING, publikScanModel } from './publik-core'
 
 /**
  * One resolver for every call site that used to read `provider`,
@@ -50,7 +50,7 @@ export async function resolveInference(): Promise<ResolveOutcome> {
     const [cred, install] = await Promise.all([loadCredential('publik'), loadPublikInstall()])
     if (!cred || !install) return { ok: false, error: { kind: 'publik-disconnected' } }
     const cfg = publikBuildConfig()
-    const model = (await setting('provider_model')) || cfg.models.scan
+    const model = await publikScanModelSetting()
     return {
       ok: true,
       value: {
@@ -70,6 +70,16 @@ export async function resolveInference(): Promise<ResolveOutcome> {
   if (!credential) return { ok: false, error: { kind: 'key-missing' } }
   const model = (await setting('provider_model')) || cheapestModel(provider).id
   return { ok: true, value: { dialect: provider, selected: provider, model, textModel: model, credential, metered: false, webSearch: true } }
+}
+
+/**
+ * The publik scan model from this phone's settings. `provider_model` alone
+ * is NOT read as the choice on publik: older builds wrote the old default
+ * there by themselves (see `publikScanModel`). Profile shows this same value.
+ */
+export async function publikScanModelSetting(): Promise<string> {
+  const [pick, legacy] = await Promise.all([setting(PUBLIK_MODEL_PICK_SETTING), setting('provider_model')])
+  return publikScanModel(publikBuildConfig(), pick, legacy)
 }
 
 /** `exactOptionalPropertyTypes`: spread, never pass `baseUrl: undefined`. */

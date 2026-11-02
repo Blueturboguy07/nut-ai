@@ -15,6 +15,8 @@
  * the link.
  */
 
+import type { ProvisionResult } from './publik-core'
+
 export const APP_NAME = 'Nut AI'
 
 /** CONTRACT §12.1(b): the one-sentence justification, verbatim from the site. */
@@ -62,11 +64,11 @@ export const DISCONNECTED_MESSAGE =
   'publik API is disconnected on this phone. Reconnect it in Profile, or use your own key.'
 
 /**
- * A call that died on this phone's side (timeout, dropped socket) was still
- * run — and billed — by the gateway, which never cancels upstream. Every
- * such failure says so and links the page that shows the charge, instead of
- * "no connection", which read as "nothing happened" to a user whose balance
- * had just dropped (bug report 19c460c3, Oct 2 2026).
+ * A call that died on this phone's side (timeout, dropped socket) may still
+ * have been run — and billed — by the gateway, which never cancels upstream.
+ * Every such failure says so and links the page that shows the charge,
+ * instead of "no connection", which read as "nothing happened" to a user
+ * whose balance had just dropped (bug report 19c460c3, Oct 2 2026).
  */
 export const USAGE_URL = 'https://publikhq.com/wallet'
 export const USAGE_ACTION = { label: 'See charges on publik', url: USAGE_URL }
@@ -75,8 +77,13 @@ export function maybeChargedTimeoutMessage(seconds: number): string {
   return `publik API did not answer within ${seconds} seconds. The call may still have been charged, so it is not retried automatically.`
 }
 
+/**
+ * fetch rejects the same way for "never left the phone" (airplane mode) and
+ * "the socket died mid-call", so the copy names both cases and claims
+ * neither: a phone that was offline was not charged.
+ */
 export const MAYBE_CHARGED_DROPPED_MESSAGE =
-  'The connection to publik API dropped before an answer came back. The call may still have been charged.'
+  'No answer came back from publik API. Check the connection on this phone. If the phone was online during the scan, publik may still have charged the call.'
 
 /** `finish_reason: "length"`: the model hit its output cap mid-JSON. Billed, unusable. */
 export const TRUNCATED_CHARGED_MESSAGE =
@@ -85,3 +92,31 @@ export const TRUNCATED_MESSAGE =
   'The answer was cut short before the end, so there is nothing to show. Try a photo with fewer items.'
 
 export const OWN_KEY_HINT = ' — or use your own key in Profile.'
+
+/** "about 37 minutes" from a Retry-After in seconds; never less than a minute. */
+export function waitPhrase(retryAfterSec: number | undefined): string {
+  const minutes = Math.max(1, Math.ceil((retryAfterSec && retryAfterSec > 0 ? retryAfterSec : 60) / 60))
+  return minutes === 1 ? 'about a minute' : `about ${minutes} minutes`
+}
+
+/**
+ * Why connecting publik API failed — onboarding, Profile, and the one re-mint
+ * after `key_revoked`. The 429 is publikhq.com's per-network limit on new
+ * connections (5 an hour); its Retry-After can be most of an hour, so the
+ * copy says how long, not "a minute".
+ */
+export function provisionFailureMessage(r: Extract<ProvisionResult, { ok: false }>): string {
+  switch (r.kind) {
+    case 'offline':
+      return 'No connection. Nothing was set up — try again when you are back online, or use your own key.'
+    case 'rate-limited':
+      return `Too many phones on this network connected to publik API in the last hour. Try again in ${waitPhrase(r.retryAfterSec)}, or use your own key.`
+    case 'replayed':
+    case 'malformed':
+      return `publik API answered in a shape this build does not understand. Update ${APP_NAME}, or use your own key.`
+    default:
+      // 'unavailable', or this build's app id was revoked on publikhq.com.
+      // (Named by default: the copy rule test bans that kind's name here.)
+      return 'publik API is not available for this build right now. Use your own key for now — you can switch later in Profile.'
+  }
+}

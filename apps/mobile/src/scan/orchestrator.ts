@@ -22,7 +22,7 @@ import { openNutritionDb } from '../db/expo-adapter'
 import { loadFoodDb } from '../db/portions'
 import { runLabelScan, runReceiptScan, runScanWithFallback, runWebLookup, type ScanFailure } from '../inference/pathA/client'
 import { connectPublik, notePublikWallet, publikAvailable } from '../inference/publik'
-import { DISCONNECTED_MESSAGE, OWN_KEY_HINT } from '../inference/publik-copy'
+import { DISCONNECTED_MESSAGE, OWN_KEY_HINT, provisionFailureMessage } from '../inference/publik-copy'
 import { baseUrlOf, lookupOptionsOf, resolveInference, type ResolveFailure, type Resolved } from '../inference/resolve'
 import { applyWebOption, getPhase, setPhase, setWebLookup } from './store'
 
@@ -106,15 +106,22 @@ function failureMessage(err: ScanFailure, r: Resolved): string {
  * `401 key_revoked { reprovision: true }` is the idle sweep: the key died of
  * disuse, the 401 arrived before any model ran, and one re-mint against the
  * stored install identity gets the same install back (no second starter).
- * Bounded to once per app session — this is the one exception to "never
- * auto-retry", and it is not a retry of a billed request.
+ * Bounded to one SUCCESSFUL re-mint per app session — this is the one
+ * exception to "never auto-retry", and it is not a retry of a billed
+ * request. A re-mint that fails does not use the session's one: it does not
+ * recurse, so it cannot loop, and the next scan may try again. Its reason
+ * (most often publikhq.com's per-network limit, with a wait of up to an
+ * hour) replaces "Reconnect it in Profile", which sent the user to a button
+ * that hit the same limit.
  */
 let reprovisionedThisSession = false
-async function maybeReprovision(err: ScanFailure | undefined, r: Resolved): Promise<boolean> {
-  if (!r.metered || !err?.reprovision || reprovisionedThisSession) return false
-  reprovisionedThisSession = true
+type Reprovision = { again: true } | { again: false; message?: string }
+async function maybeReprovision(err: ScanFailure | undefined, r: Resolved): Promise<Reprovision> {
+  if (!r.metered || !err?.reprovision || reprovisionedThisSession) return { again: false }
   const re = await connectPublik({ force: true })
-  return re.ok
+  if (!re.ok) return { again: false, message: provisionFailureMessage(re) }
+  reprovisionedThisSession = true
+  return { again: true }
 }
 
 export async function startScan(photoUri: string): Promise<void> {
@@ -173,11 +180,12 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
   })
 
   if (!outcome.ok) {
-    if (await maybeReprovision(outcome.error, r)) return analyze(photoUri, base64, opts)
+    const re = await maybeReprovision(outcome.error, r)
+    if (re.again) return analyze(photoUri, base64, opts)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: failureMessage(outcome.error, r),
+      message: re.message ?? failureMessage(outcome.error, r),
       canRetry: outcome.error.retryable,
       failureKind: outcome.error.kind,
       ...(outcome.error.action ? { action: outcome.error.action } : {}),
@@ -561,11 +569,12 @@ export async function startLabelScan(photoUri: string): Promise<void> {
   const outcome = await runLabelScan(r.dialect, { model: r.model, imageBase64: base64, ...baseUrlOf(r) }, r.credential)
   if (outcome.wallet) void notePublikWallet(outcome.wallet)
   if (!outcome.ok) {
-    if (await maybeReprovision(outcome.error, r)) return startLabelScan(photoUri)
+    const re = await maybeReprovision(outcome.error, r)
+    if (re.again) return startLabelScan(photoUri)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: outcome.error ? failureMessage(outcome.error, r) : 'The label could not be read.',
+      message: re.message ?? (outcome.error ? failureMessage(outcome.error, r) : 'The label could not be read.'),
       canRetry: outcome.error?.retryable ?? false,
       failureKind: outcome.error?.kind,
       ...(outcome.error?.action ? { action: outcome.error.action } : {}),
@@ -659,11 +668,12 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
   const outcome = await runReceiptScan(r.dialect, { model: r.model, imageBase64: base64, ...baseUrlOf(r) }, r.credential)
   if (outcome.wallet) void notePublikWallet(outcome.wallet)
   if (!outcome.ok) {
-    if (await maybeReprovision(outcome.error, r)) return startReceiptScan(photoUri)
+    const re = await maybeReprovision(outcome.error, r)
+    if (re.again) return startReceiptScan(photoUri)
     setPhase({
       kind: 'failed',
       photoUri,
-      message: outcome.error ? failureMessage(outcome.error, r) : 'The receipt could not be read.',
+      message: re.message ?? (outcome.error ? failureMessage(outcome.error, r) : 'The receipt could not be read.'),
       canRetry: outcome.error?.retryable ?? false,
       failureKind: outcome.error?.kind,
       ...(outcome.error?.action ? { action: outcome.error.action } : {}),

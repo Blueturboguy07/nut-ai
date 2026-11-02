@@ -17,7 +17,8 @@ import {
   publikBuildConfig,
   refreshPublikWallet,
 } from '../src/inference/publik'
-import { PUBLIK_MODELS, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
+import { PUBLIK_MODEL_PICK_SETTING, PUBLIK_MODELS, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
+import { publikScanModelSetting } from '../src/inference/resolve'
 import { useTheme } from '../src/theme/ThemeProvider'
 import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
 
@@ -34,11 +35,16 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
 
 type Chip = ProviderId | 'publik'
 
-/** The two-entry publik model list; publik-smart only once the phone is linked. */
+/**
+ * The two-entry publik model list; publik-smart only once the phone is linked.
+ * The figures are measured through the gateway on one plate photo (Nov 1
+ * 2026, docs/PUBLIK-API.md): a reasoning tier is slower AND dearer, and
+ * portion error does not shrink with it.
+ */
 function publikModelList(claimState: 'anonymous' | 'claimed'): Array<{ id: string; label: string; note: string }> {
   const list: Array<{ id: string; label: string; note: string }> = [
-    { id: PUBLIK_MODELS.balanced, label: 'publik-balanced', note: 'Default for photos — the mid tier; identification detail is what a dearer model buys, and portion error does not shrink with it' },
-    { id: PUBLIK_MODELS.fast, label: 'publik-fast', note: 'Cheapest tier; try it for scans once you are happy with the default' },
+    { id: PUBLIK_MODELS.fast, label: 'publik-fast', note: 'Default for photos. About 10 seconds and under $0.01 a scan.' },
+    { id: PUBLIK_MODELS.balanced, label: 'publik-balanced', note: 'A reasoning model. About a minute and $0.04-0.07 a scan.' },
   ]
   if (claimState === 'claimed') list.push({ id: PUBLIK_MODELS.smart, label: 'publik-smart', note: 'Top tier; costs the most per scan' })
   return list
@@ -77,7 +83,9 @@ export default function ProviderSettings() {
       const p = (await setting('provider')) as Chip | 'none' | ''
       const active: Chip = p && p !== 'none' ? p : publik ? 'publik' : 'anthropic'
       setProvider(active)
-      setModelId(await setting('provider_model'))
+      // On publik the shown tier is the one a scan uses, not the raw
+      // provider_model slot (older builds wrote the old default there).
+      setModelId(active === 'publik' ? await publikScanModelSetting() : await setting('provider_model'))
       if (active === 'publik') {
         setMasked(null)
         setShowForm(false)
@@ -103,9 +111,10 @@ export default function ProviderSettings() {
         setPublikError(explainProvision(r))
         return
       }
-      const scanModel = publikBuildConfig().models.scan
+      // An empty pick follows the build's default (publikScanModel).
       await putSetting('provider', 'publik')
-      await putSetting('provider_model', scanModel)
+      await putSetting('provider_model', '')
+      await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
       await recordConsent('publik.disclosure', String(r.install.disclosureVersion))
       setPublikBusy(false)
       refresh()
@@ -167,9 +176,9 @@ export default function ProviderSettings() {
                     const connected = await loadPublik()
                     if (connected) {
                       await putSetting('provider', 'publik')
-                      const m = publikBuildConfig().models.scan
-                      setModelId(m)
-                      await putSetting('provider_model', m)
+                      await putSetting('provider_model', '')
+                      await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
+                      setModelId(publikBuildConfig().models.scan)
                     }
                   })()
                   return
@@ -225,7 +234,8 @@ export default function ProviderSettings() {
                       key={m.id}
                       onPress={() => {
                         setModelId(m.id)
-                        void putSetting('provider_model', m.id)
+                        // The only write of the pick: a tap here is a choice.
+                        void putSetting(PUBLIK_MODEL_PICK_SETTING, m.id)
                       }}
                       style={[styles.modelRow, { borderColor: active ? theme.text : theme.border, borderWidth: active ? 2 : StyleSheet.hairlineWidth }]}
                     >
