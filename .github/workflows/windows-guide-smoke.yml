@@ -456,7 +456,10 @@ jobs:
             $code = $LASTEXITCODE
             $line = Select-String -Path $log -Pattern '^ABI=' | Select-Object -First 1
             $got = if ($line) { $line.Line.Substring(4).Trim() } else { '(none)' }
-            $ok = ($code -eq 0) -and ($got -eq $case[1])
+            # The probe ends on Write-Output, so with no answer the failed adb
+            # query is the last native exit code (Iris 1). In the guide steps
+            # Gradle or npx runs last and sets the step's code.
+            $ok = ($code -ne 124) -and ($got -eq $case[1])
             if (-not $ok) { $bad += 1 }
             Write-Output "phone says '$($case[0])' -> ABI $got (want $($case[1])), Iris exit $code"
             "| ABI pick: phone says '$($case[0])' | fake adb | 60 | $code | - | - | ABI $got (want $($case[1])) |" >> $env:GITHUB_STEP_SUMMARY
