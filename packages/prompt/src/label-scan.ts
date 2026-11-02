@@ -12,6 +12,13 @@ import type { ProviderId, ProviderRequest } from './providers.js'
 
 export const LABEL_SCAN_PROMPT_VERSION = 'label-scan-v1'
 
+/**
+ * The label transcript is ~300 tokens of JSON, but on a reasoning tier the
+ * model's thinking counts inside this budget: 1,024 was spent entirely on
+ * reasoning twice in production (no content, still billed).
+ */
+export const LABEL_MAX_TOKENS = 2048
+
 export const LABEL_SCAN_INSTRUCTION = [
   'The photo shows a printed nutrition facts label. TRANSCRIBE it — copy the numbers exactly as printed. Do not estimate, correct, or normalize anything, even if a printed value looks wrong to you.',
   '',
@@ -53,7 +60,7 @@ export function buildLabelScanRequest(
       headers,
       body: {
         model: input.model,
-        max_tokens: 1024,
+        max_tokens: LABEL_MAX_TOKENS,
         messages: [
           {
             role: 'user',
@@ -74,7 +81,7 @@ export function buildLabelScanRequest(
       headers: { authorization: `Bearer ${credential.value}`, 'content-type': 'application/json' },
       body: {
         model: input.model,
-        max_tokens: 1024,
+        max_tokens: LABEL_MAX_TOKENS,
         messages: [
           {
             role: 'user',
@@ -103,7 +110,7 @@ export function buildLabelScanRequest(
           ],
         },
       ],
-      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1024 },
+      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: LABEL_MAX_TOKENS },
     },
     promptVersion: LABEL_SCAN_PROMPT_VERSION,
   }

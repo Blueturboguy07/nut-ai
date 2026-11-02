@@ -61,4 +61,27 @@ export function insufficientCreditMessage(claimState: 'anonymous' | 'claimed'): 
 export const DISCONNECTED_MESSAGE =
   'publik API is disconnected on this phone. Reconnect it in Profile, or use your own key.'
 
+/**
+ * A call that died on this phone's side (timeout, dropped socket) was still
+ * run — and billed — by the gateway, which never cancels upstream. Every
+ * such failure says so and links the page that shows the charge, instead of
+ * "no connection", which read as "nothing happened" to a user whose balance
+ * had just dropped (bug report 19c460c3, Oct 2 2026).
+ */
+export const USAGE_URL = 'https://publikhq.com/wallet'
+export const USAGE_ACTION = { label: 'See charges on publik', url: USAGE_URL }
+
+export function maybeChargedTimeoutMessage(seconds: number): string {
+  return `publik API did not answer within ${seconds} seconds. The call may still have been charged, so it is not retried automatically.`
+}
+
+export const MAYBE_CHARGED_DROPPED_MESSAGE =
+  'The connection to publik API dropped before an answer came back. The call may still have been charged.'
+
+/** `finish_reason: "length"`: the model hit its output cap mid-JSON. Billed, unusable. */
+export const TRUNCATED_CHARGED_MESSAGE =
+  'The answer was cut short before the end, so there is nothing to show. This call was charged. Try a photo with fewer items.'
+export const TRUNCATED_MESSAGE =
+  'The answer was cut short before the end, so there is nothing to show. Try a photo with fewer items.'
+
 export const OWN_KEY_HINT = ' — or use your own key in Profile.'

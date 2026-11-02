@@ -4,7 +4,7 @@
   "baseUrl": "https://publikhq.com/api/v1",
   "disclosureVersion": 1,
   "models": {
-    "scan": "publik-balanced",
+    "scan": "publik-fast",
     "text": "publik-fast"
   }
 }

@@ -23,7 +23,7 @@ user-entered key always wins and publik code never touches the vendor slots.
   "appSlug": "nut-ai",
   "baseUrl": "https://publikhq.com/api/v1",
   "disclosureVersion": 1,
-  "models": { "scan": "publik-balanced", "text": "publik-fast" }
+  "models": { "scan": "publik-fast", "text": "publik-fast" }
 }
 ```
 
@@ -54,12 +54,26 @@ or `packages`.
 ## Models
 
 Nut AI sends publik's tier aliases, never a vendor slug: `models.scan`
-(default `publik-balanced`) for anything with an image, `models.text`
-(default `publik-fast`) for text-only calls. Vision on the fast tier is not
-verified yet — once it is, flipping `models.scan` to `publik-fast` is the
-whole change. A user can also pick the model in Profile → AI provider;
-`publik-smart` appears there only once the phone is linked to a publik
-account (anonymous keys cannot use it).
+(default `publik-fast`) for anything with an image, `models.text` (default
+`publik-fast`) for text-only calls. A user can also pick the model in
+Profile → AI provider; `publik-smart` appears there only once the phone is
+linked to a publik account (anonymous keys cannot use it).
+
+Why scans default to the fast tier (measured against the live gateway on
+Nov 1 2026, with the app's own request bytes):
+
+| tier | model behind it | one plate photo | charge | result |
+|---|---|---|---|---|
+| `publik-balanced` | a reasoning model | 53-113 s | $0.04-0.058 | hit the 4,096 cap on a busy plate; the app's old 45 s timeout gave up first, and the gateway still settled the charge |
+| `publik-fast` | a non-reasoning model | ~10 s | ~$0.003-0.004 | `finish_reason: stop`, payload passes `validatePayload()` |
+
+The listing says about $0.01 per use; only the fast tier makes that true.
+The app also asks for `reasoning_effort: "low"` on publik mode (the tiers
+default a reasoning model to "medium", whose thinking counts inside
+`max_tokens`), sends `max_tokens` 8,192 for a scan, 2,048 for a label and
+4,096 for a lookup, waits 150 s for a scan and 90 s for the smaller calls,
+and names a `finish_reason: "length"` answer as a billed, cut-short call
+instead of "unexpected shape".
 
 The Responses `web_search` tool is **not** sent on publik mode (its surcharge
 is not metered on the gateway yet): the branded-food lookup runs the same

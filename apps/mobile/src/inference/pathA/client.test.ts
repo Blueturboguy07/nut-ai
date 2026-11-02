@@ -363,3 +363,153 @@ describe('publik mode', () => {
     expect(r.chargeUsd).toBe(0.012)
   })
 })
+
+/**
+ * Oct 2 2026 (bug report 19c460c3): seven scans in a row were billed
+ * $0.04-0.058 each and the phone showed "Could not read this meal". The
+ * gateway took 53-113 s per photo on a reasoning tier, the phone gave up at
+ * 45 s, and the gateway — which never cancels upstream — settled the charge.
+ * The answers that did arrive in time hit the 4,096 cap and failed as
+ * "unexpected shape". Every one of those paths is pinned here.
+ */
+describe('a billed call never fails silently', () => {
+  const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' })
+
+  it('waits 150 s for a scan, not 45: a reasoning tier takes 50-110 s through the gateway', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      const impl = vi.fn(
+        (_url: any, init: any) =>
+          new Promise<Response>((_, reject) => {
+            signal = init.signal
+            init.signal.addEventListener('abort', () => reject(abortError()))
+          }),
+      )
+      const pending = runScan(PUBLIK_REQ(), impl as unknown as typeof fetch)
+      await vi.advanceTimersByTimeAsync(45_001)
+      expect(signal!.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(150_000 - 45_001)
+      expect(signal!.aborted).toBe(true)
+      const r = await pending
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.error.kind).toBe('timeout-ambiguous')
+        expect(r.error.retryable).toBe(false)
+        expect(r.error.message).toContain('150 seconds')
+        expect(r.error.message).toContain('may still have been charged')
+        expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('label, receipt and lookup calls wait 90 s', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      const impl = vi.fn(
+        (_url: any, init: any) =>
+          new Promise<Response>((_, reject) => {
+            signal = init.signal
+            init.signal.addEventListener('abort', () => reject(abortError()))
+          }),
+      )
+      const pending = runLabelScan('openai', { model: 'publik-fast', imageBase64: 'AAAA', baseUrl: 'https://publikhq.com/api/v1' }, { kind: 'api_key', value: 'pk' }, impl as unknown as typeof fetch)
+      await vi.advanceTimersByTimeAsync(30_001)
+      expect(signal!.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(signal!.aborted).toBe(true)
+      const r = await pending
+      expect(r.ok).toBe(false)
+      expect(r.error?.kind).toBe('timeout-ambiguous')
+      expect(r.error?.message).toContain('90 seconds')
+      expect(r.error?.action?.url).toBe('https://publikhq.com/wallet')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a dropped connection on publik says the call may have been charged; a vendor key keeps "No connection"', async () => {
+    const dead = vi.fn(async () => { throw new TypeError('Network request failed') }) as unknown as typeof fetch
+    const onPublik = await runScan(PUBLIK_REQ(), dead)
+    expect(onPublik.ok).toBe(false)
+    if (!onPublik.ok) {
+      expect(onPublik.error.kind).toBe('offline')
+      expect(onPublik.error.retryable).toBe(true)
+      expect(onPublik.error.message).toContain('may still have been charged')
+      expect(onPublik.error.action?.url).toBe('https://publikhq.com/wallet')
+    }
+    const onVendor = await runScan(SCAN_REQ(), dead)
+    expect(!onVendor.ok && onVendor.error.message).toBe('No connection to the provider.')
+    expect(!onVendor.ok && onVendor.error.action).toBeUndefined()
+  })
+
+  it('finish_reason "length" is output-truncated, not "unexpected shape" — and names the charge on publik', async () => {
+    const cut = JSON.stringify({
+      choices: [{ finish_reason: 'length', message: { content: '{"schema_version":"1.0.0","is_food":true,"items":[{"name":"White rice' } }],
+      usage: { prompt_tokens: 4465, completion_tokens: 4096 },
+    })
+    const { impl } = scriptedWithHeaders([{ status: 200, body: cut, headers: { 'x-publik-request-id': 'r5', 'x-publik-charge-micros': '58082' } }])
+    const r = await runScan(PUBLIK_REQ(), impl)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe('output-truncated')
+      expect(r.error.retryable).toBe(false)
+      expect(r.error.message).toContain('This call was charged')
+      expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+    }
+    // The same cut answer from a vendor key: named, without the publik charge sentence.
+    const vendor = await runScan({ ...SCAN_REQ(), provider: 'openai' }, scripted([{ status: 200, body: cut }]).impl)
+    expect(!vendor.ok && vendor.error.kind).toBe('output-truncated')
+    expect(!vendor.ok && vendor.error.message).not.toContain('charged')
+  })
+
+  it('anthropic stop_reason max_tokens and gemini MAX_TOKENS are the same failure', async () => {
+    const a = await runScan(
+      SCAN_REQ(),
+      scripted([{ status: 200, body: JSON.stringify({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"is_food":tr' }], usage: {} }) }]).impl,
+    )
+    expect(!a.ok && a.error.kind).toBe('output-truncated')
+    const g = await runScan(
+      { ...SCAN_REQ(), provider: 'google' },
+      scripted([{ status: 200, body: JSON.stringify({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"y":' }] } }] }) }]).impl,
+    )
+    expect(!g.ok && g.error.kind).toBe('output-truncated')
+  })
+
+  it('a label scan whose whole budget went to reasoning (no content) is output-truncated, not "no text"', async () => {
+    // Oct 13 2026: output_tokens 1024 = reasoning 1028, content null, billed.
+    const { impl } = scriptedWithHeaders([
+      {
+        status: 200,
+        body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: null } }], usage: { completion_tokens: 1024 } }),
+        headers: { 'x-publik-request-id': 'r6', 'x-publik-charge-micros': '15000' },
+      },
+    ])
+    const r = await runLabelScan('openai', { model: 'publik-balanced', imageBase64: 'AAAA', baseUrl: 'https://publikhq.com/api/v1' }, { kind: 'api_key', value: 'pk' }, impl)
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe('output-truncated')
+    expect(r.error?.message).toContain('This call was charged')
+  })
+
+  it('a stopped answer is still parsed as before', async () => {
+    const { impl } = scriptedWithHeaders([
+      { status: 200, body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"x":1}' } }], usage: {} }) },
+    ])
+    const r = await runScan(PUBLIK_REQ(), impl)
+    expect(r.ok).toBe(true)
+  })
+
+  it('asks the gateway for low reasoning effort; a vendor OpenAI key sends the bytes it always sent', async () => {
+    const publik = scriptedWithHeaders([{ status: 200, body: OPENAI_OK }])
+    await runScan(PUBLIK_REQ(), publik.impl)
+    expect(publik.calls[0]!.body.reasoning_effort).toBe('low')
+    expect(publik.calls[0]!.body.max_tokens).toBe(8192)
+
+    const vendor = scripted([{ status: 200, body: OPENAI_OK }])
+    await runScan({ ...SCAN_REQ(), provider: 'openai' }, vendor.impl)
+    expect(vendor.calls[0]!.body.reasoning_effort).toBeUndefined()
+  })
+})

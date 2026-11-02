@@ -224,3 +224,40 @@ describe('base URL override', () => {
     expect(t.tools).toEqual([{ type: 'web_search' }])
   })
 })
+
+/**
+ * Oct 2 2026: on publik's balanced tier (a reasoning model) a meal photo
+ * spent 1,000-2,000 tokens thinking INSIDE the 4,096 cap and seven scans in
+ * a row were billed with the JSON cut mid-item or no answer at all. The caps
+ * and the effort hint below are what changed.
+ */
+describe('output caps and reasoning effort', () => {
+  const key = { kind: 'api_key' as const, value: 'k' }
+
+  it('a scan asks for 8,192 output tokens on every dialect', () => {
+    expect((buildAnthropicRequest(base, key).body as any).max_tokens).toBe(8192)
+    expect((buildOpenAIRequest(base, 'k').body as any).max_tokens).toBe(8192)
+    expect((buildGeminiRequest(base, 'k').body as any).generationConfig.maxOutputTokens).toBe(8192)
+    // An explicit budget still wins.
+    expect((buildOpenAIRequest({ ...base, maxTokens: 1000 }, 'k').body as any).max_tokens).toBe(1000)
+  })
+
+  it('a label scan asks for 2,048 and a tool-less web lookup for 4,096', () => {
+    const label = { model: 'x', imageBase64: 'AAAA' }
+    expect((buildLabelScanRequest('anthropic', label, key).body as any).max_tokens).toBe(2048)
+    expect((buildLabelScanRequest('openai', label, key).body as any).max_tokens).toBe(2048)
+    expect((buildLabelScanRequest('google', label, key).body as any).generationConfig.maxOutputTokens).toBe(2048)
+    const web = { model: 'x', itemName: 'n', brand: null, webSearch: false }
+    expect((buildWebLookupRequest('openai', web, key).body as any).max_tokens).toBe(4096)
+    expect((buildWebLookupRequest('anthropic', { ...web, webSearch: true }, key).body as any).max_tokens).toBe(4096)
+  })
+
+  it('reasoning_effort is sent only when asked for, and only in the OpenAI dialect', () => {
+    expect((buildOpenAIRequest(base, 'k').body as any).reasoning_effort).toBeUndefined()
+    const o = buildOpenAIRequest({ ...base, reasoningEffort: 'low' }, 'k').body as any
+    expect(o.reasoning_effort).toBe('low')
+    // The other dialects have no such field; the hint must not leak into them.
+    expect(JSON.stringify(buildAnthropicRequest({ ...base, reasoningEffort: 'low' }, key).body)).not.toContain('reasoning')
+    expect(JSON.stringify(buildGeminiRequest({ ...base, reasoningEffort: 'low' }, 'k').body)).not.toContain('reasoning')
+  })
+})

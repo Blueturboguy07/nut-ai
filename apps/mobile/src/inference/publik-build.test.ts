@@ -27,6 +27,15 @@ describe('publik-build.json', () => {
     expect(cfg.models.scan).toMatch(/^publik-(fast|balanced|smart)$/)
     expect(cfg.models.text).toMatch(/^publik-(fast|balanced|smart)$/)
   })
+
+  it('scans run on the fast tier', () => {
+    // Nov 1 2026: the balanced tier is a reasoning model that took 53-113 s
+    // and $0.04-0.058 per meal photo through the gateway and hit the output
+    // cap on a busy plate; fast answers the same photo in ~10 s for ~$0.004
+    // with a payload the validator accepts. The listing says $0.01 per use.
+    expect(cfg.models.scan).toBe('publik-fast')
+    expect(cfg.models.text).toBe('publik-fast')
+  })
 })
 
 function walk(dir: string, out: string[] = []): string[] {

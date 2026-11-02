@@ -122,7 +122,22 @@ export interface BuildRequestInput {
   maxTokens?: number
   /** Proxy origin; absent means the vendor's own host. */
   baseUrl?: string
+  /**
+   * OpenAI dialect only: how hard a reasoning model may think before it
+   * answers. publik's tiers default to "medium" when the request says
+   * nothing, and a reasoning model's thinking tokens count INSIDE
+   * `max_tokens` — on a meal photo that spent 1,000-2,000 tokens and 50-80 s
+   * before the first byte of JSON. The client sends "low" on publik mode.
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high'
 }
+
+/**
+ * The scan's output budget. 8,192, not 4,096: a busy plate answers in
+ * ~3,900 tokens on a reasoning tier, so the old cap cut the JSON mid-item
+ * (finish_reason "length") on a request that was already billed.
+ */
+export const SCAN_MAX_TOKENS = 8192
 
 export interface ProviderRequest {
   url: string
@@ -167,7 +182,7 @@ export function buildAnthropicRequest(input: BuildRequestInput, credential: { ki
     headers,
     body: {
       model: input.model,
-      max_tokens: input.maxTokens ?? 4096,
+      max_tokens: input.maxTokens ?? SCAN_MAX_TOKENS,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content }],
       ...(input.jsonSchema == null
@@ -193,7 +208,8 @@ export function buildOpenAIRequest(input: BuildRequestInput, apiKey: string): Pr
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: {
       model: input.model,
-      max_tokens: input.maxTokens ?? 4096,
+      max_tokens: input.maxTokens ?? SCAN_MAX_TOKENS,
+      ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
@@ -229,7 +245,7 @@ export function buildGeminiRequest(input: BuildRequestInput, apiKey: string): Pr
       generationConfig: {
         responseMimeType: 'application/json',
         ...(input.jsonSchema == null ? {} : { responseSchema: input.jsonSchema }),
-        maxOutputTokens: input.maxTokens ?? 4096,
+        maxOutputTokens: input.maxTokens ?? SCAN_MAX_TOKENS,
       },
     },
     promptVersion: PROMPT_VERSION,

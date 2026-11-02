@@ -15,9 +15,17 @@ import {
   chargeUsdFromHeaders,
   classifyGatewayError,
   isPublikResponse,
+  PUBLIK_ORIGIN,
   walletPatchFromHeaders,
   type PublikWalletPatch,
 } from '../publik-core'
+import {
+  MAYBE_CHARGED_DROPPED_MESSAGE,
+  TRUNCATED_CHARGED_MESSAGE,
+  TRUNCATED_MESSAGE,
+  USAGE_ACTION,
+  maybeChargedTimeoutMessage,
+} from '../publik-copy'
 
 /**
  * Path A — the cloud inference client.
@@ -49,6 +57,13 @@ export type ScanFailureKind =
   | 'offline'
   | 'content-refusal'
   | 'schema-violation'
+  /**
+   * The model hit its output cap before the JSON closed (`finish_reason:
+   * "length"`). The request WAS billed and the answer is unusable, so it is
+   * named — a truncated answer used to fail as "unexpected shape", which
+   * told the user nothing about the charge.
+   */
+  | 'output-truncated'
   /**
    * A request that may or may not have been billed. NEVER auto-retried: no
    * provider offers an idempotency key for this endpoint, so a naive retry
@@ -99,7 +114,59 @@ export interface ScanRequest {
   baseUrl?: string
 }
 
-const DEFAULT_TIMEOUT_MS = 45_000
+/**
+ * How long a meal scan waits. 150 s, not 45: through publik's gateway a
+ * reasoning tier took 53-113 s per photo (measured Oct 2 and Nov 1 2026),
+ * and the gateway never cancels upstream when the phone hangs up — so every
+ * 45 s abort was a full charge with no answer. The gateway's own upstream
+ * deadline is 270 s; this stays under it so a timeout here is still the
+ * phone's decision, not the server's.
+ */
+export const SCAN_TIMEOUT_MS = 150_000
+/** Label, receipt, lookup: one small JSON object, but the same tiers. */
+export const VISION_TIMEOUT_MS = 90_000
+
+/**
+ * The output cap was hit: the JSON is cut mid-item and the call is already
+ * billed. Each dialect names this differently; a payload that merely parses
+ * wrong is NOT this, and must not be reported as it.
+ */
+function hitOutputCap(provider: ProviderId, j: Record<string, any>): boolean {
+  if (provider === 'anthropic') return j.stop_reason === 'max_tokens'
+  if (provider === 'openai') return j.choices?.[0]?.finish_reason === 'length'
+  return j.candidates?.[0]?.finishReason === 'MAX_TOKENS'
+}
+
+/** postVisionJson sees only the built request; publik mode is the gateway's host. */
+function isPublikUrl(url: string): boolean {
+  try {
+    return new URL(url).origin === PUBLIK_ORIGIN
+  } catch {
+    return false
+  }
+}
+
+function truncatedFailure(res: Response): ScanFailure {
+  return isPublikResponse(res.headers)
+    ? { kind: 'output-truncated', message: TRUNCATED_CHARGED_MESSAGE, retryable: false, action: USAGE_ACTION }
+    : { kind: 'output-truncated', message: TRUNCATED_MESSAGE, retryable: false }
+}
+
+/**
+ * The two ways a call dies on this side. On publik mode both say the call
+ * may still have been charged and link the usage page: the gateway settles
+ * the charge whether or not the phone was still listening.
+ */
+function transportFailure(err: unknown, publik: boolean, timeoutMs: number, what: string): ScanFailure {
+  if ((err as Error)?.name === 'AbortError') {
+    return publik
+      ? { kind: 'timeout-ambiguous', message: maybeChargedTimeoutMessage(Math.round(timeoutMs / 1000)), retryable: false, action: USAGE_ACTION }
+      : { kind: 'timeout-ambiguous', message: `${what} timed out. It may still have been charged, so we will not retry automatically.`, retryable: false }
+  }
+  return publik
+    ? { kind: 'offline', message: MAYBE_CHARGED_DROPPED_MESSAGE, retryable: true, action: USAGE_ACTION }
+    : { kind: 'offline', message: 'No connection to the provider.', retryable: true }
+}
 
 function classify(status: number, body: string): ScanFailure {
   // A publik envelope names its own state and its one link; it runs before
@@ -167,12 +234,16 @@ function metered(res: Response): { chargeUsd: number | null; wallet?: PublikWall
 }
 
 export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch): Promise<ScanOutcome> {
+  const publik = req.baseUrl != null
   const input = {
     model: req.model,
     imagesBase64: req.imagesBase64,
     localSignalsBlock: req.localSignalsBlock,
     jsonSchema: req.jsonSchema,
-    ...(req.baseUrl ? { baseUrl: req.baseUrl } : {}),
+    // publik only: its tiers default a reasoning model to "medium" effort,
+    // whose thinking counts inside max_tokens and runs the clock. A vendor
+    // key sends the bytes it always sent.
+    ...(publik ? { baseUrl: req.baseUrl!, reasoningEffort: 'low' as const } : {}),
   }
 
   const built =
@@ -182,8 +253,9 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
         ? buildOpenAIRequest(input, req.credential.value)
         : buildGeminiRequest(input, req.credential.value)
 
+  const timeoutMs = req.timeoutMs ?? SCAN_TIMEOUT_MS
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), req.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   const started = Date.now()
 
   try {
@@ -203,6 +275,10 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
     } catch {
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned malformed JSON.', retryable: false } }
     }
+
+    // Before the payload is read: a capped answer is cut mid-JSON, and
+    // reporting that as "unexpected shape" hid a billed call.
+    if (hitOutputCap(req.provider, json as Record<string, any>)) return { ok: false, error: truncatedFailure(res) }
 
     const extracted = extractPayload(req.provider, json)
     if (!extracted || extracted.raw == null) {
@@ -227,21 +303,10 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
       },
     }
   } catch (err) {
-    const aborted = (err as Error)?.name === 'AbortError'
-    if (aborted) {
-      // The request MAY have been billed. Never auto-retry — no provider offers
-      // an idempotency key here, so a retry can double-charge for one photo. The
-      // user is told, and chooses.
-      return {
-        ok: false,
-        error: {
-          kind: 'timeout-ambiguous',
-          message: 'The request timed out. It may still have been charged, so we will not retry automatically.',
-          retryable: false,
-        },
-      }
-    }
-    return { ok: false, error: { kind: 'offline', message: 'No connection to the provider.', retryable: true } }
+    // A timeout MAY have been billed. Never auto-retry — no provider offers
+    // an idempotency key here, so a retry can double-charge for one photo. The
+    // user is told, and chooses.
+    return { ok: false, error: transportFailure(err, publik, timeoutMs, 'The request') }
   } finally {
     clearTimeout(timer)
   }
@@ -278,7 +343,7 @@ export async function runLabelScan(
   input: { model: string; imageBase64: string; baseUrl?: string },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
-  timeoutMs = 30_000,
+  timeoutMs = VISION_TIMEOUT_MS,
 ): Promise<WebLookupOutcome> {
   return postVisionJson(provider, buildLabelScanRequest(provider, input, credential), fetchImpl, timeoutMs)
 }
@@ -313,7 +378,7 @@ export async function runReceiptScan(
   input: { model: string; imageBase64: string; baseUrl?: string },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
-  timeoutMs = 30_000,
+  timeoutMs = VISION_TIMEOUT_MS,
 ): Promise<WebLookupOutcome> {
   return postVisionJson(provider, buildReceiptScanRequest(provider, input, credential), fetchImpl, timeoutMs)
 }
@@ -344,6 +409,10 @@ async function postVisionJson(
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned malformed JSON.', retryable: false } }
     }
 
+    // A reasoning tier can spend the whole cap thinking and return NO text
+    // at all (seen twice on label scans, Oct 13 2026) — billed either way.
+    if (hitOutputCap(provider, j)) return { ok: false, error: truncatedFailure(res) }
+
     let out: string | null = null
     if (provider === 'anthropic') {
       const texts = (j.content ?? []).filter((b: any) => b?.type === 'text')
@@ -369,10 +438,7 @@ async function postVisionJson(
       return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
     }
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') {
-      return { ok: false, error: { kind: 'timeout-ambiguous', message: 'The scan timed out.', retryable: false } }
-    }
-    return { ok: false, error: { kind: 'offline', message: 'No connection to the provider.', retryable: true } }
+    return { ok: false, error: transportFailure(err, isPublikUrl(built.url), timeoutMs, 'The scan') }
   } finally {
     clearTimeout(timer)
   }
@@ -409,7 +475,7 @@ export async function runWebLookup(
   },
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
-  timeoutMs = 30_000,
+  timeoutMs = VISION_TIMEOUT_MS,
 ): Promise<WebLookupOutcome> {
   const built = buildWebLookupRequest(provider, input, credential)
   const controller = new AbortController()
@@ -431,6 +497,8 @@ export async function runWebLookup(
     } catch {
       return { ok: false, error: { kind: 'schema-violation', message: 'The provider returned malformed JSON.', retryable: false } }
     }
+    if (hitOutputCap(provider, j)) return { ok: false, error: truncatedFailure(res) }
+
     let out: string | null = null
     if (provider === 'anthropic') {
       // Content is a block ARRAY interleaving tool use and text; the answer is
@@ -461,10 +529,7 @@ export async function runWebLookup(
       return { ok: false, error: { kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false } }
     }
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') {
-      return { ok: false, error: { kind: 'timeout-ambiguous', message: 'The lookup timed out.', retryable: false } }
-    }
-    return { ok: false, error: { kind: 'offline', message: 'No connection to the provider.', retryable: true } }
+    return { ok: false, error: transportFailure(err, input.baseUrl != null, timeoutMs, 'The lookup') }
   } finally {
     clearTimeout(timer)
   }

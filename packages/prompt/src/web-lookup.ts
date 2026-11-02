@@ -30,6 +30,9 @@ import type { ProviderId, ProviderRequest } from './providers.js'
 
 export const WEB_LOOKUP_PROMPT_VERSION = 'weblookup-1'
 
+/** Room for a reasoning tier's thinking plus the answer; 2,048 was not. */
+export const WEB_LOOKUP_MAX_TOKENS = 4096
+
 export function buildWebLookupInstruction(input: {
   itemName: string
   brand: string | null
@@ -89,7 +92,7 @@ export function buildAnthropicWebLookupRequest(
     headers,
     body: {
       model: input.model,
-      max_tokens: 2048,
+      max_tokens: WEB_LOOKUP_MAX_TOKENS,
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
       messages: [{ role: 'user', content: buildWebLookupInstruction(input) }],
     },
@@ -126,7 +129,7 @@ export function buildOpenAIWebLookupNoToolRequest(input: WebLookupRequestInput, 
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: {
       model: input.model,
-      max_tokens: 2048,
+      max_tokens: WEB_LOOKUP_MAX_TOKENS,
       messages: [{ role: 'user', content: buildWebLookupInstruction(input) }],
       response_format: { type: 'json_object' },
     },
