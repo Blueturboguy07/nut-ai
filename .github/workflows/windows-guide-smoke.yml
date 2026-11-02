@@ -465,6 +465,7 @@ jobs:
             "| ABI pick: phone says '$($case[0])' | fake adb | 60 | $code | - | - | ABI $got (want $($case[1])) |" >> $env:GITHUB_STEP_SUMMARY
           }
           if ($bad -gt 0) { Write-Error "$bad ABI case(s) wrong"; exit 1 }
+          exit 0
 
       # The guide's exact run-android with no phone, as on a reader's PC (no
       # ANDROID_HOME): it must end at once with expo's no-device message,
