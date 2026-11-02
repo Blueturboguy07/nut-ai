@@ -1,0 +1,37 @@
+# Blind-verifier probe (not for main): does the guide's Windows path work on
+# every Node that the root preinstall lets through (>= 22.13.0)?
+name: verify node floor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  floor:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '22.15.0', '22.16.0']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: npm install (guide step)
+        run: |
+          node --version
+          npm install *> npm-install.log
+          Write-Output "npm install exit $LASTEXITCODE"
+          Get-Content npm-install.log -Tail 6
+          exit 0
+      - name: npm run data:build (guide step)
+        run: |
+          npm run data:build *> data-build.log
+          $code = $LASTEXITCODE
+          Get-Content data-build.log -Tail 6
+          Write-Output "data:build exit $code on Node $(node --version)"
+          exit $code
