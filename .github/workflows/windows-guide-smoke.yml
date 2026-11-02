@@ -327,11 +327,14 @@ jobs:
 
   # Round 4 (Nov 1 2026). Iris for Windows ends a step on the pipe 'close'
   # (every copy of the child's output pipe closed), not on the process exit.
-  # Three things the guide's run-android starts inherit that pipe and outlive
-  # the step: the Gradle daemon, maybe the Kotlin compile daemon, and the adb
-  # server expo starts. Iris then recorded a good run-android as timed out
-  # after 15 minutes. The guide's run-android now starts adb outside the pipe
-  # and turns both daemons off; it also names the default SDK folder for
+  # Two things the guide's run-android starts inherit that pipe and outlive
+  # the step: the Gradle daemon and the adb server expo starts. Iris then
+  # recorded a good run-android as timed out after 15 minutes. The guide's
+  # run-android now starts adb outside the pipe and turns the Gradle daemon
+  # off. The Kotlin compile daemon stays on (in-process ran out of Metaspace
+  # in run 41398656174, out-of-process failed in run 41400569749); phases A
+  # and E show that it lets go once the Gradle process exits. It also names
+  # the default SDK folder for
   # Gradle when no ANDROID_HOME is set (a reader's PC, like the runs here).
   # This job runs the real Nut AI release build the way that step starts it,
   # through run-like-iris.mjs, with and without the new lines. No phone or
@@ -396,12 +399,8 @@ jobs:
           $expo = 'npx.cmd expo run:android --variant release'
           $lines = @($guide -split '\r?\n' | Where-Object { $_ -ne '' })
           $gradleOff = "`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'"
-          # The Kotlin line: 'out-of-process' (a compiler process per compile
-          # that exits with it). 'in-process' ran the Gradle process out of
-          # Metaspace in run 41398656174.
-          $kotlinOff = "`${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'out-of-process'"
           if ($lines[-1] -ne $expo) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
-          if (-not ($lines -contains $gradleOff) -or -not ($lines -contains $kotlinOff)) { Write-Error 'run-android.ps1 lacks the daemon lines'; exit 1 }
+          if (-not ($lines -contains $gradleOff)) { Write-Error 'run-android.ps1 lacks the Gradle daemon line'; exit 1 }
           if ($lines[0] -notmatch 'JAVA_HOME' -or $lines[1] -notmatch '^if \(\$jh\)') { Write-Error 'run-android.ps1 no longer starts with the JAVA_HOME lines'; exit 1 }
           $sdkLines = @($lines | Where-Object { $_ -match 'sdk|adb' })
           if ($sdkLines.Count -ne 8) { Write-Error "expected 8 SDK/adb lines, found $($sdkLines.Count)"; exit 1 }
@@ -412,11 +411,9 @@ jobs:
           Save 'after' $lines
           # before: the round 3 command: the two JAVA_HOME lines, then expo.
           Save 'before' @($lines[0], $lines[1], $expo)
-          # kotlin-daemon-on: the guide's command without the Kotlin line.
-          Save 'kotlin-daemon-on' @($lines | Where-Object { $_ -ne $kotlinOff })
           # no-sdk-lines: the guide's command without the SDK and adb lines.
           Save 'no-sdk-lines' @($lines | Where-Object { $sdkLines -notcontains $_ })
-          foreach ($name in 'after', 'before', 'kotlin-daemon-on', 'no-sdk-lines') { "== $name.ps1"; Get-Content "$dir\$name.ps1" }
+          foreach ($name in 'after', 'before', 'no-sdk-lines') { "== $name.ps1"; Get-Content "$dir\$name.ps1" }
           "| phase | ANDROID_HOME | deadline (s) | Iris records | BUILD line at (s) | ended at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
           "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
 
@@ -473,7 +470,7 @@ jobs:
           $sdkForCi = $env:ANDROID_HOME
           Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           $log = "$env:RUNNER_TEMP\r4\a-after-cold.log"
-          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 3600
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 3600 300
           $code = $LASTEXITCODE
           $env:ANDROID_HOME = $sdkForCi
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after A' -FailOnDaemon -Stop
@@ -486,7 +483,7 @@ jobs:
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
           if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
           $over = if ([double]$t.endedAt -gt 900) { 'MORE than' } else { 'within' }
-          Write-Output "cold build: ended with exit 0 at $($t.endedAt) s, $over Iris's 900 s"
+          Write-Output "cold build: BUILD SUCCESSFUL at $($t.buildLineAt) s, powershell.exe exited at $($t.exitedAt) s, 'close' at $($t.endedAt) s (exit 0), $over Iris's 900 s"
 
       # Info: the guide's command without the SDK lines, on a PC with no
       # ANDROID_HOME. Does Gradle find the SDK in the default folder by itself?
@@ -506,28 +503,6 @@ jobs:
           $said = (Select-String -Path $log -Pattern 'SDK location not found|BUILD (SUCCESSFUL|FAILED) in' | Select-Object -First 1).Line
           "| info: no SDK lines | unset | 600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
           Write-Output "without the SDK lines: Iris exit $code; $said"
-
-      # B: the Gradle daemon off but the Kotlin compile daemon on, after a
-      # Kotlin change so the Kotlin compiler runs. Information: does the
-      # Kotlin daemon alone hold the pipe?
-      - name: B - info - Gradle daemon off, Kotlin compile daemon on
-        working-directory: apps/mobile/android
-        timeout-minutes: 20
-        continue-on-error: true
-        run: |
-          $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
-          Add-Content $kt.FullName '// windows-guide-smoke phase B'
-          $sdkForCi = $env:ANDROID_HOME
-          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
-          $log = "$env:RUNNER_TEMP\r4\b-kotlin-daemon-on.log"
-          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\kotlin-daemon-on.ps1" (Get-Location).Path $log 900
-          $code = $LASTEXITCODE
-          $env:ANDROID_HOME = $sdkForCi
-          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after B' -Stop
-          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
-          $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
-          "| B: Gradle daemon off, Kotlin daemon on | unset | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
-          Write-Output "Kotlin daemon on: Iris exit $code (124 = Iris would time out), BUILD line at $($t.buildLineAt) s"
 
       # C: "before" - the round 3 command (daemons on), after a Kotlin change,
       # with ANDROID_HOME set so the daemons are the only change. The bug: the
@@ -563,7 +538,7 @@ jobs:
           $sdkForCi = $env:ANDROID_HOME
           Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           $log = "$env:RUNNER_TEMP\r4\e-after-warm.log"
-          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 900
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 900 300
           $code = $LASTEXITCODE
           $env:ANDROID_HOME = $sdkForCi
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after E' -FailOnDaemon -Stop
@@ -574,7 +549,7 @@ jobs:
           if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
           if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
-          Write-Output "after: BUILD SUCCESSFUL at $($t.buildLineAt) s, 'close' at $($t.endedAt) s, Iris exit 0"
+          Write-Output "after: BUILD SUCCESSFUL at $($t.buildLineAt) s, powershell.exe exited at $($t.exitedAt) s, 'close' at $($t.endedAt) s, Iris exit 0"
 
       - name: the build made an APK
         if: always()

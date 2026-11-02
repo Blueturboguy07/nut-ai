@@ -3,7 +3,8 @@
 # waits on), then optionally stops them. Prints kinds and ids only, never
 # command lines.
 #   -Label        text for the heading
-#   -FailOnDaemon exit 1 when a GradleDaemon or KotlinCompileDaemon is running
+#   -FailOnDaemon exit 1 when a GradleDaemon is running (a KotlinCompileDaemon
+#                 is only reported: it stops once its Gradle process is gone)
 #   -Stop         then stop every java, aapt2 and adb process
 param([string]$Label = '', [switch]$FailOnDaemon, [switch]$Stop)
 
@@ -23,7 +24,7 @@ function Get-BuildProcesses {
 $found = Get-BuildProcesses
 Write-Output "--- build processes still running $Label`: $($found.Count)"
 foreach ($p in $found) { Write-Output ("    {0,-20} id {1,7} parent {2,7}" -f $p.Kind, $p.Id, $p.Parent) }
-$daemons = @($found | Where-Object { $_.Kind -in 'GradleDaemon', 'KotlinCompileDaemon' })
+$daemons = @($found | Where-Object { $_.Kind -eq 'GradleDaemon' })
 
 if ($Stop) {
   $adb = Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe'

@@ -9,5 +9,4 @@ $adb.UseShellExecute = $true
 $adb.WindowStyle = 'Hidden'
 if ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }
 $env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'
-${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'out-of-process'
 npx.cmd expo run:android --variant release

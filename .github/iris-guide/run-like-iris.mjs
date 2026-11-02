@@ -16,7 +16,11 @@
  * the Windows commands in publik lib/guides/nut-ai.ts (guide v16). Do not edit
  * them here; copy them again from the guide.
  *
- * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds]
+ * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds] [linger-seconds]
+ * linger-seconds is NOT Iris behavior, only a CI time saver for long
+ * deadlines: once powershell.exe has exited, give up after that many seconds
+ * without a 'close' and report the held pipe (exit 124), instead of waiting
+ * out the whole deadline.
  * Exit code: the code Iris would record, or 124 when Iris would time out.
  * It also prints when Gradle's "BUILD SUCCESSFUL" / "BUILD FAILED" line came,
  * so a log shows how long the step stayed open after the build was done, and
@@ -25,7 +29,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const [commandFile, cwd, logFile, deadlineSeconds = '900'] = process.argv.slice(2)
+const [commandFile, cwd, logFile, deadlineSeconds = '900', lingerSeconds] = process.argv.slice(2)
 if (!commandFile || !cwd || !logFile) {
   console.error('usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds]')
   process.exit(2)
@@ -79,6 +83,12 @@ child.stderr.on('data', (chunk) => {
 child.on('exit', (code) => {
   exitedAt = seconds()
   console.log(`\n--- powershell.exe exited (${code}) at ${exitedAt} s`)
+  if (lingerSeconds) {
+    setTimeout(() => {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+      finish('lingered')
+    }, Number(lingerSeconds) * 1000).unref()
+  }
 })
 
 let settled = false
@@ -98,11 +108,18 @@ function finish(kind) {
   }
   writeFileSync(logFile, `${lines.join('\n')}\n${stderr}`.trim() + '\n')
   if (buildLineAt !== null) console.log(`--- Gradle's BUILD line came at ${buildLineAt} s`)
-  const recordedCode = kind === 'timed_out' ? 124 : (code ?? 1)
+  const recordedCode = kind === 'timed_out' || kind === 'lingered' ? 124 : (code ?? 1)
   writeFileSync(
     `${logFile}.timing.json`,
     JSON.stringify({ recorded: recordedCode, kind, deadlineSeconds: Number(deadlineSeconds), exitedAt, buildLineAt, endedAt: seconds() }) + '\n',
   )
+  if (kind === 'lingered') {
+    console.log(
+      `--- no 'close' within ${lingerSeconds} s after powershell.exe exited at ${exitedAt} s: a child process still holds ` +
+        `the output pipe, so Iris would wait out its deadline and record timed_out (CI stopped waiting early)`,
+    )
+    process.exit(124)
+  }
   if (kind === 'timed_out') {
     console.log(
       `--- Iris would record timed_out: no 'close' within ${deadlineSeconds} s` +
