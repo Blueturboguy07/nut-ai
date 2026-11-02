@@ -18,6 +18,7 @@ on:
       - package-lock.json
       - tools/**
       - packages/db-adapter/**
+      - scripts/check-node-sqlite.mjs
       - .github/workflows/windows-guide-smoke.yml
   pull_request:
     paths:
@@ -25,6 +26,7 @@ on:
       - package-lock.json
       - tools/**
       - packages/db-adapter/**
+      - scripts/check-node-sqlite.mjs
       - .github/workflows/windows-guide-smoke.yml
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
             Write-Error 'better-sqlite3 is back in node_modules'
             exit 1
           }
-          node -e "const {DatabaseSync}=require('node:sqlite'); const d=new DatabaseSync(':memory:'); d.exec('create virtual table t using fts5(x, tokenize=\"trigram\")'); console.log('node:sqlite ok, fts5 trigram ok, sqlite', d.prepare('select sqlite_version() v').get().v)"
+          node scripts/check-node-sqlite.mjs
 
       - name: npm run data:build (the guide's "Build the nutrition database" step)
         run: npm run data:build 2>&1 | Tee-Object -FilePath data-build.log
