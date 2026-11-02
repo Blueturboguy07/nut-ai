@@ -8,5 +8,10 @@ $adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\platform-tools\a
 $adb.UseShellExecute = $true
 $adb.WindowStyle = 'Hidden'
 if ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }
+$abis = ''
+if ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }
+$abi = @("$abis" -split '[,\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]
+if (-not $abi) { $abi = 'arm64-v8a' }
+$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi
 $env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'
-npx.cmd expo run:android --variant release
+npx.cmd expo run:android --variant release --no-bundler
