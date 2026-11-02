@@ -20,6 +20,7 @@ on:
       - packages/db-adapter/**
       - scripts/check-node-sqlite.mjs
       - scripts/check-node-version.cjs
+      - .github/iris-guide/**
       - .github/workflows/windows-guide-smoke.yml
   pull_request:
     paths:
@@ -29,6 +30,7 @@ on:
       - packages/db-adapter/**
       - scripts/check-node-sqlite.mjs
       - scripts/check-node-version.cjs
+      - .github/iris-guide/**
       - .github/workflows/windows-guide-smoke.yml
 
 jobs:
@@ -147,3 +149,131 @@ jobs:
         with:
           name: unsupported-node-install-log-${{ matrix.node }}
           path: npm-install-unsupported.log
+
+  # The guide's install-jdk step (Windows) on a PC whose java is Java 8: Java
+  # 8 first on the machine PATH and JAVA_HOME pointing at it. Guide v16 first
+  # only asked whether a java command existed, so it skipped the install and
+  # Gradle then stopped with "Gradle requires JVM 17 or later to run" (blind
+  # verify, run 41385115883). The commands run through run-like-iris.ps1, so
+  # each one gets a fresh Windows PowerShell with PATH from the registry, as
+  # in Iris.
+  install-jdk-replaces-java-8:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: npm install and generate the Android project (the guide's earlier steps)
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Select-Object -Last 5
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Set-Location apps/mobile
+          npx expo prebuild --platform android 2>&1 | Select-Object -Last 5
+          if (-not (Test-Path android/gradlew.bat)) { Write-Error 'no android/gradlew.bat'; exit 1 }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: make this runner a PC with Java 8 (machine PATH and JAVA_HOME)
+        run: |
+          $java8 = $env:JAVA_HOME
+          & "$java8\bin\java.exe" -version
+          $isJava = '(?i)\\java|jdk|jre|javapath|adoptium|zulu|corretto'
+          foreach ($scope in 'Machine', 'User') {
+            $entries = @(([Environment]::GetEnvironmentVariable('Path', $scope)) -split ';' | Where-Object { $_ })
+            $removed = @($entries | Where-Object { $_ -match $isJava })
+            $kept = @($entries | Where-Object { $_ -notmatch $isJava })
+            Write-Output "$scope Path: removed $($removed.Count) Java entries: $($removed -join ' | ')"
+            if ($scope -eq 'Machine') { $kept = @("$java8\bin") + $kept }
+            [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), $scope)
+          }
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $java8, 'Machine')
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          Get-ChildItem "$env:ProgramFiles\Eclipse Adoptium" -ErrorAction SilentlyContinue | ForEach-Object { "already under Program Files: $($_.FullName)" }
+          Write-Output "JAVA_HOME for the next steps (what Iris would inherit): $java8"
+
+      - name: control - Gradle on this PC before the guide step (Java 8)
+        working-directory: apps/mobile/android
+        run: |
+          ./../../../.github/iris-guide/run-like-iris.ps1 -Command 'java -version; .\gradlew.bat --version' -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\control.log
+          Write-Output "control exit $LASTEXITCODE (expected non-zero: Gradle refuses JVM 8)"
+          exit 0
+
+      - name: the guide's install-jdk command (verbatim), as Iris runs it
+        run: |
+          $command = Get-Content .github/iris-guide/install-jdk.ps1 -Raw
+          ./.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory $HOME -LogFile install-jdk.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { Write-Error "install-jdk failed (exit $code)"; exit 1 }
+          $last = Select-String -Path install-jdk.log -Pattern 'version "(1\.)?(\d+)' | Select-Object -Last 1
+          if (-not $last) { Write-Error 'install-jdk printed no java version'; exit 1 }
+          # "1.8.0_504" -> 8, "17.0.20" -> 17: group 2 is the major either way.
+          $major = [int]$last.Matches[0].Groups[2].Value
+          Write-Output "last java -version line: $($last.Line.Trim()) -> major $major"
+          if ($major -lt 17) { Write-Error "install-jdk ended on Java $major"; exit 1 }
+          $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
+          Write-Output "User JAVA_HOME saved by the step: $saved"
+          if (-not $saved -or -not (Test-Path "$saved\bin\java.exe")) { Write-Error 'no usable User JAVA_HOME saved'; exit 1 }
+
+      - name: the guide's run-android command (verbatim prelude), as Iris runs it - Gradle runs on 17
+        working-directory: apps/mobile/android
+        run: |
+          $guide = Get-Content ../../../.github/iris-guide/run-android.ps1 -Raw
+          $build = 'npx.cmd expo run:android --variant release'
+          if (-not $guide.Contains($build)) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
+          # Same prelude, and Gradle's own report of its JVM instead of the
+          # 20-minute release build.
+          $command = $guide.Replace($build, "java -version`n.\gradlew.bat --version")
+          ./../../../.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory (Get-Location).Path -LogFile $env:RUNNER_TEMP\gradle.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { Write-Error "gradlew --version failed (exit $code)"; exit 1 }
+          $jvm = Select-String -Path $env:RUNNER_TEMP\gradle.log -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
+          if (-not $jvm) { Write-Error 'gradlew --version printed no JVM line'; exit 1 }
+          Write-Output "Gradle: $($jvm.Line.Trim())"
+          if ([int]$jvm.Matches[0].Groups[1].Value -lt 17) { Write-Error 'Gradle still runs on a JVM older than 17'; exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: install-jdk-java-8-logs
+          path: |
+            install-jdk.log
+            ${{ runner.temp }}/control.log
+            ${{ runner.temp }}/gradle.log
+
+  # The same command on a PC that already has Java 17 on PATH: nothing is
+  # installed and no JAVA_HOME is saved.
+  install-jdk-keeps-java-17:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: the guide's install-jdk command (verbatim), as Iris runs it
+        run: |
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          $command = Get-Content .github/iris-guide/install-jdk.ps1 -Raw
+          ./.github/iris-guide/run-like-iris.ps1 -Command $command -WorkingDirectory $HOME -LogFile install-jdk.log
+          if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk failed (exit $LASTEXITCODE)"; exit 1 }
+          if (-not (Select-String -Path install-jdk.log -Pattern 'version "17\.' -Quiet)) { Write-Error 'no Java 17 version line'; exit 1 }
+          if (Select-String -Path install-jdk.log -Pattern 'Found Eclipse Temurin|Successfully installed' -Quiet) { Write-Error 'winget ran on a PC that already had Java 17'; exit 1 }
+          $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
+          if ($saved) { Write-Error "a User JAVA_HOME was saved ($saved) although Java 17 was already there"; exit 1 }
+          Write-Output 'Java 17 left alone: no winget, no saved JAVA_HOME'
