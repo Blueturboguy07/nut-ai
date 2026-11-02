@@ -396,7 +396,10 @@ jobs:
           $expo = 'npx.cmd expo run:android --variant release'
           $lines = @($guide -split '\r?\n' | Where-Object { $_ -ne '' })
           $gradleOff = "`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'"
-          $kotlinOff = "`${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'in-process'"
+          # The Kotlin line: 'out-of-process' (a compiler process per compile
+          # that exits with it). 'in-process' ran the Gradle process out of
+          # Metaspace in run 41398656174.
+          $kotlinOff = "`${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'out-of-process'"
           if ($lines[-1] -ne $expo) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
           if (-not ($lines -contains $gradleOff) -or -not ($lines -contains $kotlinOff)) { Write-Error 'run-android.ps1 lacks the daemon lines'; exit 1 }
           if ($lines[0] -notmatch 'JAVA_HOME' -or $lines[1] -notmatch '^if \(\$jh\)') { Write-Error 'run-android.ps1 no longer starts with the JAVA_HOME lines'; exit 1 }
@@ -478,7 +481,7 @@ jobs:
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
           "| A: after, cold | unset | 3600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
-          Select-String -Path $log -Pattern 'single-use Daemon|SDK location' | Select-Object -First 5 | ForEach-Object { $_.Line }
+          Select-String -Path $log -Pattern 'single-use Daemon|SDK location|OutOfMemoryError|Metaspace' | Select-Object -First 8 | ForEach-Object { $_.Line }
           if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
           if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
