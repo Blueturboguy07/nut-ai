@@ -2,8 +2,9 @@
 /**
  * Does this Node carry the SQLite the corpus build and the harness need?
  *
- * node:sqlite arrived unflagged in Node 22.13, and the resolver depends on
- * FTS5 with the trigram tokenizer being compiled into it. This answers both
+ * node:sqlite arrived unflagged in Node 22.13, but FTS5 with the trigram
+ * tokenizer (which the resolver depends on) only from 22.16.0 and 24.0.0;
+ * 22.13-22.15 and 23.x fail with "no such module: fts5". This answers both
  * in one line and exits 1 otherwise, so a reader (or CI) learns "wrong Node"
  * before `npm run data:build` says something less clear.
  */

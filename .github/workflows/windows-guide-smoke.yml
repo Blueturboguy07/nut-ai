@@ -1,5 +1,5 @@
-# The two commands the publik Iris guide runs on a Windows PC before the
-# phone build, on a clean runner, with no Visual Studio needed.
+# The commands the publik Iris guide runs on a Windows PC before the phone
+# build, on a clean runner, with no Visual Studio needed.
 #
 # Nov 1 2026: better-sqlite3 made `npm install` run node-gyp on every fresh
 # install (npm's rebuild set ignores the package's own "gypfile": false when
@@ -32,9 +32,16 @@ on:
       - .github/workflows/windows-guide-smoke.yml
 
 jobs:
+  # 22.16.0 is the floor (the first 22.x whose node:sqlite has FTS5), '22' is
+  # the current LTS line, '24' the next one.
   install-and-build-corpus:
+    name: install-and-build-corpus (Node ${{ matrix.node }})
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.16.0', '22', '24']
     defaults:
       run:
         shell: pwsh
@@ -43,14 +50,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
 
       # Exactly the guide's step. The output is kept so the next step can
       # prove no native build ran: this runner HAS Visual Studio, so a
       # node-gyp rebuild would quietly succeed here and only fail on a
       # reader's PC.
       - name: npm install (the guide's "Install dependencies" step)
-        run: npm install 2>&1 | Tee-Object -FilePath npm-install.log
+        run: |
+          node --version
+          npm install 2>&1 | Tee-Object -FilePath npm-install.log
 
       - name: no native build ran
         run: |
@@ -87,19 +96,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-guide-smoke-logs
+          name: windows-guide-smoke-logs-node-${{ matrix.node }}
           path: |
             npm-install.log
             data-build.log
 
   # The guide's first check sees THAT Node answers, not which version. On
   # Node 20 the install used to pass with an engines warning and the corpus
-  # build then died on "No such built-in module: node:sqlite". The root
-  # preinstall (scripts/check-node-version.cjs) must stop the install
-  # itself, and say why.
-  old-node-is-stopped:
+  # build then died on "No such built-in module: node:sqlite"; on Node
+  # 22.13-22.15 and 23.x it passed and the corpus build died on "no such
+  # module: fts5" (blind verify, Nov 1 2026). The root preinstall
+  # (scripts/check-node-version.cjs) must stop the install itself, and say why.
+  unsupported-node-is-stopped:
+    name: unsupported-node-is-stopped (Node ${{ matrix.node }})
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22.13.0', '22.15.0', '23.11.0']
     defaults:
       run:
         shell: pwsh
@@ -108,20 +123,20 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node }}
 
-      - name: npm install on Node 20 stops and names the Node floor
+      - name: npm install on Node ${{ matrix.node }} stops and names the Node floor
         run: |
           node --version
-          npm install *> npm-install-node20.log
+          npm install *> npm-install-unsupported.log
           $code = $LASTEXITCODE
-          Get-Content npm-install-node20.log -Tail 15
+          Get-Content npm-install-unsupported.log -Tail 15
           if ($code -eq 0) {
-            Write-Error 'npm install passed on Node 20; the corpus build would die on node:sqlite later'
+            Write-Error "npm install passed on Node ${{ matrix.node }}; the corpus build would die on node:sqlite or fts5 later"
             exit 1
           }
-          if (-not (Select-String -Path npm-install-node20.log -Pattern 'Nut AI needs Node 22.13.0 or newer' -SimpleMatch -Quiet)) {
-            Write-Error "npm install failed on Node 20 (exit $code) without naming the Node floor"
+          if (-not (Select-String -Path npm-install-unsupported.log -Pattern 'Nut AI needs Node 22.16.0 or newer, and not Node 23.' -SimpleMatch -Quiet)) {
+            Write-Error "npm install failed on Node ${{ matrix.node }} (exit $code) without naming the Node floor"
             exit 1
           }
           Write-Output "stopped as intended (exit $code)"
@@ -130,5 +145,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: old-node-install-log
-          path: npm-install-node20.log
+          name: unsupported-node-install-log-${{ matrix.node }}
+          path: npm-install-unsupported.log

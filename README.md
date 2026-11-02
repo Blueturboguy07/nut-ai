@@ -157,8 +157,10 @@ build needs before publik mode shows up.
 
 ## Development
 
-Requires Node ≥ 22.13: the corpus build and the test harness use the built-in `node:sqlite`,
-so there is no native module to compile and no C++ toolchain to install on Windows.
+Requires Node 22.16 or newer, or Node 24 or newer (not Node 23): the corpus build and the test
+harness use the built-in `node:sqlite` with FTS5, so there is no native module to compile and no
+C++ toolchain to install on Windows. Node 22.13-22.15 and 23.x have node:sqlite without FTS5 (or
+none at all); `npm install` stops on them and says so.
 
 ```bash
 npm install

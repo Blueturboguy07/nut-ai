@@ -17,9 +17,10 @@ import type { DbAdapter, RunResult, SqlValue } from './types.js'
  * the tarball ships a prebuilt binary — on a Windows PC without the Visual
  * Studio C++ build tools `npm install` died with "Could not find any Visual
  * Studio installation to use", and the nutrition-corpus build and the phone
- * build fell over after it. node:sqlite is built into Node 22.13+, needs no
- * compiler, and carries FTS5 with the trigram tokenizer the resolver depends
- * on (detectCapabilities checks, never assumes).
+ * build fell over after it. node:sqlite is built into Node, needs no
+ * compiler, and from Node 22.16 / 24.0 carries FTS5 with the trigram
+ * tokenizer the resolver depends on (22.13-22.15 and 23.x do not; the root
+ * preinstall refuses them, and detectCapabilities checks, never assumes).
  */
 
 /**

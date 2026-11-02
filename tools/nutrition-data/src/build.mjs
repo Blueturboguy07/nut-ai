@@ -232,7 +232,7 @@ async function main() {
   }
 
   await mkdir(dirname(OUT), { recursive: true })
-  // node:sqlite, built into Node 22.13+: no native module, no compiler, so
+  // node:sqlite (with FTS5 from Node 22.16 / 24.0): no native module, no compiler, so
   // `npm install` on a fresh Windows PC no longer needs Visual Studio.
   const db = new DatabaseSync(OUT)
   db.exec('PRAGMA journal_mode = DELETE')
