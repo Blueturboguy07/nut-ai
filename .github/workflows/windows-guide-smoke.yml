@@ -327,16 +327,19 @@ jobs:
 
   # Round 4 (Nov 1 2026). Iris for Windows ends a step on the pipe 'close'
   # (every copy of the child's output pipe closed), not on the process exit.
-  # A Gradle daemon - and maybe a Kotlin compile daemon - that the build
-  # starts inherits that pipe and outlives the step, so Iris recorded a good
-  # run-android as timed out after 15 minutes. The guide's run-android now
-  # turns both daemons off. This job runs the real Nut AI release build the
-  # way that step starts it, through run-like-iris.mjs, with and without the
-  # new lines. No phone or emulator here, so Gradle runs with the arguments
-  # expo run:android --variant release passes it for an arm64 phone
-  # (@expo/cli start/platforms/android/gradle.js assembleAsync). Expo also
-  # sets __EXPO_EAGER_BUNDLE_OPTIONS after bundling itself; without it the
-  # Gradle bundle task bundles. Manual only: a cold release build is long.
+  # Three things the guide's run-android starts inherit that pipe and outlive
+  # the step: the Gradle daemon, maybe the Kotlin compile daemon, and the adb
+  # server expo starts. Iris then recorded a good run-android as timed out
+  # after 15 minutes. The guide's run-android now starts adb outside the pipe
+  # and turns both daemons off; it also names the default SDK folder for
+  # Gradle when no ANDROID_HOME is set (a reader's PC, like the runs here).
+  # This job runs the real Nut AI release build the way that step starts it,
+  # through run-like-iris.mjs, with and without the new lines. No phone or
+  # emulator here, so Gradle runs with the arguments expo run:android
+  # --variant release passes it for an arm64 phone (@expo/cli
+  # start/platforms/android/gradle.js assembleAsync). Expo also sets
+  # __EXPO_EAGER_BUNDLE_OPTIONS after bundling itself; without it the Gradle
+  # bundle task bundles. Manual only: a cold release build is long.
   run-android-gradle-daemons:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
@@ -368,73 +371,138 @@ jobs:
           java-version: '17'
 
       # Iris builds PATH from the registry, so the Node a reader installed is
-      # the one in the machine Path. Put this job's Node 22 there.
-      - name: make this runner a PC with Node 22 and Java 17, and write the commands
+      # the one in the machine Path: put this job's Node 22 there. A reader's
+      # Android Studio puts the SDK in %LOCALAPPDATA%\Android\Sdk and sets no
+      # ANDROID_HOME: a junction gives the runner's SDK that path, and the
+      # reader-like phases run with ANDROID_HOME and ANDROID_SDK_ROOT removed.
+      - name: make this runner a PC with Node 22, Java 17 and the SDK where Android Studio puts it
         run: |
           $nodeDir = Split-Path (Get-Command node).Source
           $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
-          Write-Output "node: $nodeDir ($(node --version)); JAVA_HOME: $env:JAVA_HOME; ANDROID_HOME: $env:ANDROID_HOME"
+          $sdkDefault = Join-Path $HOME 'AppData\Local\Android\Sdk'
+          if (-not (Test-Path $sdkDefault)) {
+            New-Item -ItemType Directory -Force (Split-Path $sdkDefault) | Out-Null
+            New-Item -ItemType Junction -Path $sdkDefault -Target $env:ANDROID_HOME | Out-Null
+          }
+          if (-not (Test-Path (Join-Path $sdkDefault 'platform-tools\adb.exe'))) { Write-Error "no adb under $sdkDefault"; exit 1 }
+          Write-Output "node: $nodeDir ($(node --version)); JAVA_HOME: $env:JAVA_HOME; SDK: $env:ANDROID_HOME, also at $sdkDefault"
           Get-ChildItem (Join-Path $env:ANDROID_HOME 'ndk') -ErrorAction SilentlyContinue | ForEach-Object { "NDK on the runner: $($_.Name)" }
+
+      - name: write the before and after commands from the guide's run-android
+        run: |
           $guide = Get-Content .github/iris-guide/run-android.ps1 -Raw
           $expo = 'npx.cmd expo run:android --variant release'
-          if (-not $guide.Contains($expo)) { Write-Error 'run-android.ps1 no longer runs the expo build'; exit 1 }
           $lines = @($guide -split '\r?\n' | Where-Object { $_ -ne '' })
           $gradleOff = "`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'"
           $kotlinOff = "`${env:ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy} = 'in-process'"
+          if ($lines[-1] -ne $expo) { Write-Error 'run-android.ps1 no longer ends with the expo build'; exit 1 }
           if (-not ($lines -contains $gradleOff) -or -not ($lines -contains $kotlinOff)) { Write-Error 'run-android.ps1 lacks the daemon lines'; exit 1 }
+          if ($lines[0] -notmatch 'JAVA_HOME' -or $lines[1] -notmatch '^if \(\$jh\)') { Write-Error 'run-android.ps1 no longer starts with the JAVA_HOME lines'; exit 1 }
+          $sdkLines = @($lines | Where-Object { $_ -match 'sdk|adb' })
+          if ($sdkLines.Count -ne 8) { Write-Error "expected 8 SDK/adb lines, found $($sdkLines.Count)"; exit 1 }
           $dir = Join-Path $env:RUNNER_TEMP 'r4'
           New-Item -ItemType Directory -Force $dir | Out-Null
-          # after: the guide's command, the expo line swapped for the Gradle build it starts.
-          Set-Content "$dir\after.ps1" (($lines -join "`n").Replace($expo, $env:EXPO_GRADLE))
-          # before: the round 3 command (the same lines without the two new ones).
-          Set-Content "$dir\before.ps1" ((@($lines | Where-Object { $_ -ne $gradleOff -and $_ -ne $kotlinOff }) -join "`n").Replace($expo, $env:EXPO_GRADLE))
-          # kotlin-daemon-on: the Gradle daemon off, the Kotlin compile daemon left on.
-          Set-Content "$dir\kotlin-daemon-on.ps1" ((@($lines | Where-Object { $_ -ne $kotlinOff }) -join "`n").Replace($expo, $env:EXPO_GRADLE))
-          foreach ($name in 'after', 'before', 'kotlin-daemon-on') { "== $name.ps1"; Get-Content "$dir\$name.ps1" }
-          "| phase | daemons | deadline (s) | Iris records | BUILD line at (s) | ended at (s) | Gradle says |" >> $env:GITHUB_STEP_SUMMARY
+          function Save($name, $keep) { Set-Content "$dir\$name.ps1" (($keep -join "`n").Replace($expo, $env:EXPO_GRADLE)); Set-Content "$dir\$name-expo.ps1" ($keep -join "`n") }
+          # after: the guide's command (in *-expo.ps1 as is; in the other the expo line becomes the Gradle build it starts).
+          Save 'after' $lines
+          # before: the round 3 command: the two JAVA_HOME lines, then expo.
+          Save 'before' @($lines[0], $lines[1], $expo)
+          # kotlin-daemon-on: the guide's command without the Kotlin line.
+          Save 'kotlin-daemon-on' @($lines | Where-Object { $_ -ne $kotlinOff })
+          # no-sdk-lines: the guide's command without the SDK and adb lines.
+          Save 'no-sdk-lines' @($lines | Where-Object { $sdkLines -notcontains $_ })
+          foreach ($name in 'after', 'before', 'kotlin-daemon-on', 'no-sdk-lines') { "== $name.ps1"; Get-Content "$dir\$name.ps1" }
+          "| phase | ANDROID_HOME | deadline (s) | Iris records | BUILD line at (s) | ended at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
           "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
 
-      # D: the guide's exact command on a PC with no phone plugged in. Expo
-      # looks for a device (adb) before it starts Gradle, and must stop with
-      # its message, not hang on an adb server that holds the pipe.
-      - name: D - the guide's exact run-android command, no phone connected
+      # D-before: the round 3 command with no phone. Expo stops at once, but
+      # the adb server it started keeps the pipe (run 41397418304: no 'close'
+      # in 300 s). This step passes only if that reproduces.
+      - name: D-before - the round 3 run-android command, no phone - adb keeps the pipe
         working-directory: apps/mobile
         timeout-minutes: 10
         run: |
-          $log = "$env:RUNNER_TEMP\r4\d-no-phone.log"
-          node ../../.github/iris-guide/run-like-iris.mjs ../../.github/iris-guide/run-android.ps1 (Get-Location).Path $log 300
+          $log = "$env:RUNNER_TEMP\r4\d-before.log"
+          node ../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\before-expo.ps1" (Get-Location).Path $log 120
           $code = $LASTEXITCODE
-          & ../../.github/iris-guide/build-processes.ps1 -Label 'after D' -Stop
+          & ../../.github/iris-guide/build-processes.ps1 -Label 'after D-before' -Stop
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'No Android connected device found' -SimpleMatch | Select-Object -First 1).Line
-          "| D: exact guide command, no phone | off | 300 | $code | - | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          "| D-before: round 3 command, no phone | set | 120 | $code | - | $($t.endedAt) (powershell exited $($t.exitedAt)) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          if (-not $said) { Write-Error 'expo did not stop with the no-device message'; exit 1 }
+          if ($code -ne 124) { Write-Error "before: Iris would record $code, the adb bug did not reproduce"; exit 1 }
+          Write-Output "reproduced: powershell.exe exited at $($t.exitedAt) s, then no 'close' until the deadline (adb server)"
+
+      # D-after: the guide's exact command with no phone, as on a reader's PC
+      # (no ANDROID_HOME). Must end at once with expo's no-device message,
+      # while the adb server the prelude started keeps running.
+      - name: D-after - the guide's exact run-android command, no phone, no ANDROID_HOME
+        working-directory: apps/mobile
+        timeout-minutes: 10
+        run: |
+          $sdkForCi = $env:ANDROID_HOME
+          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          $log = "$env:RUNNER_TEMP\r4\d-after.log"
+          node ../../.github/iris-guide/run-like-iris.mjs ../../.github/iris-guide/run-android.ps1 (Get-Location).Path $log 300
+          $code = $LASTEXITCODE
+          $env:ANDROID_HOME = $sdkForCi
+          $adbAlive = @(Get-Process adb -ErrorAction SilentlyContinue).Count
+          & ../../.github/iris-guide/build-processes.ps1 -Label 'after D-after' -Stop
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'No Android connected device found' -SimpleMatch | Select-Object -First 1).Line
+          "| D-after: exact guide command, no phone | unset | 300 | $code | - | $($t.endedAt) (powershell exited $($t.exitedAt)) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "adb processes still running after the step: $adbAlive"
           if ($code -eq 124) { Write-Error 'the guide command with no phone never ended: a child holds the pipe'; exit 1 }
           if ($code -eq 0) { Write-Error 'expo run:android passed with no phone'; exit 1 }
           if (-not $said) { Write-Error "expo stopped (exit $code) without the no-device message"; exit 1 }
-          Write-Output "no phone: expo stopped with exit $code at $($t.endedAt) s: $said"
+          if ($adbAlive -lt 1) { Write-Error 'no adb server left: the prelude did not start it'; exit 1 }
+          Write-Output "after: expo stopped with exit $code; 'close' at $($t.endedAt) s; the adb server runs on without the pipe"
 
-      # A: "after", cold. The first build on a fresh PC downloads and compiles
-      # everything; its time is reported against Iris's 900 s, not hidden.
-      - name: A - after, cold build - the guide's run-android lines, daemons off
+      # A: "after", cold, as on a reader's PC (no ANDROID_HOME). The first
+      # build on a fresh PC downloads and compiles everything; its time is
+      # reported against Iris's 900 s, not hidden.
+      - name: A - after, cold build - the guide's run-android lines, no ANDROID_HOME
         working-directory: apps/mobile/android
         timeout-minutes: 75
         run: |
+          $sdkForCi = $env:ANDROID_HOME
+          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           $log = "$env:RUNNER_TEMP\r4\a-after-cold.log"
           node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 3600
           $code = $LASTEXITCODE
+          $env:ANDROID_HOME = $sdkForCi
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after A' -FailOnDaemon -Stop
           $left = $LASTEXITCODE
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
-          "| A: after, cold | off | 3600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
-          Select-String -Path $log -Pattern 'single-use Daemon|Kotlin compiler execution strategy|in-process' | Select-Object -First 5 | ForEach-Object { $_.Line }
+          "| A: after, cold | unset | 3600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          Select-String -Path $log -Pattern 'single-use Daemon|SDK location' | Select-Object -First 5 | ForEach-Object { $_.Line }
           if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
           if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
           $over = if ([double]$t.endedAt -gt 900) { 'MORE than' } else { 'within' }
           Write-Output "cold build: ended with exit 0 at $($t.endedAt) s, $over Iris's 900 s"
+
+      # Info: the guide's command without the SDK lines, on a PC with no
+      # ANDROID_HOME. Does Gradle find the SDK in the default folder by itself?
+      - name: info - without the SDK lines, does Gradle find the SDK?
+        working-directory: apps/mobile/android
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          $sdkForCi = $env:ANDROID_HOME
+          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          $log = "$env:RUNNER_TEMP\r4\info-no-sdk-lines.log"
+          node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\no-sdk-lines.ps1" (Get-Location).Path $log 600
+          $code = $LASTEXITCODE
+          $env:ANDROID_HOME = $sdkForCi
+          & ../../../.github/iris-guide/build-processes.ps1 -Label 'after info' -Stop
+          $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+          $said = (Select-String -Path $log -Pattern 'SDK location not found|BUILD (SUCCESSFUL|FAILED) in' | Select-Object -First 1).Line
+          "| info: no SDK lines | unset | 600 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "without the SDK lines: Iris exit $code; $said"
 
       # B: the Gradle daemon off but the Kotlin compile daemon on, after a
       # Kotlin change so the Kotlin compiler runs. Information: does the
@@ -446,18 +514,22 @@ jobs:
         run: |
           $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
           Add-Content $kt.FullName '// windows-guide-smoke phase B'
+          $sdkForCi = $env:ANDROID_HOME
+          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           $log = "$env:RUNNER_TEMP\r4\b-kotlin-daemon-on.log"
           node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\kotlin-daemon-on.ps1" (Get-Location).Path $log 900
           $code = $LASTEXITCODE
+          $env:ANDROID_HOME = $sdkForCi
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after B' -Stop
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
-          "| B: Kotlin daemon only | Gradle off, Kotlin on | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          "| B: Gradle daemon off, Kotlin daemon on | unset | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
           Write-Output "Kotlin daemon on: Iris exit $code (124 = Iris would time out), BUILD line at $($t.buildLineAt) s"
 
-      # C: "before" - the round 3 command (daemons on), after a Kotlin change.
-      # The bug: the build succeeds, then the step never ends and Iris
-      # records a timeout at 900 s. This step passes only if that happens.
+      # C: "before" - the round 3 command (daemons on), after a Kotlin change,
+      # with ANDROID_HOME set so the daemons are the only change. The bug: the
+      # build succeeds, then the step never ends and Iris records a timeout
+      # at 900 s. This step passes only if that happens.
       - name: C - before - the round 3 run-android lines, daemons on
         working-directory: apps/mobile/android
         timeout-minutes: 25
@@ -472,27 +544,30 @@ jobs:
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after gradlew --stop' -Stop
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
-          "| C: before (round 3 command) | on | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          "| C: before (round 3 command), daemons on | set | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'the before build did not succeed, so it proves nothing'; exit 1 }
           if ($code -ne 124) { Write-Error "before: Iris would record $code, the daemon bug did not reproduce"; exit 1 }
           Write-Output "reproduced: BUILD SUCCESSFUL at $($t.buildLineAt) s, then no 'close' until the 900 s deadline (Iris 124)"
 
       # E: "after", warm, after a Kotlin change - the case a reader hits when
       # the step runs again. Must end with exit 0 well within 900 s.
-      - name: E - after, warm build - the guide's run-android lines, daemons off
+      - name: E - after, warm build - the guide's run-android lines, no ANDROID_HOME
         working-directory: apps/mobile/android
         timeout-minutes: 20
         run: |
           $kt = Get-ChildItem app/src/main/java -Recurse -Filter MainApplication.kt | Select-Object -First 1
           Add-Content $kt.FullName '// windows-guide-smoke phase E'
+          $sdkForCi = $env:ANDROID_HOME
+          Remove-Item Env:ANDROID_HOME, Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           $log = "$env:RUNNER_TEMP\r4\e-after-warm.log"
           node ../../../.github/iris-guide/run-like-iris.mjs "$env:RUNNER_TEMP\r4\after.ps1" (Get-Location).Path $log 900
           $code = $LASTEXITCODE
+          $env:ANDROID_HOME = $sdkForCi
           & ../../../.github/iris-guide/build-processes.ps1 -Label 'after E' -FailOnDaemon -Stop
           $left = $LASTEXITCODE
           $t = Get-Content "$log.timing.json" | ConvertFrom-Json
           $said = (Select-String -Path $log -Pattern 'BUILD (SUCCESSFUL|FAILED) in' | Select-Object -Last 1).Line
-          "| E: after, warm | off | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
+          "| E: after, warm | unset | 900 | $code | $($t.buildLineAt) | $($t.endedAt) | $said |" >> $env:GITHUB_STEP_SUMMARY
           if ($code -ne 0) { Write-Error "Iris would record $code"; exit 1 }
           if ($said -notmatch 'BUILD SUCCESSFUL') { Write-Error 'no BUILD SUCCESSFUL'; exit 1 }
           if ($left -ne 0) { Write-Error 'a daemon outlived the step'; exit 1 }
