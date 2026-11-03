@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FetchError } from 'expo/src/winter/fetch/FetchErrors'
 import { runLabelScan, runScanWithFallback, runWebLookup, SCAN_TIMEOUT_MS, VISION_TIMEOUT_MS } from './pathA/client'
 import { validateCredential } from './pathA/validate'
-import { provision, type PublikBuildConfig } from './publik-core'
+import { ACCOUNT_CALL_TIMEOUT_MS, fetchWallet, provision, revokeInstall, type PublikBuildConfig } from './publik-core'
 
 /**
  * A timeout on a phone, as the phone really reports it.
@@ -50,18 +50,20 @@ function hangsUntilAborted() {
 }
 
 /** A fetch whose headers arrive at once (the gateway's heartbeat) and whose body never ends. */
-function bodyHangsUntilAborted() {
+function bodyHangsUntilAborted(status = 200) {
   const impl = vi.fn(async (_url: unknown, init: { signal: AbortSignal }) => {
+    const body = () =>
+      new Promise<never>((_, reject) => {
+        init.signal.addEventListener('abort', () =>
+          reject(Object.assign(new Error('Fetch request has been canceled'), { code: 'ERR_FETCH_REQUEST_CANCELED' })),
+        )
+      })
     return {
-      ok: true,
-      status: 200,
+      ok: status >= 200 && status < 300,
+      status,
       headers: new Headers({ 'x-publik-request-id': 'r1' }),
-      text: () =>
-        new Promise<string>((_, reject) => {
-          init.signal.addEventListener('abort', () =>
-            reject(Object.assign(new Error('Fetch request has been canceled'), { code: 'ERR_FETCH_REQUEST_CANCELED' })),
-          )
-        }),
+      text: body,
+      json: body,
     } as unknown as Response
   })
   return impl as unknown as typeof fetch
@@ -76,6 +78,22 @@ const SCAN = {
   localSignalsBlock: '',
   jsonSchema: { type: 'object' },
   baseUrl: PUBLIK,
+}
+
+const PROVISION_CFG: PublikBuildConfig = {
+  appToken: `pat_nut-ai_${'a'.repeat(32)}`,
+  appSlug: 'nut-ai',
+  baseUrl: PUBLIK,
+  disclosureVersion: 1,
+  models: { scan: 'publik-fast', text: 'publik-fast' },
+}
+const PROVISION_INPUT = {
+  cfg: PROVISION_CFG,
+  installId: '11111111-2222-4333-8444-555555555555',
+  appVersion: '0.2.0',
+  os: 'android' as const,
+  osVersion: '15',
+  deviceName: 'Pixel',
 }
 
 beforeEach(() => {
@@ -183,14 +201,7 @@ describe('the key check and the publik link on a phone', () => {
   })
 
   it('linking publik API that waits 15 s is "unavailable"; the same FetchError at once is "offline"', async () => {
-    const cfg: PublikBuildConfig = {
-      appToken: `pat_nut-ai_${'a'.repeat(32)}`,
-      appSlug: 'nut-ai',
-      baseUrl: PUBLIK,
-      disclosureVersion: 1,
-      models: { scan: 'publik-fast', text: 'publik-fast' },
-    }
-    const input = { cfg, installId: '11111111-2222-4333-8444-555555555555', appVersion: '0.2.0', os: 'android' as const, osVersion: '15', deviceName: 'Pixel' }
+    const input = PROVISION_INPUT
     const { impl } = hangsUntilAborted()
     const pending = provision(input, impl)
     await vi.advanceTimersByTimeAsync(15_000)
@@ -199,5 +210,75 @@ describe('the key check and the publik link on a phone', () => {
       throw expoDropped()
     }) as unknown as typeof fetch
     expect(await provision(input, dropped)).toMatchObject({ ok: false, kind: 'offline' })
+  })
+
+  // Blind verify r6, D6: the abort landing in res.json() said "Update Nut AI".
+  it('linking publik API whose answer is still being read at 15 s is "unavailable", not "malformed"', async () => {
+    const pending = provision(PROVISION_INPUT, bodyHangsUntilAborted(201))
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await pending).toEqual({ ok: false, kind: 'unavailable', status: 201 })
+    // A body that is not JSON at all is still "malformed".
+    const garbage = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      headers: new Headers(),
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0')
+      },
+    })) as unknown as typeof fetch
+    expect(await provision(PROVISION_INPUT, garbage)).toEqual({ ok: false, kind: 'malformed', status: 201 })
+  })
+})
+
+// Blind verify r6, D5: Disconnect and the wallet card waited without limit.
+describe('Disconnect and the wallet read on a phone', () => {
+  const BASE = 'https://publikhq.com/api/v1/'
+  const KEY = 'pk_live_abcdefabcdef_' + 'a'.repeat(32)
+
+  it('the revoke gives up after 15 s and reports it; it does not wait longer', async () => {
+    expect(ACCOUNT_CALL_TIMEOUT_MS).toBe(15_000)
+    const { seen, impl } = hangsUntilAborted()
+    let settled = false
+    const pending = revokeInstall(BASE, KEY, impl).finally(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await pending).toBe('timed-out')
+    expect(seen.signal!.aborted).toBe(true)
+    expect(impl).toHaveBeenCalledWith('https://publikhq.com/api/v1/installs/revoke', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('the revoke reports a dropped connection, a refusal and a success', async () => {
+    const dropped = vi.fn(async () => {
+      throw expoDropped()
+    }) as unknown as typeof fetch
+    expect(await revokeInstall(BASE, KEY, dropped)).toBe('offline')
+    const refused = vi.fn(async () => ({ ok: false, status: 401 })) as unknown as typeof fetch
+    expect(await revokeInstall(BASE, KEY, refused)).toBe('refused')
+    const done = vi.fn(async () => ({ ok: true, status: 204 })) as unknown as typeof fetch
+    expect(await revokeInstall(BASE, KEY, done)).toBe('revoked')
+  })
+
+  it('the wallet read gives up after 15 s, also while the answer is being read', async () => {
+    const { impl } = hangsUntilAborted()
+    const pending = fetchWallet(BASE, KEY, 'anonymous', impl)
+    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
+    expect(await pending).toBeNull()
+    const slowBody = fetchWallet(BASE, KEY, 'anonymous', bodyHangsUntilAborted())
+    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
+    expect(await slowBody).toBeNull()
+  })
+
+  it('the wallet read still returns the snapshot when publik answers', async () => {
+    const ok = vi.fn(async (_url: unknown, init: { signal: AbortSignal; headers: Record<string, string> }) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal)
+      expect(init.headers.authorization).toBe(`Bearer ${KEY}`)
+      return { ok: true, status: 200, json: async () => ({ balance_micros: 1_250_000, claim_state: 'claimed' }) }
+    }) as unknown as typeof fetch
+    const w = await fetchWallet(BASE, KEY, 'anonymous', ok)
+    expect(w?.balanceMicros).toBe(1_250_000)
+    expect(ok).toHaveBeenCalledWith('https://publikhq.com/api/v1/wallet', expect.anything())
   })
 })

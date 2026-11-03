@@ -29,6 +29,12 @@ const APP_TOKEN_RE = /^pat_[a-z0-9-]+_[a-z0-9]{32}$/
 const KEY_RE = /^pk_(live|test)_[a-z0-9]{12}_[a-z0-9]{32}$/
 
 const PROVISION_TIMEOUT_MS = 15_000
+/**
+ * The revoke on disconnect and the wallet read. On Android the network stack
+ * has no timeout of its own (OkHttp timeouts 0), so without this a call that
+ * gets no answer would hold Disconnect or the wallet card forever.
+ */
+export const ACCOUNT_CALL_TIMEOUT_MS = 15_000
 
 export interface PublikBuildConfig {
   appToken: string
@@ -161,7 +167,9 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     try {
       j = (await res.json()) as Record<string, any>
     } catch {
-      return { ok: false, kind: 'malformed', status: res.status }
+      // The deadline can fire while the answer is read: that is no answer,
+      // not an answer this build cannot parse ("Update Nut AI").
+      return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'malformed', status: res.status }
     }
     // A 200 replay of a known install_id carries key:null (CONTRACT §3.2). A
     // phone that lost its keychain entry mints a fresh install_id once — the
@@ -187,6 +195,56 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     // The deadline's own state, not the error's name: on a phone an aborted
     // fetch rejects with expo's FetchError (see ./deadline).
     return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'offline' }
+  } finally {
+    deadline.clear()
+  }
+}
+
+/**
+ * POST /installs/revoke for Disconnect. Best effort: the caller forgets the
+ * key either way, and the server's idle sweep revokes a key it never heard
+ * from. Gives up after ACCOUNT_CALL_TIMEOUT_MS.
+ */
+export async function revokeInstall(
+  baseUrl: string,
+  key: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<'revoked' | 'refused' | 'timed-out' | 'offline'> {
+  const deadline = startDeadline(ACCOUNT_CALL_TIMEOUT_MS)
+  try {
+    const res = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/installs/revoke`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}` },
+      signal: deadline.signal,
+    })
+    return res.ok ? 'revoked' : 'refused'
+  } catch {
+    return deadline.timedOut ? 'timed-out' : 'offline'
+  } finally {
+    deadline.clear()
+  }
+}
+
+/**
+ * GET /wallet → snapshot, or null when publik refused, did not answer within
+ * ACCOUNT_CALL_TIMEOUT_MS (the body read included), or answered nonsense.
+ */
+export async function fetchWallet(
+  baseUrl: string,
+  key: string,
+  claimState: PublikWallet['claimState'],
+  fetchImpl: typeof fetch = fetch,
+): Promise<PublikWallet | null> {
+  const deadline = startDeadline(ACCOUNT_CALL_TIMEOUT_MS)
+  try {
+    const res = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/wallet`, {
+      headers: { authorization: `Bearer ${key}` },
+      signal: deadline.signal,
+    })
+    if (!res.ok) return null
+    return walletFromJson((await res.json()) as Record<string, any>, claimState)
+  } catch {
+    return null
   } finally {
     deadline.clear()
   }

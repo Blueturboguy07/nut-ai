@@ -7,9 +7,10 @@ import buildConfig from '../../publik-build.json'
 import { clearCredential, loadCredential, saveCredential } from './credentials'
 import {
   emptyWallet,
+  fetchWallet,
   isUsableAppToken,
   provision,
-  walletFromJson,
+  revokeInstall,
   type ProvisionResult,
   type PublikBuildConfig,
   type PublikInstall,
@@ -147,16 +148,9 @@ export async function connectPublik(
 export async function disconnectPublik(fetchImpl: typeof fetch = fetch): Promise<void> {
   const cred = await loadCredential('publik')
   const install = await loadPublikInstall()
-  if (cred && install) {
-    try {
-      await fetchImpl(`${install.baseUrl.replace(/\/+$/, '')}/installs/revoke`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${cred.value}` },
-      })
-    } catch {
-      /* best effort — the idle sweep revokes it server-side eventually */
-    }
-  }
+  // Best effort, at most ACCOUNT_CALL_TIMEOUT_MS: the idle sweep revokes a
+  // key server-side eventually, so the phone forgets it whatever the answer.
+  if (cred && install) await revokeInstall(install.baseUrl, cred.value, fetchImpl)
   await clearCredential('publik')
   try {
     await SecureStore.deleteItemAsync(INSTALL_KEY)
@@ -171,12 +165,10 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
   const cred = await loadCredential('publik')
   const install = await loadPublikInstall()
   if (!cred || !install) return null
+  // At most ACCOUNT_CALL_TIMEOUT_MS, the answer's body included.
+  const w = await fetchWallet(install.baseUrl, cred.value, install.claimState, fetchImpl)
+  if (!w) return null
   try {
-    const res = await fetchImpl(`${install.baseUrl.replace(/\/+$/, '')}/wallet`, {
-      headers: { authorization: `Bearer ${cred.value}` },
-    })
-    if (!res.ok) return null
-    const w = walletFromJson((await res.json()) as Record<string, unknown>, install.claimState)
     await savePublikWallet(w)
     if (w.claimState !== install.claimState || (w.claimUrl && w.claimUrl !== install.claimUrl)) {
       await savePublikInstall({
