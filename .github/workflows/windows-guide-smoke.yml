@@ -61,7 +61,7 @@ jobs:
           node-version: ${{ matrix.node }}
 
       # Exactly the guide's step (dependencies.ps1: the Node check, then
-      # npm.cmd install), as Iris runs it: Windows PowerShell 5.1, PATH from
+      # npm.cmd install --no-save), as Iris runs it: Windows PowerShell 5.1, PATH from
       # the registry, so this job's Node goes into the machine Path first. The
       # output is kept so the next step can prove no native build ran: this
       # runner HAS Visual Studio, so a node-gyp rebuild would quietly succeed
@@ -74,6 +74,18 @@ jobs:
           node --version
           node .github/iris-guide/run-like-iris.mjs .github/iris-guide/dependencies.ps1 $env:GITHUB_WORKSPACE npm-install.log 1500
           if ($LASTEXITCODE -ne 0) { Write-Error "the guide's dependencies step failed (Iris $LASTEXITCODE)"; exit 1 }
+
+      # package-lock.json is written by npm 11 (Node 24). A plain
+      # `npm install` on Node 22's npm 10 rewrites it (it drops the "libc"
+      # fields), and the next rerun of pin-source then stashed it as if the
+      # reader had changed it (run 41603020964, returning-reader). The guide
+      # runs `npm install --no-save`, which never writes the lock file.
+      - name: the dependencies step leaves every tracked file as it was
+        run: |
+          npm --version
+          $tree = @(git status --porcelain --untracked-files=no)
+          if ($tree.Count -ne 0) { Write-Error "the dependencies step changed a tracked file: $($tree -join ' | ')"; exit 1 }
+          Write-Output 'no tracked file changed'
 
       - name: no native build ran
         run: |
@@ -1047,7 +1059,11 @@ jobs:
   # new file of the reader's own), and then the guide from pin-source to the
   # end, as Iris runs it: pin-source (pinned to this commit), dependencies,
   # build-corpus, install-jdk, prebuild-android and the seven build steps
-  # (run-android with the no-phone stand-in). Every step must pass.
+  # (run-android with the no-phone stand-in). Every step must pass. Then
+  # the tree must be clean (run 41603020964: the guide's plain `npm install`
+  # on Node 22's npm 10 rewrote package-lock.json, written by npm 11, so
+  # every rerun of pin-source stashed it; the step now runs
+  # `npm install --no-save`), and pin-source again must save nothing.
   returning-reader:
     name: returning-reader (old clone at 71ee482, then the whole guide)
     if: github.event_name == 'workflow_dispatch'
@@ -1161,13 +1177,19 @@ jobs:
         run: |
           $g = Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide'
           $dir = Join-Path $env:RUNNER_TEMP 'r5'
+          # The guide's own steps must not change a tracked file: a rerun
+          # would stash it and tell the reader "your changes are saved".
+          $before = @(git -C $env:NUT_AI status --porcelain)
+          "after the guide and the build: changed files $($before.Count) ($($before -join ' | '))" >> $env:GITHUB_STEP_SUMMARY
+          if ($before.Count -ne 0) { Write-Error "the guide's steps changed the tree: $($before -join ' | ')"; exit 1 }
           node "$g\run-like-iris.mjs" "$dir\pin-source.ps1" $env:NUT_AI "$dir\pin-source-again.log" 900
           if ($LASTEXITCODE -ne 0) { Write-Error "pin-source again: Iris $LASTEXITCODE"; exit 1 }
           $stashes = @(git -C $env:NUT_AI stash list).Count
           $tree = @(git -C $env:NUT_AI status --porcelain)
           "pin-source again: exit 0, stashes $stashes, changed files $($tree.Count)" >> $env:GITHUB_STEP_SUMMARY
-          if ($stashes -ne 1) { Write-Error "pin-source again stashed something ($stashes stashes)"; exit 1 }
-          if ($tree.Count -ne 0) { Write-Error "the build left the tree changed: $($tree -join ' | ')"; exit 1 }
+          if ($stashes -ne 1) { Write-Error "pin-source again stashed something ($stashes stashes): $(git -C $env:NUT_AI stash show --include-untracked --name-only 'stash@{0}')"; exit 1 }
+          if ($tree.Count -ne 0) { Write-Error "pin-source again left the tree changed: $($tree -join ' | ')"; exit 1 }
+          if ((git -C $env:NUT_AI rev-parse HEAD) -ne $env:GITHUB_SHA) { Write-Error 'HEAD moved off the pin'; exit 1 }
 
       - name: the APK and the ABIs inside it
         if: always()
