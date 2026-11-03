@@ -153,6 +153,8 @@ jobs:
           if ($t.endedAt -gt 30) { Write-Error "the step ended at $($t.endedAt) s, not before npm"; exit 1 }
           Write-Output "stopped before npm: Iris $code at $($t.endedAt) s"
           "| dependencies on Node ${{ matrix.node }} | Iris $code | 'close' at $($t.endedAt) s | no node_modules |" >> $env:GITHUB_STEP_SUMMARY
+          # GitHub's pwsh shell ends with `exit $LASTEXITCODE`: the stopped step's 1.
+          exit 0
 
       # A plain `npm install` (not the guide's step) still stops: the same
       # check is the root preinstall.
