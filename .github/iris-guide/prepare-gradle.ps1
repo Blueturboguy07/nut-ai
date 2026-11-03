@@ -1,5 +1,7 @@
-$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
-if ($jh) { $env:JAVA_HOME = $jh; $env:Path = $jh + '\bin;' + $env:Path }
+$jh = Get-Content -Path ($HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue
+if (-not $jh) { throw 'Run the Install Java 17 step first. It picks the Java this build needs.' }
+$env:JAVA_HOME = $jh
+$env:Path = $jh + '\bin;' + $env:Path
 $sdk = $env:ANDROID_HOME
 if (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }
 $sdkDefault = $HOME + '\AppData\Local\Android\Sdk'

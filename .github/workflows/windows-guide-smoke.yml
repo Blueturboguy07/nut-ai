@@ -7,6 +7,12 @@
 # died at "Could not find any Visual Studio installation to use" and the
 # corpus build and the phone build fell over after it. The driver is now
 # node:sqlite, so an install that still prints "gyp" is a regression.
+#
+# Nov 3 2026 (guide round 7): the reader's JDK (reader-java: JAVA_HOME on
+# JDK 21, 24, 25, 26), a reader who built Nut AI before (returning-reader:
+# an old clone at 71ee482, then the whole guide) and pin-source on old
+# clones (pin-source-old-clones, Windows and macOS). The copies of the guide
+# commands are listed in .github/iris-guide/run-like-iris.mjs.
 name: windows guide smoke
 
 on:
@@ -344,9 +350,11 @@ jobs:
           $major = [int]$last.Matches[0].Groups[2].Value
           Write-Output "last java -version line: $($last.Line.Trim()) -> major $major"
           if ($major -lt 17) { Write-Error "install-jdk ended on Java $major"; exit 1 }
-          $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
-          Write-Output "User JAVA_HOME saved by the step: $saved"
-          if (-not $saved -or -not (Test-Path "$saved\bin\java.exe")) { Write-Error 'no usable User JAVA_HOME saved'; exit 1 }
+          # Round 7: the pick is saved in ~\.nut-ai-java-home; the reader's
+          # JAVA_HOME is never changed.
+          & .github/iris-guide/saved-jdk.ps1 -Expect 17
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')) { Write-Error 'install-jdk set a User JAVA_HOME'; exit 1 }
 
       # The build steps' prelude (prepare-gradle.ps1 verbatim, the same in all
       # seven build steps), then the same Gradle probe as the control instead
@@ -405,8 +413,8 @@ jobs:
             ${{ runner.temp }}/gradle.log
             ${{ runner.temp }}/daemon.log
 
-  # The same command on a PC that already has Java 17 on PATH: nothing is
-  # installed and no JAVA_HOME is saved.
+  # The same command on a PC whose JAVA_HOME is a Java 17: that JDK is
+  # saved for the build, nothing is installed and no JAVA_HOME is changed.
   install-jdk-keeps-java-17:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -428,13 +436,18 @@ jobs:
       - name: the guide's install-jdk command (verbatim), as Iris runs it
         run: |
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          Write-Output "machine JAVA_HOME before: $([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine'))"
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'Machine')
           node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME install-jdk.log 900
           if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk failed (Iris exit $LASTEXITCODE)"; exit 1 }
           if (-not (Select-String -Path install-jdk.log -Pattern 'version "17\.' -Quiet)) { Write-Error 'no Java 17 version line'; exit 1 }
           if (Select-String -Path install-jdk.log -Pattern 'Found Eclipse Temurin|Successfully installed' -Quiet) { Write-Error 'winget ran on a PC that already had Java 17'; exit 1 }
-          $saved = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')
-          if ($saved) { Write-Error "a User JAVA_HOME was saved ($saved) although Java 17 was already there"; exit 1 }
-          Write-Output 'Java 17 left alone: no winget, no saved JAVA_HOME'
+          & .github/iris-guide/saved-jdk.ps1 -Expect 17
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $saved = (Get-Content "$HOME\.nut-ai-java-home" -TotalCount 1 -Encoding UTF8).Trim()
+          if ($saved -ne $env:JAVA_HOME) { Write-Error "saved $saved, not the JAVA_HOME Java 17 ($env:JAVA_HOME)"; exit 1 }
+          if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')) { Write-Error 'a User JAVA_HOME was set'; exit 1 }
+          Write-Output 'Java 17 kept: no winget, no JAVA_HOME changed, the JDK saved for the build'
 
   # Round 5 (Nov 2 2026). Iris for Windows gives every step the same 15
   # minutes (iris-windows shell.ts DEFAULT_COMMAND_TIMEOUT_MS) and ends a step
@@ -513,6 +526,8 @@ jobs:
           $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          Write-Output "machine JAVA_HOME before: $([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine'))"
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'Machine')
           $sdkDefault = Join-Path $HOME 'AppData\Local\Android\Sdk'
           if (-not (Test-Path $sdkDefault)) {
             New-Item -ItemType Directory -Force (Split-Path $sdkDefault) | Out-Null
@@ -524,6 +539,16 @@ jobs:
           New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'r5') | Out-Null
           "| step | run | deadline (s) | Iris records | BUILD line at (s) | 'close' at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
           "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
+
+      # Round 7: every build step reads the JDK install-jdk saved, so the
+      # guide's install-jdk runs first, as in the guide. JAVA_HOME here is
+      # the Java 17 setup-java installed: this job proves the build on 17.
+      - name: the guide's install-jdk, as Iris runs it (Java 17)
+        run: |
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME "$env:RUNNER_TEMP\r5\install-jdk.log" 900
+          if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk failed (Iris exit $LASTEXITCODE)"; exit 1 }
+          & .github/iris-guide/saved-jdk.ps1 -Expect 17
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: check the 7 build steps share one prelude, and write the CI command files
         run: |
@@ -544,7 +569,7 @@ jobs:
             $head = @($lines[0..($lines.Count - 2)]) -join "`n"
             if ($null -eq $prelude) { $prelude = $head } elseif ($head -ne $prelude) { Write-Error "$id.ps1 has a different prelude"; exit 1 }
           }
-          foreach ($must in @("`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'", '$adb.UseShellExecute = $true', '$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi')) {
+          foreach ($must in @("`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'", '$adb.UseShellExecute = $true', '$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi', "`$jh = Get-Content -Path (`$HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue")) {
             if (-not $prelude.Contains($must)) { Write-Error "the prelude lacks: $must"; exit 1 }
           }
           $standIn = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
@@ -894,3 +919,300 @@ jobs:
         with:
           name: run-android-old-one-step-logs
           path: ${{ runner.temp }}/r5/
+
+  # Round 7 (Nov 3 2026). The build fails on JDK 24 and newer: with a
+  # reader's JAVA_HOME on Temurin 24, 25 or 26 the guide's old install-jdk
+  # kept it ("17 or newer"), and build-native-1 then stopped in
+  # configureCMakeRelWithDebInfo with "WARNING: A restricted method in
+  # java.lang.System has been called" (blind verify runs 41593308267 and
+  # 41596428960; 21 passed). Now install-jdk takes only 17 to 21 and saves
+  # its pick in ~\.nut-ai-java-home, and every build step sets JAVA_HOME
+  # from that file. Here the reader's JAVA_HOME (User and this process, so
+  # what Iris inherits) is each JDK; there is no machine JAVA_HOME and no
+  # other JDK. 21 must be kept (this proves the build on 21; 17 is proven
+  # in run-android-split-steps); 24, 25 and 26 must end on a Temurin 17 that
+  # install-jdk installs. Then the seven build steps run cold, with that
+  # JAVA_HOME still set, and must all pass.
+  reader-java:
+    name: reader-java (JAVA_HOME = JDK ${{ matrix.java }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 170
+    env:
+      NUT_AI: C:\Users\runneradmin\nut-ai
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - java: '21'
+            saved: 21
+          - java: '24'
+            saved: 17
+          - java: '25'
+            saved: 17
+          - java: '26'
+            saved: 17
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: a copy of this commit in ~/nut-ai, its npm install and Android project (the guide's earlier steps)
+        run: |
+          git clone --no-hardlinks --quiet $env:GITHUB_WORKSPACE $env:NUT_AI
+          Set-Location $env:NUT_AI
+          npm install --no-audit --no-fund 2>&1 | Select-Object -Last 5
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Set-Location apps/mobile
+          npx expo prebuild --platform android 2>&1 | Select-Object -Last 5
+          if (-not (Test-Path android/gradlew.bat)) { Write-Error 'no android/gradlew.bat'; exit 1 }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: make this runner a reader's PC whose JAVA_HOME is JDK ${{ matrix.java }}
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
+          Write-Output "machine JAVA_HOME before: $([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine'))"
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'Machine')
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $env:JAVA_HOME, 'User')
+          & "$env:JAVA_HOME\bin\java.exe" -version
+          $sdkDefault = Join-Path $HOME 'AppData\Local\Android\Sdk'
+          if (-not (Test-Path $sdkDefault)) {
+            New-Item -ItemType Directory -Force (Split-Path $sdkDefault) | Out-Null
+            New-Item -ItemType Junction -Path $sdkDefault -Target $env:ANDROID_HOME | Out-Null
+          }
+          foreach ($root in 'Eclipse Adoptium', 'Java', 'Microsoft', 'Zulu', 'Amazon Corretto', 'Android\Android Studio') {
+            Get-ChildItem (Join-Path $env:ProgramFiles $root) -Directory -ErrorAction SilentlyContinue | ForEach-Object { "before the step, under Program Files: $($_.FullName)" }
+          }
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'r5') | Out-Null
+          "reader's JAVA_HOME: $env:JAVA_HOME" >> $env:GITHUB_STEP_SUMMARY
+          "| step | run | deadline (s) | Iris records | BUILD line at (s) | 'close' at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: the guide's install-jdk, as Iris runs it (JAVA_HOME = JDK ${{ matrix.java }})
+        run: |
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME "$env:RUNNER_TEMP\r5\install-jdk.log" 900
+          $code = $LASTEXITCODE
+          $t = Get-Content "$env:RUNNER_TEMP\r5\install-jdk.log.timing.json" | ConvertFrom-Json
+          "install-jdk: Iris exit $code, 'close' at $($t.endedAt) s" >> $env:GITHUB_STEP_SUMMARY
+          if ($code -ne 0) { Write-Error "install-jdk failed (Iris exit $code)"; exit 1 }
+          & .github/iris-guide/saved-jdk.ps1 -Expect ${{ matrix.saved }}
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User') -ne $env:JAVA_HOME) { Write-Error "install-jdk changed the reader's JAVA_HOME"; exit 1 }
+
+      # gradlew --version through the guide's prelude while JAVA_HOME is still
+      # the reader's JDK: Gradle must run on the saved JDK.
+      - name: Gradle runs on the saved JDK, not on JAVA_HOME
+        working-directory: ${{ env.NUT_AI }}\apps\mobile\android
+        run: |
+          $guide = Get-Content "$env:GITHUB_WORKSPACE\.github\iris-guide\prepare-gradle.ps1" -Raw
+          $probe = Join-Path $env:RUNNER_TEMP 'r5\jvm-probe.ps1'
+          Set-Content $probe $guide.Replace('.\gradlew.bat help', '.\gradlew.bat --version')
+          node "$env:GITHUB_WORKSPACE\.github\iris-guide\run-like-iris.mjs" $probe (Get-Location).Path "$env:RUNNER_TEMP\r5\jvm-probe.log" 900
+          if ($LASTEXITCODE -ne 0) { Write-Error "gradlew --version failed (Iris exit $LASTEXITCODE)"; exit 1 }
+          $jvm = Select-String -Path "$env:RUNNER_TEMP\r5\jvm-probe.log" -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
+          if (-not $jvm) { Write-Error 'gradlew --version printed no JVM line'; exit 1 }
+          $line = "with JAVA_HOME = JDK ${{ matrix.java }}, Gradle says: $($jvm.Line.Trim())"
+          Write-Output $line
+          $line >> $env:GITHUB_STEP_SUMMARY
+          if ([int]$jvm.Matches[0].Groups[1].Value -ne ${{ matrix.saved }}) { Write-Error 'Gradle does not run on the saved JDK'; exit 1 }
+
+      - name: the seven build steps, cold, as Iris runs them
+        timeout-minutes: 120
+        run: |
+          & .github/iris-guide/guide-build.ps1 -Run 'cold' -Limit 900
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reader-java-${{ matrix.java }}-logs
+          path: ${{ runner.temp }}/r5/
+
+  # Round 7 (Nov 3 2026). A reader who built Nut AI with guide v15 has a
+  # ~/nut-ai cloned from main and left at 71ee482; the clone step skips an
+  # existing folder, and the old pin-source then ran `git checkout <new pin>`
+  # with no fetch: "fatal: unable to read tree", exit 128 (blind verify). Here
+  # the runner gets that old clone (main only, 71ee482, v15's npm install and
+  # the Android project its run-android generated, plus a tracked edit and a
+  # new file of the reader's own), and then the guide from pin-source to the
+  # end, as Iris runs it: pin-source (pinned to this commit), dependencies,
+  # build-corpus, install-jdk, prebuild-android and the seven build steps
+  # (run-android with the no-phone stand-in). Every step must pass.
+  returning-reader:
+    name: returning-reader (old clone at 71ee482, then the whole guide)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 170
+    env:
+      NUT_AI: C:\Users\runneradmin\nut-ai
+      OLD_PIN: 71ee482dae4a2c7f592103eb977248bc70ba4923
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: an old ~/nut-ai, as guide v15 left it
+        run: |
+          if ($env:NUT_AI -ne (Join-Path $HOME 'nut-ai')) { Write-Error "HOME is $HOME"; exit 1 }
+          git clone --quiet --single-branch --branch main https://github.com/Blueturboguy07/nut-ai.git $env:NUT_AI
+          Set-Location $env:NUT_AI
+          git checkout --quiet $env:OLD_PIN
+          git log --oneline -1
+          # v15's dependencies step at 71ee482 (better-sqlite3 era).
+          npm install --no-audit --no-fund 2>&1 | Select-Object -Last 5
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # v15's run-android began with expo's own prebuild of android/.
+          Set-Location apps/mobile
+          npx expo prebuild --platform android 2>&1 | Select-Object -Last 5
+          if (-not (Test-Path android/gradlew.bat)) { Write-Error 'no android/gradlew.bat'; exit 1 }
+          Set-Location $env:NUT_AI
+          Add-Content README.md "`nmy notes"
+          Set-Content my-notes.txt 'mine'
+          git cat-file -e $env:GITHUB_SHA 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Error "the old clone already has $env:GITHUB_SHA"; exit 1 }
+          $changed = @(git status --porcelain)
+          $changed
+          "old clone: HEAD $(git rev-parse --short HEAD), $env:GITHUB_SHA not in it, $($changed.Count) changed or new files" >> $env:GITHUB_STEP_SUMMARY
+          exit 0
+
+      - name: make this runner a reader's PC (Node 22 in the machine Path, the SDK where Android Studio puts it, no JAVA_HOME)
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'Machine')
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'User')
+          $sdkDefault = Join-Path $HOME 'AppData\Local\Android\Sdk'
+          if (-not (Test-Path $sdkDefault)) {
+            New-Item -ItemType Directory -Force (Split-Path $sdkDefault) | Out-Null
+            New-Item -ItemType Junction -Path $sdkDefault -Target $env:ANDROID_HOME | Out-Null
+          }
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'r5') | Out-Null
+
+      - name: the guide from pin-source to prebuild-android, as Iris runs it
+        run: |
+          $g = Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide'
+          $dir = Join-Path $env:RUNNER_TEMP 'r5'
+          # pin-source.ps1 is the guide's command with its pin replaced by 40
+          # zeros: a copy in this repository cannot name its own commit.
+          $zeros = '0' * 40
+          Set-Content "$dir\pin-source.ps1" (Get-Content "$g\pin-source.ps1" -Raw).Replace($zeros, $env:GITHUB_SHA) -NoNewline
+          Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+          $steps = @(
+            @{ id = 'pin-source'; file = "$dir\pin-source.ps1"; cwd = $env:NUT_AI },
+            @{ id = 'dependencies'; file = "$g\dependencies.ps1"; cwd = $env:NUT_AI },
+            @{ id = 'build-corpus'; file = "$g\build-corpus.ps1"; cwd = $env:NUT_AI },
+            @{ id = 'install-jdk'; file = "$g\install-jdk.ps1"; cwd = $HOME },
+            @{ id = 'prebuild-android'; file = "$g\prebuild-android.ps1"; cwd = "$env:NUT_AI\apps\mobile" }
+          )
+          "| step | Iris records | 'close' at (s) |" >> $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
+          foreach ($s in $steps) {
+            $log = "$dir\$($s.id).log"
+            node "$g\run-like-iris.mjs" $s.file $s.cwd $log 900
+            $code = $LASTEXITCODE
+            $t = Get-Content "$log.timing.json" | ConvertFrom-Json
+            "| $($s.id) | $code | $($t.endedAt) |" >> $env:GITHUB_STEP_SUMMARY
+            Write-Output "=== $($s.id): Iris $code, 'close' at $($t.endedAt) s"
+            if ($code -ne 0) { Write-Error "$($s.id): Iris would record $code"; exit 1 }
+            if ([double]$t.endedAt -gt 900) { Write-Error "$($s.id) took over 900 s"; exit 1 }
+            if ($s.id -eq 'pin-source') {
+              $head = git -C $env:NUT_AI rev-parse HEAD
+              $stashes = @(git -C $env:NUT_AI stash list)
+              $tree = @(git -C $env:NUT_AI status --porcelain)
+              $stashed = @(git -C $env:NUT_AI stash show --include-untracked --name-only 'stash@{0}')
+              "pin-source: HEAD $head; stashes $($stashes.Count) ($($stashed -join ', ')); changed files after $($tree.Count)" >> $env:GITHUB_STEP_SUMMARY
+              if ($head -ne $env:GITHUB_SHA) { Write-Error "HEAD is $head, not the pin"; exit 1 }
+              if ($stashes.Count -ne 1) { Write-Error "expected one stash, got $($stashes.Count)"; exit 1 }
+              if (-not (($stashed -contains 'README.md') -and ($stashed -contains 'my-notes.txt'))) { Write-Error 'the stash lacks the reader''s changes'; exit 1 }
+              if ($tree.Count -ne 0) { Write-Error "the tree is not clean after pin-source: $($tree -join ' | ')"; exit 1 }
+              if (-not (Select-String -Path $log -Pattern 'Your changes in ~/nut-ai are saved with git stash' -SimpleMatch -Quiet)) { Write-Error 'pin-source did not say the changes are saved'; exit 1 }
+            }
+            if ($s.id -eq 'build-corpus' -and -not (Select-String -Path $log -Pattern 'Built .*nutrition\.db' -Quiet)) { Write-Error 'build-corpus printed no Built line'; exit 1 }
+          }
+          & "$g\saved-jdk.ps1" -Expect 17
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: the seven build steps, cold, as Iris runs them
+        timeout-minutes: 120
+        run: |
+          & .github/iris-guide/guide-build.ps1 -Run 'cold' -Limit 900
+
+      - name: the guide again from pin-source (nothing to fetch or save), and a clean tree
+        run: |
+          $g = Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide'
+          $dir = Join-Path $env:RUNNER_TEMP 'r5'
+          node "$g\run-like-iris.mjs" "$dir\pin-source.ps1" $env:NUT_AI "$dir\pin-source-again.log" 900
+          if ($LASTEXITCODE -ne 0) { Write-Error "pin-source again: Iris $LASTEXITCODE"; exit 1 }
+          $stashes = @(git -C $env:NUT_AI stash list).Count
+          $tree = @(git -C $env:NUT_AI status --porcelain)
+          "pin-source again: exit 0, stashes $stashes, changed files $($tree.Count)" >> $env:GITHUB_STEP_SUMMARY
+          if ($stashes -ne 1) { Write-Error "pin-source again stashed something ($stashes stashes)"; exit 1 }
+          if ($tree.Count -ne 0) { Write-Error "the build left the tree changed: $($tree -join ' | ')"; exit 1 }
+
+      - name: the APK and the ABIs inside it
+        if: always()
+        run: |
+          $apk = Get-ChildItem "$env:NUT_AI\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $apk) { Write-Output 'no release APK'; exit 0 }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($apk.FullName)
+          $abis = @($zip.Entries | Where-Object { $_.FullName -match '^lib/([^/]+)/' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
+          $zip.Dispose()
+          "APK: $($apk.Name), $([math]::Round($apk.Length / 1MB, 1)) MB, native code for: $($abis -join ', ')" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: returning-reader-logs
+          path: ${{ runner.temp }}/r5/
+
+  # Round 7: the pin-source step alone on old clones (clean, changed,
+  # diverged, ssh origin, another repository, offline, run again), on
+  # Windows through run-like-iris.mjs and on macOS in /bin/sh and zsh.
+  pin-source-old-clones:
+    name: pin-source-old-clones (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: '22'
+
+      - name: pin-source on old clones (Windows PowerShell 5.1, as Iris runs it)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & .github/iris-guide/pin-source-cases.ps1
+
+      - name: pin-source on old clones (/bin/sh and zsh)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          sh_code=0
+          zsh_code=0
+          bash .github/iris-guide/pin-source-cases.sh /bin/sh || sh_code=$?
+          bash .github/iris-guide/pin-source-cases.sh /bin/zsh || zsh_code=$?
+          [ "$sh_code" = 0 ] && [ "$zsh_code" = 0 ]

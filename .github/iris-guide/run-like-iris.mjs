@@ -12,11 +12,15 @@
  *   - done on the child's 'close' event (every output pipe closed), not on
  *     'exit', and a deadline after which the tree is killed (Iris: 15 min).
  *
- * dependencies.ps1, install-jdk.ps1, prepare-gradle.ps1, build-native-1.ps1,
- * build-native-2.ps1, build-native-app.ps1, build-libraries.ps1,
- * prepare-app.ps1 and run-android.ps1 beside this file are VERBATIM copies of
- * the Windows commands in publik lib/guides/nut-ai.ts (guide v16), one file
- * per guide step. Do not edit them here; copy them again from the guide.
+ * dependencies.ps1, build-corpus.ps1, install-jdk.ps1, prebuild-android.ps1,
+ * prepare-gradle.ps1, build-native-1.ps1, build-native-2.ps1,
+ * build-native-app.ps1, build-libraries.ps1, prepare-app.ps1 and
+ * run-android.ps1 beside this file are VERBATIM copies of the Windows
+ * commands in publik lib/guides/nut-ai.ts (guide v16), one file per guide
+ * step. pin-source.ps1 and pin-source.sh (the macOS command) are verbatim
+ * too, except that the pinned sha is replaced by 40 zeros: a copy in this
+ * repository cannot name its own commit, so CI puts $GITHUB_SHA there. Do
+ * not edit them here; copy them again from the guide.
  *
  * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds] [linger-seconds]
  * linger-seconds is NOT Iris behavior, only a CI time saver for long

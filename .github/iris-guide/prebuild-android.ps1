@@ -1,0 +1,1 @@
+npx.cmd expo prebuild --platform android
