@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.16.0', '22', '24']
+        node: ['22.16.0', '22', '24', 'lts/*']
     defaults:
       run:
         shell: pwsh
@@ -109,6 +109,61 @@ jobs:
             npm-install.log
             data-build.log
 
+  # The guide's dependencies step where a reader runs it: ~/nut-ai on C:,
+  # an empty npm cache, Node's current LTS (26) and 22. install-and-build-corpus
+  # runs in the runner's work folder on D: and takes about 60 s; the blind
+  # verifier's full-guide job (run 41560847103, Node 26.13.0, ~/nut-ai) took
+  # 404.6 s for the same step. Every guide step must close within 360 s on a
+  # runner (2.5 times under Iris's 900 s), so this measures it, cold, twice.
+  dependencies-in-home-folder:
+    name: dependencies-in-home-folder (Node ${{ matrix.node }}, run ${{ matrix.run }})
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['lts/*', '22']
+        run: [1, 2]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: a copy of this commit in ~/nut-ai, where the guide's clone step puts it
+        run: |
+          git clone --no-hardlinks --quiet $env:GITHUB_WORKSPACE (Join-Path $HOME 'nut-ai')
+          git -C (Join-Path $HOME 'nut-ai') log --oneline -1
+
+      - name: cold dependencies in ~/nut-ai with an empty npm cache, as Iris runs it
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
+          $env:npm_config_cache = Join-Path $HOME 'AppData\Local\npm-cache-cold'
+          if (Test-Path $env:npm_config_cache) { Write-Error 'the npm cache folder already exists'; exit 1 }
+          $nodeVersion = node --version
+          $npmVersion = npm --version
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/dependencies.ps1 (Join-Path $HOME 'nut-ai') deps-home.log 900
+          $code = $LASTEXITCODE
+          $t = Get-Content deps-home.log.timing.json | ConvertFrom-Json
+          Get-Content deps-home.log -Tail 6
+          "| dependencies in ~/nut-ai, Node $nodeVersion, npm $npmVersion | Iris $code | 'close' at $($t.endedAt) s |" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "dependencies in ~/nut-ai, Node $nodeVersion, npm ${npmVersion}: Iris $code, 'close' at $($t.endedAt) s"
+          if ($code -ne 0) { Write-Error "the guide's dependencies step failed (Iris $code)"; exit 1 }
+          if ([double]$t.endedAt -gt 360) { Write-Error "the step closed at $($t.endedAt) s, over 360 s"; exit 1 }
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependencies-in-home-folder-${{ strategy.job-index }}
+          path: deps-home.log*
+
   # The guide's first check sees THAT Node answers, not which version. On
   # Node 20 the install used to pass with an engines warning and the corpus
   # build then died on "No such built-in module: node:sqlite"; on Node
@@ -150,7 +205,7 @@ jobs:
             Write-Error "the step failed (Iris $code) without naming the Node floor"; exit 1
           }
           if (Test-Path node_modules) { Write-Error 'node_modules exists: npm started before the check stopped the step'; exit 1 }
-          if ($t.endedAt -gt 30) { Write-Error "the step ended at $($t.endedAt) s, not before npm"; exit 1 }
+          if ([double]$t.endedAt -gt 30) { Write-Error "the step ended at $($t.endedAt) s, not before npm"; exit 1 }
           Write-Output "stopped before npm: Iris $code at $($t.endedAt) s"
           "| dependencies on Node ${{ matrix.node }} | Iris $code | 'close' at $($t.endedAt) s | no node_modules |" >> $env:GITHUB_STEP_SUMMARY
           # GitHub's pwsh shell ends with `exit $LASTEXITCODE`: the stopped step's 1.
