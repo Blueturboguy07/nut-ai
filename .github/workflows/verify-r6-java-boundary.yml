@@ -1,0 +1,37 @@
+# Blind verify r6 (not part of the fix): where does a reader's newer JAVA_HOME stop working?
+name: verify-r6-java-boundary
+on:
+  workflow_dispatch:
+jobs:
+  # Blind verify r6: a reader whose own JAVA_HOME is a NEWER JDK (install-jdk accepts any 17+).
+  blind-r6-newer-java-iris-0915:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['21', '24']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - id: jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: make this runner a fresh reader PC with JAVA_HOME = JDK ${{ matrix.java }}
+        run: |
+          $env:NEWJAVA = '${{ steps.jdk.outputs.path }}'
+          ./.github/verify-r6/fresh-pc.ps1
+      - name: guide steps through build-native-1 via Iris 0.9.15's code
+        timeout-minutes: 75
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          node .github/verify-r6/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r6/iris-drive.mts .github/verify-r6/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') java-${{ matrix.java }} check-tools clone enter-folder pin-source dependencies build-corpus install-jdk prebuild-android prepare-gradle build-native-1
+          node .github/verify-r6/verdict.mjs (Join-Path $dir 'results.jsonl')
