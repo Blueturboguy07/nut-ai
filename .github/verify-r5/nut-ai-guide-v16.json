@@ -1,0 +1,786 @@
+{
+  "appSlug": "nut-ai",
+  "appName": "Nut AI",
+  "version": 16,
+  "status": "pilot",
+  "sourceOwner": "Blueturboguy07",
+  "sourceRepo": "nut-ai",
+  "sourceCommit": "dace89160b86de38165a952100860f47f1010177",
+  "outputType": "mobile_app",
+  "estimatedMinutes": 45,
+  "readmeSectionIds": [
+    "put-it-on-your-phone"
+  ],
+  "reviewNote": "Nut AI installs unsigned onto the reader's own phone, and photo scans run on publik API by default from a bounded key the phone mints (the reader's own key also works). The guide says both before the first command.",
+  "branches": [
+    {
+      "platform": "macos",
+      "target": "ios",
+      "unsupported": null,
+      "label": "Mac + iPhone",
+      "shell": "terminal",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "terminal",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Apple opens a small installer.",
+          "command": "xcode-select --install",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Choose the macOS Installer (.pkg).",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open Terminal",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "Terminal is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Git and Node 22.16 or newer are required. Node 23 does not work.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this Mac",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "(\nif ! git config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github\\.com:#https://github.com/#; s#\\.git$##' | grep -qxF \"https://github.com/Blueturboguy07/nut-ai\"; then\n  echo \"~/nut-ai already exists and is not a clean copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\nif git status --porcelain 2>/dev/null | grep -q .; then\n  echo \"~/nut-ai already exists and is not a clean copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\ngit checkout dace89160b86de38165a952100860f47f1010177\n)",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at dace891'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "'reference is not a tree' means the clone was interrupted — delete ~/nut-ai and clone again."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "npm install",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-xcode",
+          "kind": "open",
+          "title": "Install Xcode",
+          "body": "Large — start now. Not compatible? Get an older Xcode: developer.apple.com/download/all",
+          "href": "https://apps.apple.com/app/xcode/id497799835",
+          "actionLabel": "Open the App Store page",
+          "verifierLabel": "Xcode opens without asking to finish setup",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "xcodebuild"
+              },
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.apple.dt.Xcode"
+              }
+            ],
+            "hints": [
+              "The App Store button reads Open once the download is finished.",
+              "First launch asks to install additional components — let that finish before going on."
+            ]
+          }
+        },
+        {
+          "id": "install-cocoapods",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install CocoaPods",
+          "body": "The iPhone project generator needs CocoaPods. Does nothing if you already have it.",
+          "command": "brew list cocoapods >/dev/null 2>&1 || brew install cocoapods\npod --version",
+          "verifierLabel": "pod prints a version number"
+        },
+        {
+          "id": "prebuild",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Generate the iPhone project",
+          "body": "",
+          "command": "cd apps/mobile\nnpm run prebuild",
+          "verifierLabel": "It ends with the use-release-scheme message"
+        },
+        {
+          "id": "open-xcode",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Open the project in Xcode",
+          "body": "",
+          "command": "open ios/NutAI.xcworkspace",
+          "verifierLabel": "Xcode opens with the NutAI project",
+          "watch": {
+            "expect": [
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.apple.dt.Xcode"
+              },
+              {
+                "type": "axElement",
+                "roleLabel": "NutAI"
+              }
+            ],
+            "hints": [
+              "Open the .xcworkspace, not the .xcodeproj — the project on its own has no pods.",
+              "No ios folder? The step before this one did not finish."
+            ]
+          }
+        },
+        {
+          "id": "signing",
+          "kind": "permission",
+          "title": "Sign the app with your Apple ID",
+          "body": "Signing & Capabilities: set a unique Bundle Identifier (com.yourname.nutai), then pick your Team.",
+          "verifierLabel": "Signing & Capabilities shows no red error",
+          "point": {
+            "descriptor": "Signing & Capabilities",
+            "inApp": "com.apple.dt.Xcode"
+          },
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In Xcode's Signing & Capabilities tab, is a Team selected and the red 'requires a development team' error gone?"
+              }
+            ],
+            "hints": [
+              "'Failed Registering Bundle Identifier' or 'cannot be registered to your development team'? The shipped com.nutai.app is already taken. Change the Bundle Identifier field to a unique string (com.yourname.nutai), then let Xcode retry. A free Apple ID works. 'No profiles for com.nutai.app were found' goes away once it registers.",
+              "No team in the list? Add your Apple ID first: Xcode → Settings → Accounts.",
+              "Leave 'Automatically manage signing' ticked — a free Apple ID cannot do it any other way.",
+              "An error naming HealthKit means a free Apple ID can't get that entitlement (Apple's restriction). Build without it: SKIP_HEALTHKIT=1 npm run prebuild, then reopen the workspace and set your unique Bundle Identifier again (prebuild regenerates ios/ and resets it to com.nutai.app). A paid developer account restores Health sync."
+            ]
+          }
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your iPhone",
+          "body": "Unlock it, tap Trust, then pick it from the device menu.",
+          "verifierLabel": "Your iPhone is selected as the run destination"
+        },
+        {
+          "id": "run",
+          "kind": "open",
+          "title": "Press Run",
+          "body": "The ▶ button. The first build takes a few minutes.",
+          "verifierLabel": "Xcode finishes with Build Succeeded"
+        },
+        {
+          "id": "trust-developer",
+          "kind": "permission",
+          "title": "Trust yourself on the iPhone",
+          "body": "On the phone: Settings → General → VPN & Device Management → your Apple ID → Trust.",
+          "verifierLabel": "Your Apple ID shows as trusted"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your iPhone",
+          "body": "Scans run on publik API; link the phone when asked. Free signatures last 7 days — Run renews.",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "macos",
+      "target": "android",
+      "unsupported": null,
+      "label": "Mac + Android",
+      "shell": "terminal",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "terminal",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Apple opens a small installer.",
+          "command": "xcode-select --install",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Choose the macOS Installer (.pkg).",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open Terminal",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "Terminal is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Git and Node 22.16 or newer are required. Node 23 does not work.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this Mac",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "(\nif ! git config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github\\.com:#https://github.com/#; s#\\.git$##' | grep -qxF \"https://github.com/Blueturboguy07/nut-ai\"; then\n  echo \"~/nut-ai already exists and is not a clean copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\nif git status --porcelain 2>/dev/null | grep -q .; then\n  echo \"~/nut-ai already exists and is not a clean copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\ngit checkout dace89160b86de38165a952100860f47f1010177\n)",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at dace891'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "'reference is not a tree' means the clone was interrupted — delete ~/nut-ai and clone again."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "npm install",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-android-studio",
+          "kind": "open",
+          "title": "Install Android Studio",
+          "body": "Accept the standard setup so it installs the SDK.",
+          "href": "https://developer.android.com/studio",
+          "actionLabel": "Open download",
+          "verifierLabel": "Android Studio opens to its welcome screen",
+          "watch": {
+            "expect": [
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.google.android.studio"
+              }
+            ],
+            "hints": [
+              "First launch runs a setup wizard — take the standard settings so it fetches the SDK.",
+              "Let the SDK download finish before the build step, even if the guide has moved on."
+            ]
+          }
+        },
+        {
+          "id": "install-jdk",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Install Java 17",
+          "body": "The Android build needs Java 17 or newer. Installs Temurin 17 if Java is missing or older.",
+          "command": "if [ -n \"$JAVA_HOME\" ] && \"$JAVA_HOME/bin/java\" -version 2>&1 | grep -Eq 'version \"(1[7-9]|[2-9][0-9])'; then\n  echo \"$JAVA_HOME\" > ~/.nut-ai-java-home\nelse\n  /usr/libexec/java_home -v 17+ >/dev/null 2>&1 || brew install --cask temurin@17\n  /usr/libexec/java_home -v 17+ > ~/.nut-ai-java-home\nfi\nread -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n\"$JAVA_HOME/bin/java\" -version || { echo 'Java 17 or newer is still missing. Install Temurin 17 from adoptium.net, then run this step again.'; false; }",
+          "verifierLabel": "java -version prints 17 or newer",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the last java -version output in the terminal show version 17 or newer (openjdk version \"17...\" or higher), not 1.8 or 11?"
+              }
+            ],
+            "hints": [
+              "A JDK installed a moment ago only appears in a terminal opened afterwards.",
+              "brew missing? Download Temurin 17 from adoptium.net and run the installer, then come back."
+            ]
+          }
+        },
+        {
+          "id": "enable-usb-debugging",
+          "kind": "permission",
+          "title": "Turn on USB debugging",
+          "body": "Settings → About phone → tap Build number 7×. Then Developer options → USB debugging.",
+          "verifierLabel": "Developer options shows USB debugging on"
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your phone",
+          "body": "Tap Allow on the phone. If nothing appears, try another cable — that is the usual cause.",
+          "verifierLabel": "adb devices lists your phone"
+        },
+        {
+          "id": "prebuild-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Generate the Android project",
+          "body": "",
+          "command": "npx expo prebuild --platform android",
+          "verifierLabel": "An android folder appears inside apps/mobile"
+        },
+        {
+          "id": "prepare-gradle",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Download the Android build tools",
+          "body": "The first run downloads Gradle and the Android NDK. Later runs take about a minute.",
+          "command": "[ -f ~/.nut-ai-java-home ] && read -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew help",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the libraries' C++ code",
+          "body": "Compiles the libraries' C++ code for your phone's processor only. Keep the phone plugged in.",
+          "command": "[ -f ~/.nut-ai-java-home ] && read -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew externalNativeBuildRelease -x :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-libraries",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the libraries and app C++ code",
+          "body": "Compiles the libraries' Kotlin and Java code and the app's own C++ code.",
+          "command": "[ -f ~/.nut-ai-java-home ] && read -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew assembleRelease :app:externalNativeBuildRelease -x :app:assembleRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "run-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Build and install",
+          "body": "Builds the app, installs it on your phone and opens it.",
+          "command": "[ -f ~/.nut-ai-java-home ] && read -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\nnpx expo run:android --variant release --no-bundler",
+          "verifierLabel": "The build ends with an install onto your phone"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your phone",
+          "body": "Scans run on publik API; link the phone when asked. Your own AI key also works (Profile).",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "windows",
+      "target": "android",
+      "unsupported": null,
+      "label": "Windows + Android",
+      "shell": "powershell",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "open",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Run the installer, then reopen PowerShell.",
+          "href": "https://git-scm.com/install/windows",
+          "actionLabel": "Open installer",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Run the LTS installer, then reopen PowerShell.",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open PowerShell",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "PowerShell is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Git and Node 22.16 or newer are required. Node 23 does not work.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this PC",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "$origin = git config --get remote.origin.url 2>$null\nif ($origin) { $origin = $origin -replace '^git@github\\.com:', 'https://github.com/' -replace '\\.git$', '' }\n$dirty = git status --porcelain 2>$null\nif ($origin -ne \"https://github.com/Blueturboguy07/nut-ai\" -or $dirty) {\n  Write-Host \"~/nut-ai already exists and is not a clean copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\n}\ngit checkout dace89160b86de38165a952100860f47f1010177",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at dace891'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "'reference is not a tree' means the clone was interrupted — delete ~/nut-ai and clone again."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "npm.cmd install",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm.cmd run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-android-studio",
+          "kind": "open",
+          "title": "Install Android Studio",
+          "body": "Accept the standard setup so it installs the SDK.",
+          "href": "https://developer.android.com/studio",
+          "actionLabel": "Open download",
+          "verifierLabel": "Android Studio opens to its welcome screen"
+        },
+        {
+          "id": "install-jdk",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Install Java 17",
+          "body": "The Android build needs Java 17 or newer. Installs Temurin 17 if Java is missing or older.",
+          "command": "$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')\nif ($jh) { $env:JAVA_HOME = $jh }\nif ($env:JAVA_HOME) { $env:Path = $env:JAVA_HOME + '\\bin;' + $env:Path }\nfunction Get-JavaMajor {\n  if ($env:JAVA_HOME -and -not (Test-Path ($env:JAVA_HOME + '\\bin\\java.exe'))) { return 0 }\n  $v = cmd /c \"java -version 2>&1\" | Out-String\n  if ($v -match 'version \"1\\.(\\d+)') { return [int]$Matches[1] }\n  if ($v -match 'version \"(\\d+)') { return [int]$Matches[1] }\n  return 0\n}\nif ((Get-JavaMajor) -lt 17) {\n  $root = Join-Path $env:ProgramFiles 'Eclipse Adoptium'\n  $jdk = Get-ChildItem $root -Directory -Filter 'jdk-17*' -ErrorAction SilentlyContinue | Select-Object -Last 1\n  if (-not $jdk) {\n    winget install --id EclipseAdoptium.Temurin.17.JDK -e --source winget --accept-source-agreements --accept-package-agreements\n    $jdk = Get-ChildItem $root -Directory -Filter 'jdk-17*' -ErrorAction SilentlyContinue | Select-Object -Last 1\n  }\n  if ($jdk) {\n    $env:JAVA_HOME = $jdk.FullName\n    $env:Path = $jdk.FullName + '\\bin;' + $env:Path\n    [Environment]::SetEnvironmentVariable('JAVA_HOME', $jdk.FullName, 'User')\n  }\n}\njava -version\nif ((Get-JavaMajor) -lt 17) { throw 'Java 17 or newer is still missing. Install Temurin 17 from adoptium.net, then run this step again.' }",
+          "verifierLabel": "java -version prints 17 or newer",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the last java -version output in the terminal show version 17 or newer (openjdk version \"17...\" or higher), not 1.8 or 11?"
+              }
+            ],
+            "hints": [
+              "A JDK installed a moment ago only appears in a terminal opened afterwards.",
+              "winget missing? Download Temurin 17 from adoptium.net and run the installer, then come back.",
+              "Java 8 or 11 can stay installed: the build uses the Java 17 that JAVA_HOME names."
+            ]
+          }
+        },
+        {
+          "id": "enable-usb-debugging",
+          "kind": "permission",
+          "title": "Turn on USB debugging",
+          "body": "Settings → About phone → tap Build number 7×. Then Developer options → USB debugging.",
+          "verifierLabel": "Developer options shows USB debugging on"
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your phone",
+          "body": "Tap Allow on the phone. If nothing appears, try another cable — that is the usual cause.",
+          "verifierLabel": "adb devices lists your phone"
+        },
+        {
+          "id": "prebuild-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Generate the Android project",
+          "body": "",
+          "command": "npx.cmd expo prebuild --platform android",
+          "verifierLabel": "An android folder appears inside apps/mobile"
+        },
+        {
+          "id": "prepare-gradle",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Download the Android build tools",
+          "body": "The first run downloads Gradle and the Android NDK. Later runs take about a minute.",
+          "command": "$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')\nif ($jh) { $env:JAVA_HOME = $jh; $env:Path = $jh + '\\bin;' + $env:Path }\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'\n.\\gradlew.bat help",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the libraries' C++ code",
+          "body": "Compiles the libraries' C++ code for your phone's processor only. Keep the phone plugged in.",
+          "command": "$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')\nif ($jh) { $env:JAVA_HOME = $jh; $env:Path = $jh + '\\bin;' + $env:Path }\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'\n.\\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-libraries",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the libraries and app C++ code",
+          "body": "Compiles the libraries' Kotlin and Java code and the app's own C++ code.",
+          "command": "$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')\nif ($jh) { $env:JAVA_HOME = $jh; $env:Path = $jh + '\\bin;' + $env:Path }\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'\n.\\gradlew.bat assembleRelease :app:externalNativeBuildRelease -x :app:assembleRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "run-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Build and install",
+          "body": "Builds the app, installs it on your phone and opens it.",
+          "command": "$jh = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User')\nif ($jh) { $env:JAVA_HOME = $jh; $env:Path = $jh + '\\bin;' + $env:Path }\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'\nnpx.cmd expo run:android --variant release --no-bundler",
+          "verifierLabel": "The build ends with an install onto your phone"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your phone",
+          "body": "Scans run on publik API; link the phone when asked. Your own AI key also works (Profile).",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "windows",
+      "target": "ios",
+      "label": "Windows + iPhone",
+      "shell": "powershell",
+      "setupSteps": [],
+      "steps": [],
+      "unsupported": {
+        "headline": "A Windows PC cannot build an iPhone app",
+        "reason": "Apple only allows iPhone apps to be built and signed on macOS using Xcode, which Apple does not release for Windows. This is Apple's restriction, not a missing feature in Nut AI or Iris — no setup, emulator, or virtual machine makes it work reliably.",
+        "alternatives": [
+          "Borrow a Mac for about thirty minutes — the signature it installs lasts 7 days and can be renewed on any Mac.",
+          "Use an Android phone instead, which builds fine from Windows."
+        ]
+      }
+    }
+  ]
+}

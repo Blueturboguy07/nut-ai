@@ -716,3 +716,118 @@ jobs:
         with:
           name: run-android-old-one-step-logs
           path: ${{ runner.temp }}/r5/
+
+  # BLIND VERIFIER (Nov 2 2026), not part of the fix: every Windows command of
+  # publik's Nut AI guide v16 from a fresh PC, in the guide's order, through
+  # Iris for Windows 0.9.15's OWN recipe derivation and PowerShellSession
+  # (vendored verbatim in .github/verify-r5/iris), started like a GUI app (no
+  # console, environment from the registry), on the current Node LTS a reader
+  # downloads, with no Java and a fresh Android SDK holding only what Android
+  # Studio's standard setup installs. Then every step once more.
+  blind-full-guide-iris-0915:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 175
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: make this runner a fresh reader PC
+        run: |
+          node --version
+          $nodeDir = Split-Path (Get-Command node).Source
+          npm install -g tsx@4.19.2 --no-audit --no-fund 2>&1 | Select-Object -Last 2
+          $tsxCli = Join-Path (npm root -g) 'tsx\dist\cli.mjs'
+          if (-not (Test-Path $tsxCli)) { Write-Error "no tsx cli at $tsxCli"; exit 1 }
+          $javaForSdkmanager = $env:JAVA_HOME_17_X64
+          $runnerSdk = $env:ANDROID_HOME
+          $isJava = '(?i)\\java|jdk|jre|javapath|adoptium|zulu|corretto'
+          foreach ($scope in 'Machine', 'User') {
+            $entries = @(([Environment]::GetEnvironmentVariable('Path', $scope)) -split ';' | Where-Object { $_ })
+            $removed = @($entries | Where-Object { $_ -match $isJava })
+            $kept = @($entries | Where-Object { $_ -notmatch $isJava })
+            if ($scope -eq 'Machine') { $kept = @($nodeDir) + $kept }
+            Write-Output "$scope Path: removed $($removed.Count) Java entries"
+            [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), $scope)
+          }
+          foreach ($scope in 'Machine', 'User') {
+            $vars = [Environment]::GetEnvironmentVariables($scope)
+            foreach ($k in @($vars.Keys)) {
+              if ($k -match '^(ANDROID_|JAVA_HOME)') { [Environment]::SetEnvironmentVariable($k, $null, $scope); Write-Output "removed $scope $k" }
+            }
+          }
+          $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+          New-Item -ItemType Directory -Force $sdk | Out-Null
+          $sm = Join-Path $runnerSdk 'cmdline-tools\latest\bin\sdkmanager.bat'
+          $env:JAVA_HOME = $javaForSdkmanager
+          $yes = @('y') * 20 -join "`n"
+          $yes | & $sm "--sdk_root=$sdk" --licenses 2>&1 | Select-Object -Last 2
+          & $sm "--sdk_root=$sdk" 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 2>&1 | Select-Object -Last 3
+          Get-ChildItem $sdk | ForEach-Object { "fresh SDK has: $($_.Name)" }
+          Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -ErrorAction SilentlyContinue | ForEach-Object { "already under Program Files: $($_.FullName)" }
+          git config --show-origin --get core.autocrlf
+          # The environment a GUI app started from Explorer gets: registry
+          # Machine + User variables, plus the per-session ones.
+          $e = @{}
+          foreach ($scope in 'Machine', 'User') {
+            $vars = [Environment]::GetEnvironmentVariables($scope)
+            foreach ($k in $vars.Keys) { $e[$k] = [Environment]::ExpandEnvironmentVariables([string]$vars[$k]) }
+          }
+          $e['Path'] = [Environment]::ExpandEnvironmentVariables([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'))
+          foreach ($k in 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'SystemRoot', 'windir', 'SystemDrive', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'ALLUSERSPROFILE', 'PUBLIC', 'ComSpec', 'PATHEXT', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'NUMBER_OF_PROCESSORS', 'OS') {
+            $v = [Environment]::GetEnvironmentVariable($k, 'Process'); if ($v) { $e[$k] = $v }
+          }
+          foreach ($k in @($e.Keys)) { if ($k -match '^(ANDROID_|JAVA_HOME|CI$|GITHUB_|RUNNER_|ACTIONS_)') { $e.Remove($k) } }
+          $e['PSModulePath'] = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          ($e | ConvertTo-Json -Depth 2) | Set-Content -Encoding utf8 (Join-Path $dir 'env.json')
+          Write-Output "registry environment for the driver: $($e.Count) variables: $((@($e.Keys) | Sort-Object) -join ', ')"
+          "TSX_CLI=$tsxCli" >> $env:GITHUB_ENV
+
+      - name: cold - every Windows guide command through Iris 0.9.15's code
+        timeout-minutes: 150
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native', 'build-libraries', 'run-android', 'run-android@standin'
+          node .github/verify-r5/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r5/iris-drive.mts .github/verify-r5/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') cold @steps
+          Write-Output "driver exit $LASTEXITCODE"
+
+      - name: again - every step a second time
+        timeout-minutes: 90
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native', 'build-libraries', 'run-android', 'run-android@standin'
+          node .github/verify-r5/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r5/iris-drive.mts .github/verify-r5/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') again @steps
+          Write-Output "driver exit $LASTEXITCODE"
+
+      - name: verdict
+        if: always()
+        run: |
+          node .github/verify-r5/verdict.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl')
+          $code = $LASTEXITCODE
+          $apk = Get-ChildItem "$HOME\nut-ai\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($apk) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($apk.FullName)
+            $abis = @($zip.Entries | Where-Object { $_.FullName -match '^lib/([^/]+)/' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
+            $zip.Dispose()
+            "APK: $($apk.Name) $([math]::Round($apk.Length / 1MB, 1)) MB, native code for: $($abis -join ', ')" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          } else { 'no release APK' | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY }
+          Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk" -ErrorAction SilentlyContinue | ForEach-Object { "SDK after the build has: $($_.Name)" }
+          Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\ndk" -ErrorAction SilentlyContinue | ForEach-Object { "NDK: $($_.Name)" }
+          exit $code
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-full-guide-iris-0915
+          path: ${{ runner.temp }}/blind/results.jsonl
