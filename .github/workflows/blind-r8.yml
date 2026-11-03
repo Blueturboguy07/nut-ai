@@ -1,0 +1,76 @@
+# Blind verify r8 (not part of the fix): break tests for nut-ai 6a6b9e7 / guide v16 round 8b.
+# Runs only on pushes to verify/r8-blind. Every guide command runs through Iris for Windows 0.9.15's
+# own code (recipeFromGuide + PowerShellSession, vendored verbatim in .github/verify-r8/iris).
+# An init script in ~/.gradle/init.d logs the JVM of every Gradle build, expo's included.
+name: blind-r8
+on:
+  push:
+    branches: ['verify/r8-blind']
+jobs:
+  guide:
+    runs-on: windows-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        reader: [jre17-programfiles, jre17-javahome-trailing, jdk25-javahome-props25, jdk17-javahome-trailing-props25]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - id: jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: fresh reader PC (${{ matrix.reader }})
+        run: |
+          switch ('${{ matrix.reader }}') {
+            'jre17-programfiles' { $env:PRE_JRE17 = '1' }
+            'jre17-javahome-trailing' { $env:PRE_JRE17 = '1'; $env:JRE_AS_JAVAHOME = '1' }
+            'jdk25-javahome-props25' { $env:NEWJAVA = '${{ steps.jdk.outputs.path }}'; $env:PRE_JDK25 = '1'; $env:GRADLE_PROPS_JDK25 = '1' }
+            'jdk17-javahome-trailing-props25' { $env:JDK17_TRAILING = '1'; $env:PROPS_JAVA = '${{ steps.jdk.outputs.path }}' }
+          }
+          ./.github/verify-r8/fresh-pc.ps1
+      - name: every Windows guide command through Iris 0.9.15's code (cold)
+        timeout-minutes: 170
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r8/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r8/iris-drive.mts .github/verify-r8/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') ${{ matrix.reader }} @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: verdict
+        if: always()
+        run: |
+          node .github/verify-r8/verdict.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl')
+          $code = $LASTEXITCODE
+          node .github/verify-r8/verdict-jvm.mjs 7
+          if ($LASTEXITCODE -ne 0) { $code = 1 }
+          "HEAD of ~/nut-ai: $(git -C "$HOME\nut-ai" rev-parse HEAD)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          "User JAVA_HOME after the guide: [$([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User'))]" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -ErrorAction SilentlyContinue | ForEach-Object { "Program Files has: $($_.Name)" } | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          $apk = Get-ChildItem "$HOME\nut-ai\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($apk) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($apk.FullName)
+            $abis = @($zip.Entries | Where-Object { $_.FullName -match '^lib/([^/]+)/' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
+            $entry = $zip.Entries | Where-Object { $_.FullName -eq 'assets/index.android.bundle' } | Select-Object -First 1
+            $hit = $false
+            if ($entry) { $ms = New-Object System.IO.MemoryStream; $s = $entry.Open(); $s.CopyTo($ms); $s.Dispose(); $text = [System.Text.Encoding]::ASCII.GetString($ms.ToArray()); $hit = $text.Contains('No complete answer before the deadline.') }
+            $zip.Dispose()
+            "APK: $($apk.Name) $([math]::Round($apk.Length / 1MB, 1)) MB, native code for: $($abis -join ', '); bundle has the round 8b deadline text: $hit" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+            if (-not $hit) { $code = 1 }
+          } else { 'no release APK' | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY; $code = 1 }
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-r8-${{ matrix.reader }}
+          path: |
+            ${{ runner.temp }}/blind/results.jsonl
+            ~/blind-jvm.log

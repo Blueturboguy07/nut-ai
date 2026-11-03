@@ -1,0 +1,839 @@
+{
+  "appSlug": "nut-ai",
+  "appName": "Nut AI",
+  "version": 16,
+  "status": "pilot",
+  "sourceOwner": "Blueturboguy07",
+  "sourceRepo": "nut-ai",
+  "sourceCommit": "6a6b9e741e307f4176a7db7a778ddb2fb58c4114",
+  "outputType": "mobile_app",
+  "estimatedMinutes": 45,
+  "readmeSectionIds": [
+    "put-it-on-your-phone"
+  ],
+  "reviewNote": "Nut AI installs unsigned onto the reader's own phone, and photo scans run on publik API by default from a bounded key the phone mints (the reader's own key also works). The guide says both before the first command. Built Nut AI before? Rebuild it with this guide: older builds fail photo scans, and those scans can still be charged.",
+  "branches": [
+    {
+      "platform": "macos",
+      "target": "ios",
+      "unsupported": null,
+      "label": "Mac + iPhone",
+      "shell": "terminal",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "terminal",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Apple opens a small installer.",
+          "command": "xcode-select --install",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Choose the macOS Installer (.pkg).",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open Terminal",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "Terminal is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Needs Git and Node 22.16+, not 23. Rebuild an old Nut AI: its photo scans fail but can be charged.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this Mac",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "(\nif ! git config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github\\.com:#https://github.com/#; s#\\.git$##' | grep -qxF \"https://github.com/Blueturboguy07/nut-ai\"; then\n  echo \"~/nut-ai already exists and is not a copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\nif ! git cat-file -e 6a6b9e741e307f4176a7db7a778ddb2fb58c4114 2>/dev/null && ! git fetch --no-tags https://github.com/Blueturboguy07/nut-ai.git 6a6b9e741e307f4176a7db7a778ddb2fb58c4114; then\n  echo \"Could not download the reviewed version. Check your internet connection, then press Try again.\"\n  exit 1\nfi\nif git status --porcelain 2>/dev/null | grep -q .; then\n  git -c user.name=iris-guide -c user.email=iris-guide@localhost stash push --include-untracked -m \"Saved by the install guide\" || exit 1\n  echo \"Your changes in ~/nut-ai are saved with git stash. To see them: git stash list\"\nfi\ngit checkout 6a6b9e741e307f4176a7db7a778ddb2fb58c4114\n)",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at 6a6b9e7'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "Built Nut AI before? This step downloads the new version and saves your own changes with git stash."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "node scripts/check-node-version.cjs && npm install --no-save",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-xcode",
+          "kind": "open",
+          "title": "Install Xcode",
+          "body": "Large — start now. Not compatible? Get an older Xcode: developer.apple.com/download/all",
+          "href": "https://apps.apple.com/app/xcode/id497799835",
+          "actionLabel": "Open the App Store page",
+          "verifierLabel": "Xcode opens without asking to finish setup",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "xcodebuild"
+              },
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.apple.dt.Xcode"
+              }
+            ],
+            "hints": [
+              "The App Store button reads Open once the download is finished.",
+              "First launch asks to install additional components — let that finish before going on."
+            ]
+          }
+        },
+        {
+          "id": "install-cocoapods",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install CocoaPods",
+          "body": "The iPhone project generator needs CocoaPods. Does nothing if you already have it.",
+          "command": "brew list cocoapods >/dev/null 2>&1 || brew install cocoapods\npod --version",
+          "verifierLabel": "pod prints a version number"
+        },
+        {
+          "id": "prebuild",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Generate the iPhone project",
+          "body": "",
+          "command": "cd apps/mobile\nnpm run prebuild",
+          "verifierLabel": "It ends with the use-release-scheme message"
+        },
+        {
+          "id": "open-xcode",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Open the project in Xcode",
+          "body": "",
+          "command": "open ios/NutAI.xcworkspace",
+          "verifierLabel": "Xcode opens with the NutAI project",
+          "watch": {
+            "expect": [
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.apple.dt.Xcode"
+              },
+              {
+                "type": "axElement",
+                "roleLabel": "NutAI"
+              }
+            ],
+            "hints": [
+              "Open the .xcworkspace, not the .xcodeproj — the project on its own has no pods.",
+              "No ios folder? The step before this one did not finish."
+            ]
+          }
+        },
+        {
+          "id": "signing",
+          "kind": "permission",
+          "title": "Sign the app with your Apple ID",
+          "body": "Signing & Capabilities: set a unique Bundle Identifier (com.yourname.nutai), then pick your Team.",
+          "verifierLabel": "Signing & Capabilities shows no red error",
+          "point": {
+            "descriptor": "Signing & Capabilities",
+            "inApp": "com.apple.dt.Xcode"
+          },
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In Xcode's Signing & Capabilities tab, is a Team selected and the red 'requires a development team' error gone?"
+              }
+            ],
+            "hints": [
+              "'Failed Registering Bundle Identifier' or 'cannot be registered to your development team'? The shipped com.nutai.app is already taken. Change the Bundle Identifier field to a unique string (com.yourname.nutai), then let Xcode retry. A free Apple ID works. 'No profiles for com.nutai.app were found' goes away once it registers.",
+              "No team in the list? Add your Apple ID first: Xcode → Settings → Accounts.",
+              "Leave 'Automatically manage signing' ticked — a free Apple ID cannot do it any other way.",
+              "An error naming HealthKit means a free Apple ID can't get that entitlement (Apple's restriction). Build without it: SKIP_HEALTHKIT=1 npm run prebuild, then reopen the workspace and set your unique Bundle Identifier again (prebuild regenerates ios/ and resets it to com.nutai.app). A paid developer account restores Health sync."
+            ]
+          }
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your iPhone",
+          "body": "Unlock it, tap Trust, then pick it from the device menu.",
+          "verifierLabel": "Your iPhone is selected as the run destination"
+        },
+        {
+          "id": "run",
+          "kind": "open",
+          "title": "Press Run",
+          "body": "The ▶ button. The first build takes a few minutes.",
+          "verifierLabel": "Xcode finishes with Build Succeeded"
+        },
+        {
+          "id": "trust-developer",
+          "kind": "permission",
+          "title": "Trust yourself on the iPhone",
+          "body": "On the phone: Settings → General → VPN & Device Management → your Apple ID → Trust.",
+          "verifierLabel": "Your Apple ID shows as trusted"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your iPhone",
+          "body": "Scans run on publik API; link the phone when asked. Free signatures last 7 days — Run renews.",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "macos",
+      "target": "android",
+      "unsupported": null,
+      "label": "Mac + Android",
+      "shell": "terminal",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "terminal",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Apple opens a small installer.",
+          "command": "xcode-select --install",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Choose the macOS Installer (.pkg).",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open Terminal",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "Terminal is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Needs Git and Node 22.16+, not 23. Rebuild an old Nut AI: its photo scans fail but can be charged.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this Mac",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "(\nif ! git config --get remote.origin.url 2>/dev/null | sed -E 's#^git@github\\.com:#https://github.com/#; s#\\.git$##' | grep -qxF \"https://github.com/Blueturboguy07/nut-ai\"; then\n  echo \"~/nut-ai already exists and is not a copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\nfi\nif ! git cat-file -e 6a6b9e741e307f4176a7db7a778ddb2fb58c4114 2>/dev/null && ! git fetch --no-tags https://github.com/Blueturboguy07/nut-ai.git 6a6b9e741e307f4176a7db7a778ddb2fb58c4114; then\n  echo \"Could not download the reviewed version. Check your internet connection, then press Try again.\"\n  exit 1\nfi\nif git status --porcelain 2>/dev/null | grep -q .; then\n  git -c user.name=iris-guide -c user.email=iris-guide@localhost stash push --include-untracked -m \"Saved by the install guide\" || exit 1\n  echo \"Your changes in ~/nut-ai are saved with git stash. To see them: git stash list\"\nfi\ngit checkout 6a6b9e741e307f4176a7db7a778ddb2fb58c4114\n)",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at 6a6b9e7'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "Built Nut AI before? This step downloads the new version and saves your own changes with git stash."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "node scripts/check-node-version.cjs && npm install --no-save",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-android-studio",
+          "kind": "open",
+          "title": "Install Android Studio",
+          "body": "Accept the standard setup so it installs the SDK.",
+          "href": "https://developer.android.com/studio",
+          "actionLabel": "Open download",
+          "verifierLabel": "Android Studio opens to its welcome screen",
+          "watch": {
+            "expect": [
+              {
+                "type": "foregroundApp",
+                "bundleId": "com.google.android.studio"
+              }
+            ],
+            "hints": [
+              "First launch runs a setup wizard — take the standard settings so it fetches the SDK.",
+              "Let the SDK download finish before the build step, even if the guide has moved on."
+            ]
+          }
+        },
+        {
+          "id": "install-jdk",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Install Java 17",
+          "body": "The Android build needs a JDK 17 to 21, not only a Java runtime. Installs Temurin 17 if none.",
+          "command": "rm -f ~/.nut-ai-java-home\nif [ -n \"$JAVA_HOME\" ] && [ -x \"$JAVA_HOME/bin/javac\" ] && \"$JAVA_HOME/bin/java\" -version 2>&1 </dev/null | grep -Eq 'version \"(1[7-9]|2[01])[.\"]'; then echo \"$JAVA_HOME\" > ~/.nut-ai-java-home; fi\n[ -s ~/.nut-ai-java-home ] || find -L /Library/Java/JavaVirtualMachines ~/Library/Java/JavaVirtualMachines ~/.nut-ai-jdk -maxdepth 5 -path '*/Contents/Home/bin/java' 2>/dev/null | while IFS= read -r j; do [ -x \"${j%/java}/javac\" ] && \"$j\" -version 2>&1 </dev/null | grep -Eq 'version \"17[.\"]' && echo \"${j%/bin/java}\" > ~/.nut-ai-java-home && break; done\n[ -s ~/.nut-ai-java-home ] || find -L /Library/Java/JavaVirtualMachines ~/Library/Java/JavaVirtualMachines ~/.nut-ai-jdk -maxdepth 5 -path '*/Contents/Home/bin/java' 2>/dev/null | while IFS= read -r j; do [ -x \"${j%/java}/javac\" ] && \"$j\" -version 2>&1 </dev/null | grep -Eq 'version \"(1[89]|2[01])[.\"]' && echo \"${j%/bin/java}\" > ~/.nut-ai-java-home && break; done\nif [ ! -s ~/.nut-ai-java-home ]; then\n  uname -m | grep -q arm64 && NUT_AI_JDK_ARCH=aarch64 NUT_AI_JDK_SHA=78b08c7f5a0598242d5719c022e19479cb4a3aa45c37c19726a757a469ed1c15 || NUT_AI_JDK_ARCH=x64 NUT_AI_JDK_SHA=868f5c672b3389fdbe48e44f94ae170f01668b1401360944fc7159d7cc9772cc\n  curl -fL --retry 3 -o ~/.nut-ai-jdk.tar.gz \"https://api.adoptium.net/v3/binary/version/jdk-17.0.21%2B9/mac/$NUT_AI_JDK_ARCH/jdk/hotspot/normal/eclipse\"\n  echo \"$NUT_AI_JDK_SHA  $HOME/.nut-ai-jdk.tar.gz\" | shasum -a 256 -c - && mkdir -p ~/.nut-ai-jdk && tar -xzf ~/.nut-ai-jdk.tar.gz -C ~/.nut-ai-jdk && \"$HOME/.nut-ai-jdk/jdk-17.0.21+9/Contents/Home/bin/java\" -version 2>&1 </dev/null | grep -Eq 'version \"17[.\"]' && echo \"$HOME/.nut-ai-jdk/jdk-17.0.21+9/Contents/Home\" > ~/.nut-ai-java-home\n  rm -f ~/.nut-ai-jdk.tar.gz\nfi\nread -r JAVA_HOME < ~/.nut-ai-java-home && export JAVA_HOME\n\"$JAVA_HOME/bin/java\" -version\n[ -x \"$JAVA_HOME/bin/javac\" ] && \"$JAVA_HOME/bin/java\" -version 2>&1 | grep -Eq 'version \"(1[7-9]|2[01])[.\"]' || { echo 'No JDK 17 to 21 is ready. Install the Temurin 17 JDK from adoptium.net, then run this step again.'; false; }",
+          "verifierLabel": "java -version prints a JDK version from 17 to 21",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the last java -version output in the terminal show a version from 17 to 21 (openjdk version \"17...\" to \"21...\"), not 1.8, 11 or 24 and newer?"
+              }
+            ],
+            "hints": [
+              "With no Java 17 to 21 on this Mac, it downloads Temurin 17 (about 190 MB). If it stops, run this step again.",
+              "Other Java versions can stay installed: the build uses only the Java this step picks."
+            ]
+          }
+        },
+        {
+          "id": "enable-usb-debugging",
+          "kind": "permission",
+          "title": "Turn on USB debugging",
+          "body": "Settings → About phone → tap Build number 7×. Then Developer options → USB debugging.",
+          "verifierLabel": "Developer options shows USB debugging on"
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your phone",
+          "body": "Tap Allow on the phone. If nothing appears, try another cable — that is the usual cause.",
+          "verifierLabel": "adb devices lists your phone"
+        },
+        {
+          "id": "prebuild-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Generate the Android project",
+          "body": "",
+          "command": "npx expo prebuild --platform android",
+          "verifierLabel": "An android folder appears inside apps/mobile"
+        },
+        {
+          "id": "prepare-gradle",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Download the Android build tools",
+          "body": "The first run downloads Gradle and the Android NDK. Later runs take about a minute.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew help",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-1",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 1 of 3",
+          "body": "Compiles C++ code for your phone's processor only. Keep the phone plugged in until the end.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew :react-native-worklets:externalNativeBuildRelease :react-native-nitro-modules:externalNativeBuildRelease :react-native-screens:externalNativeBuildRelease :expo-modules-core:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-2",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 2 of 3",
+          "body": "Compiles the C++ code of the animation libraries.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew externalNativeBuildRelease -x :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-app",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 3 of 3",
+          "body": "Compiles the app's own C++ code. This is the longest build step.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-libraries",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the Kotlin and Java code",
+          "body": "Compiles the libraries' Kotlin and Java code.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew assembleRelease -x :app:assembleRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "prepare-app",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Check and convert the libraries",
+          "body": "Checks the libraries for release errors and converts them to Android code.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\n./gradlew lintVitalAnalyzeRelease :app:mergeExtDexRelease -x :app:lintVitalAnalyzeRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "run-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Build and install",
+          "body": "Builds the app, installs it on your phone and opens it.",
+          "command": "{ read -r JAVA_HOME < ~/.nut-ai-java-home && [ -x \"$JAVA_HOME/bin/javac\" ]; } || { echo 'Run the Install Java 17 step first. It picks the Java this build needs.'; JAVA_HOME=/run-the-Install-Java-17-step-first; }\nexport JAVA_HOME\nexport GRADLE_OPTS=\"\\\"-Dorg.gradle.java.home=$JAVA_HOME\\\"\"\n[ -n \"$ANDROID_HOME$ANDROID_SDK_ROOT\" ] || [ ! -d \"$HOME/Library/Android/sdk\" ] || export ANDROID_HOME=\"$HOME/Library/Android/sdk\"\n\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb\" shell getprop ro.product.cpu.abilist 2>/dev/null | tr ', \\r' '\\n\\n\\n' | grep -m 1 -x -E 'armeabi-v7a|arm64-v8a|x86|x86_64' > ~/.nut-ai-abi\nread -r ORG_GRADLE_PROJECT_reactNativeArchitectures < ~/.nut-ai-abi || ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a\nexport ORG_GRADLE_PROJECT_reactNativeArchitectures\nnpx expo run:android --variant release --no-bundler",
+          "verifierLabel": "The build ends with an install onto your phone"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your phone",
+          "body": "Scans run on publik API; link the phone when asked. Your own AI key also works (Profile).",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "windows",
+      "target": "android",
+      "unsupported": null,
+      "label": "Windows + Android",
+      "shell": "powershell",
+      "setupSteps": [
+        {
+          "id": "install-git",
+          "kind": "open",
+          "tool": "git",
+          "title": "Install Git",
+          "body": "Run the installer, then reopen PowerShell.",
+          "href": "https://git-scm.com/install/windows",
+          "actionLabel": "Open installer",
+          "verifierLabel": "Git responds with a version number"
+        },
+        {
+          "id": "install-node",
+          "kind": "open",
+          "tool": "node",
+          "title": "Install Node LTS",
+          "body": "Run the LTS installer, then reopen PowerShell.",
+          "href": "https://nodejs.org/en/download",
+          "actionLabel": "Open download",
+          "verifierLabel": "Node responds with a version number"
+        }
+      ],
+      "steps": [
+        {
+          "id": "open-shell",
+          "kind": "terminal",
+          "title": "Open PowerShell",
+          "body": "Keep it open beside Iris.",
+          "verifierLabel": "PowerShell is open"
+        },
+        {
+          "id": "check-tools",
+          "kind": "check",
+          "title": "Check Git and Node",
+          "body": "Needs Git and Node 22.16+, not 23. Rebuild an old Nut AI: its photo scans fail but can be charged.",
+          "command": "git --version\nnode --version",
+          "verifierLabel": "Git and Node respond with version numbers",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              },
+              {
+                "type": "toolVersion",
+                "tool": "node"
+              }
+            ],
+            "hints": [
+              "A tool installed a moment ago only appears in a terminal opened afterwards.",
+              "If node prints v22.15 or older, or v23, install the current LTS from nodejs.org first."
+            ]
+          }
+        },
+        {
+          "id": "clone",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Copy Nut AI to this PC",
+          "body": "",
+          "command": "cd ~\nif [ ! -d nut-ai/.git ]; then\ngit clone https://github.com/Blueturboguy07/nut-ai.git\nfi",
+          "verifierLabel": "A nut-ai folder appears",
+          "watch": {
+            "expect": [
+              {
+                "type": "toolVersion",
+                "tool": "git"
+              }
+            ],
+            "hints": [
+              "Already have a nut-ai folder from an earlier try? That counts — carry on.",
+              "'Permission denied' usually means you are not in your home folder: run cd ~ first."
+            ]
+          }
+        },
+        {
+          "id": "enter-folder",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Open the nut-ai folder",
+          "body": "",
+          "command": "cd nut-ai",
+          "verifierLabel": "Your terminal prompt is inside the nut-ai folder"
+        },
+        {
+          "id": "pin-source",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Use the reviewed version",
+          "body": "",
+          "command": "$origin = git config --get remote.origin.url 2>$null\nif ($origin) { $origin = $origin -replace '^git@github\\.com:', 'https://github.com/' -replace '\\.git$', '' }\nif ($origin -ne \"https://github.com/Blueturboguy07/nut-ai\") {\n  Write-Output \"~/nut-ai already exists and is not a copy of this app's source. Move or rename that folder, then press Try again.\"\n  exit 1\n}\ngit cat-file -e 6a6b9e741e307f4176a7db7a778ddb2fb58c4114 2>$null\nif ($LASTEXITCODE -ne 0) { git fetch --no-tags https://github.com/Blueturboguy07/nut-ai.git 6a6b9e741e307f4176a7db7a778ddb2fb58c4114 }\nif ($LASTEXITCODE -ne 0) {\n  Write-Output \"Could not download the reviewed version. Check your internet connection, then press Try again.\"\n  exit 1\n}\n$dirty = git status --porcelain 2>$null\nif ($dirty) {\n  git -c user.name=iris-guide -c user.email=iris-guide@localhost stash push --include-untracked -m \"Saved by the install guide\"\n  if ($LASTEXITCODE -ne 0) { exit 1 }\n  Write-Output \"Your changes in ~/nut-ai are saved with git stash. To see them: git stash list\"\n}\ngit checkout 6a6b9e741e307f4176a7db7a778ddb2fb58c4114",
+          "verifierLabel": "Git reports the reviewed commit",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "In the terminal, below a git checkout command, does git report 'HEAD is now at 6a6b9e7'?"
+              }
+            ],
+            "hints": [
+              "The 'detached HEAD' paragraph above that line is normal here, not an error.",
+              "Built Nut AI before? This step downloads the new version and saves your own changes with git stash."
+            ]
+          }
+        },
+        {
+          "id": "dependencies",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Install dependencies",
+          "body": "Vulnerability warnings at the end are expected here — don't run npm audit fix.",
+          "command": "node scripts/check-node-version.cjs\nif ($LASTEXITCODE -eq 0) { npm.cmd install --no-save }",
+          "verifierLabel": "The command finishes without an error"
+        },
+        {
+          "id": "build-corpus",
+          "workingDirectory": "~/nut-ai",
+          "kind": "terminal",
+          "title": "Build the nutrition database",
+          "body": "It downloads the USDA tables itself first (about 10 MB). Re-running it is always safe.",
+          "command": "npm.cmd run data:build",
+          "verifierLabel": "It ends with 'Built …/nutrition.db' and foods: 7928",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the terminal show a line beginning 'Built' with a nutrition.db path, and a foods count near 7928?"
+              }
+            ],
+            "hints": [
+              "A download failure prints the exact USDA URL and why — paste it into a browser to check, then rerun.",
+              "If USDA retired a release, override it: FDC_FOUNDATION_RELEASE=<date> npm run data:build."
+            ]
+          }
+        },
+        {
+          "id": "install-android-studio",
+          "kind": "open",
+          "title": "Install Android Studio",
+          "body": "Accept the standard setup so it installs the SDK.",
+          "href": "https://developer.android.com/studio",
+          "actionLabel": "Open download",
+          "verifierLabel": "Android Studio opens to its welcome screen"
+        },
+        {
+          "id": "install-jdk",
+          "workingDirectory": "~",
+          "kind": "terminal",
+          "title": "Install Java 17",
+          "body": "The Android build needs a JDK 17 to 21, not only a Java runtime. Installs Temurin 17 if none.",
+          "command": "function Get-JavaMajor ($jdk) {\n  if (-not $jdk -or -not (Test-Path -LiteralPath ($jdk + '\\bin\\java.exe')) -or -not (Test-Path -LiteralPath ($jdk + '\\bin\\javac.exe'))) { return 0 }\n  $keep = $env:Path\n  $env:Path = $jdk + '\\bin;' + $env:Path\n  $v = cmd /c \"java -version 2>&1\" | Out-String\n  $env:Path = $keep\n  if ($v -match 'version \"1\\.(\\d+)') { return [int]$Matches[1] }\n  if ($v -match 'version \"(\\d+)') { return [int]$Matches[1] }\n  return 0\n}\nfunction Find-Jdk ($dirs, $low, $high) {\n  foreach ($d in $dirs) { $m = Get-JavaMajor $d; if ($m -ge $low -and $m -le $high) { return $d.TrimEnd('\\') } }\n}\n$roots = 'Eclipse Adoptium', 'Java', 'Microsoft', 'Zulu', 'Amazon Corretto', 'Android\\Android Studio'\nfunction Get-Jdks { $roots | ForEach-Object { Get-ChildItem (Join-Path $env:ProgramFiles $_) -Directory -ErrorAction SilentlyContinue } | ForEach-Object { $_.FullName } }\n$homes = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'User'), [Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine'), $env:JAVA_HOME\n$jdk = Find-Jdk $homes 17 21\nif (-not $jdk) { $jdk = Find-Jdk (Get-Jdks) 17 17 }\nif (-not $jdk) { $jdk = Find-Jdk (Get-Jdks) 18 21 }\nif (-not $jdk) {\n  winget install --id EclipseAdoptium.Temurin.17.JDK -e --source winget --accept-source-agreements --accept-package-agreements\n  $jdk = Find-Jdk (Get-Jdks) 17 17\n}\nif (-not $jdk) { Write-Output 'No JDK 17 is installed yet. Install the Temurin 17 JDK from adoptium.net, then run this step again.'; exit 1 }\nSet-Content -Path ($HOME + '\\.nut-ai-java-home') -Value $jdk -Encoding UTF8\n$env:JAVA_HOME = $jdk\n$env:Path = $jdk + '\\bin;' + $env:Path\nWrite-Output ('The Android build uses the Java in ' + $jdk)\ncmd /c \"java -version 2>&1\"",
+          "verifierLabel": "java -version prints a JDK version from 17 to 21",
+          "watch": {
+            "expect": [
+              {
+                "type": "visual",
+                "prompt": "Does the last java -version output in the terminal show a version from 17 to 21 (openjdk version \"17...\" to \"21...\"), not 1.8, 11 or 24 and newer?"
+              }
+            ],
+            "hints": [
+              "winget missing? Install the Temurin 17 JDK (not the JRE) from adoptium.net, then run this step again.",
+              "Other Java versions can stay installed: the build uses only the Java this step picks."
+            ]
+          }
+        },
+        {
+          "id": "enable-usb-debugging",
+          "kind": "permission",
+          "title": "Turn on USB debugging",
+          "body": "Settings → About phone → tap Build number 7×. Then Developer options → USB debugging.",
+          "verifierLabel": "Developer options shows USB debugging on"
+        },
+        {
+          "id": "connect-phone",
+          "kind": "permission",
+          "title": "Plug in your phone",
+          "body": "Tap Allow on the phone. If nothing appears, try another cable — that is the usual cause.",
+          "verifierLabel": "adb devices lists your phone"
+        },
+        {
+          "id": "prebuild-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Generate the Android project",
+          "body": "",
+          "command": "npx.cmd expo prebuild --platform android",
+          "verifierLabel": "An android folder appears inside apps/mobile"
+        },
+        {
+          "id": "prepare-gradle",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Download the Android build tools",
+          "body": "The first run downloads Gradle and the Android NDK. Later runs take about a minute.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat help",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-1",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 1 of 3",
+          "body": "Compiles C++ code for your phone's processor only. Keep the phone plugged in until the end.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat :react-native-worklets:externalNativeBuildRelease :react-native-nitro-modules:externalNativeBuildRelease :react-native-screens:externalNativeBuildRelease :expo-modules-core:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-2",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 2 of 3",
+          "body": "Compiles the C++ code of the animation libraries.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-native-app",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the C++ code, part 3 of 3",
+          "body": "Compiles the app's own C++ code. This is the longest build step.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat :app:externalNativeBuildRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "build-libraries",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Build the Kotlin and Java code",
+          "body": "Compiles the libraries' Kotlin and Java code.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat assembleRelease -x :app:assembleRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "prepare-app",
+          "workingDirectory": "~/nut-ai/apps/mobile/android",
+          "kind": "terminal",
+          "title": "Check and convert the libraries",
+          "body": "Checks the libraries for release errors and converts them to Android code.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\n.\\gradlew.bat lintVitalAnalyzeRelease :app:mergeExtDexRelease -x :app:lintVitalAnalyzeRelease",
+          "verifierLabel": "Gradle prints BUILD SUCCESSFUL"
+        },
+        {
+          "id": "run-android",
+          "workingDirectory": "~/nut-ai/apps/mobile",
+          "kind": "terminal",
+          "title": "Build and install",
+          "body": "Builds the app, installs it on your phone and opens it.",
+          "command": "$jh = Get-Content -Path ($HOME + '\\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue\nif (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\\bin\\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }\n$jh = $jh.TrimEnd('\\')\n$env:JAVA_HOME = $jh\n$env:Path = $jh + '\\bin;' + $env:Path\n$sdk = $env:ANDROID_HOME\nif (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }\n$sdkDefault = $HOME + '\\AppData\\Local\\Android\\Sdk'\nif (-not $sdk -and (Test-Path $sdkDefault)) { $sdk = $sdkDefault; $env:ANDROID_HOME = $sdk }\n$adb = New-Object System.Diagnostics.ProcessStartInfo ($sdk + '\\platform-tools\\adb.exe'), 'start-server'\n$adb.UseShellExecute = $true\n$adb.WindowStyle = 'Hidden'\nif ($sdk -and (Test-Path $adb.FileName)) { [System.Diagnostics.Process]::Start($adb).WaitForExit() }\n$abis = ''\nif ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop ro.product.cpu.abilist 2>$null }\n$abi = @(\"$abis\" -split '[,\\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]\nif (-not $abi) { $abi = 'arm64-v8a' }\n$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi\n$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false \"-Dorg.gradle.java.home=' + $jh + '\"'\nnpx.cmd expo run:android --variant release --no-bundler",
+          "verifierLabel": "The build ends with an install onto your phone"
+        },
+        {
+          "id": "finish",
+          "kind": "verify",
+          "title": "Open Nut AI on your phone",
+          "body": "Scans run on publik API; link the phone when asked. Your own AI key also works (Profile).",
+          "verifierLabel": "Nut AI opens on your phone"
+        }
+      ]
+    },
+    {
+      "platform": "windows",
+      "target": "ios",
+      "label": "Windows + iPhone",
+      "shell": "powershell",
+      "setupSteps": [],
+      "steps": [],
+      "unsupported": {
+        "headline": "A Windows PC cannot build an iPhone app",
+        "reason": "Apple only allows iPhone apps to be built and signed on macOS using Xcode, which Apple does not release for Windows. This is Apple's restriction, not a missing feature in Nut AI or Iris — no setup, emulator, or virtual machine makes it work reliably.",
+        "alternatives": [
+          "Borrow a Mac for about thirty minutes — the signature it installs lasts 7 days and can be renewed on any Mac.",
+          "Use an Android phone instead, which builds fine from Windows."
+        ]
+      }
+    }
+  ]
+}
