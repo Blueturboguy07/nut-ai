@@ -5,10 +5,10 @@
 # PC), then reports the step:
 #   - the exit code Iris would record, when the BUILD line came, when the
 #     pipe closed ('close', where Iris ends the step);
-#   - which ABIs the CMake tasks were for; how many native outputs ninja
-#     really built in the step, for the libraries and for the app (new lines
-#     in every .ninja_log: AGP runs its CMake tasks on every build and ninja
-#     decides, so a CMake task header alone proves nothing); and how many
+#   - which ABIs the CMake tasks were for; how many C/C++ object files ninja
+#     really compiled in the step, for the libraries and for the app (new
+#     .o lines in every .ninja_log: AGP runs its CMake tasks on every build
+#     and ninja decides, so a CMake task header alone proves nothing); and how many
 #     library Kotlin compiles RAN (a task header with no UP-TO-DATE /
 #     NO-SOURCE / SKIPPED suffix). Together they show that a later step does
 #     not redo an earlier one;
@@ -29,28 +29,39 @@ param(
 $dir = Join-Path $env:RUNNER_TEMP 'r5'
 New-Item -ItemType Directory -Force $dir | Out-Null
 
-# Lines in the .ninja_log files under the libraries' and the app's .cxx
-# folders: ninja appends one line per output it builds.
-function Get-NinjaLines([string]$Which) {
+# The .ninja_log files under the libraries' and the app's .cxx folders:
+# ninja appends one line per output it builds (tab-separated; the 4th field
+# is the output path). A few outputs are logged on every run, even when
+# nothing changed, so the report counts compiled object files (.o) and
+# lists every new entry.
+function Get-NinjaLogs {
   $ws = $env:GITHUB_WORKSPACE
-  $roots = if ($Which -eq 'app') {
-    @(Join-Path $ws 'apps\mobile\android\app\.cxx')
-  } else {
-    @(Get-ChildItem (Join-Path $ws 'node_modules') -Directory -Force -ErrorAction SilentlyContinue |
+  $groups = @{
+    app = @(Join-Path $ws 'apps\mobile\android\app\.cxx')
+    libraries = @(Get-ChildItem (Join-Path $ws 'node_modules') -Directory -Force -ErrorAction SilentlyContinue |
         ForEach-Object { if ($_.Name.StartsWith('@')) { Get-ChildItem $_.FullName -Directory -Force } else { $_ } } |
         ForEach-Object { Join-Path $_.FullName 'android\.cxx' })
   }
-  $count = 0
-  foreach ($root in $roots) {
-    if (-not (Test-Path $root)) { continue }
-    foreach ($log in @(Get-ChildItem $root -Recurse -Force -Filter '.ninja_log' -ErrorAction SilentlyContinue)) {
-      $count += @(Get-Content $log.FullName | Where-Object { $_ -and -not $_.StartsWith('#') }).Count
+  $found = @{}
+  foreach ($group in $groups.Keys) {
+    foreach ($root in $groups[$group]) {
+      if (-not (Test-Path $root)) { continue }
+      foreach ($file in @(Get-ChildItem $root -Recurse -Force -Filter '.ninja_log' -ErrorAction SilentlyContinue)) {
+        $found[$file.FullName] = @{ group = $group; lines = @(Get-Content $file.FullName | Where-Object { $_ -and -not $_.StartsWith('#') }).Count }
+      }
     }
   }
-  $count
+  $found
 }
-$ninjaLibBefore = Get-NinjaLines 'libraries'
-$ninjaAppBefore = Get-NinjaLines 'app'
+function Get-NewNinjaEntries($Before, $After, [string]$Group) {
+  foreach ($path in $After.Keys) {
+    if ($After[$path].group -ne $Group) { continue }
+    $skip = if ($Before.ContainsKey($path)) { $Before[$path].lines } else { 0 }
+    @(Get-Content $path | Where-Object { $_ -and -not $_.StartsWith('#') }) | Select-Object -Skip $skip |
+      ForEach-Object { ($_ -split "`t")[3] }
+  }
+}
+$ninjaBefore = Get-NinjaLogs
 $log = Join-Path $dir "$Step-$Run.log"
 $sdkForCi = $env:ANDROID_HOME
 $ciForCi = $env:CI
@@ -60,8 +71,12 @@ node (Join-Path $PSScriptRoot 'run-like-iris.mjs') $CommandFile $WorkDir $log $D
 $env:ANDROID_HOME = $sdkForCi
 $env:CI = $ciForCi
 
-$ninjaLib = (Get-NinjaLines 'libraries') - $ninjaLibBefore
-$ninjaApp = (Get-NinjaLines 'app') - $ninjaAppBefore
+$ninjaAfter = Get-NinjaLogs
+$newLib = @(Get-NewNinjaEntries $ninjaBefore $ninjaAfter 'libraries')
+$newApp = @(Get-NewNinjaEntries $ninjaBefore $ninjaAfter 'app')
+$ninjaLib = @($newLib | Where-Object { $_ -like '*.o' }).Count
+$ninjaApp = @($newApp | Where-Object { $_ -like '*.o' }).Count
+@($newLib | ForEach-Object { "libraries`t$_" }) + @($newApp | ForEach-Object { "app`t$_" }) | Set-Content (Join-Path $dir "$Step-$Run.ninja.txt")
 
 & (Join-Path $PSScriptRoot 'build-processes.ps1') -Label "after $Step ($Run)" -FailOnDaemon
 $daemonLeft = $LASTEXITCODE -ne 0
@@ -85,8 +100,9 @@ $row = [ordered]@{
 }
 ($row | ConvertTo-Json -Compress) | Add-Content (Join-Path $dir 'results.jsonl')
 $eagerText = if ($null -ne $eagerAt) { "; eager JS export ended at $eagerAt s" } else { '' }
-"| $Step | $Run | $Deadline | $($t.recorded) | $($t.buildLineAt) | $($t.endedAt) | $said$eagerText; tasks run $($ran.Count), ninja built $ninjaLib (libraries) + $ninjaApp (app), library Kotlin run $libKotlinRan, ABIs [$($abis -join ' ')] |" >> $env:GITHUB_STEP_SUMMARY
+"| $Step | $Run | $Deadline | $($t.recorded) | $($t.buildLineAt) | $($t.endedAt) | $said$eagerText; tasks run $($ran.Count), C/C++ compiled $ninjaLib (libraries) + $ninjaApp (app), library Kotlin run $libKotlinRan, ABIs [$($abis -join ' ')] |" >> $env:GITHUB_STEP_SUMMARY
 Write-Output "--- $Step ($Run): Iris $($t.recorded), powershell.exe exited at $($t.exitedAt) s, 'close' at $($t.endedAt) s; $said"
-Write-Output "--- tasks run: $($ran.Count); ninja built: $ninjaLib (libraries) + $ninjaApp (app); library Kotlin run: $libKotlinRan; ABIs: $($abis -join ' ')$eagerText"
+Write-Output "--- tasks run: $($ran.Count); C/C++ files compiled: $ninjaLib (libraries) + $ninjaApp (app), of $($newLib.Count + $newApp.Count) new ninja entries; library Kotlin run: $libKotlinRan; ABIs: $($abis -join ' ')$eagerText"
+if (($newLib.Count + $newApp.Count) -le 10) { @($newLib | ForEach-Object { "    ninja, libraries: $_" }) + @($newApp | ForEach-Object { "    ninja, app: $_" }) }
 if ($daemonLeft) { Write-Output '--- a Gradle daemon outlived the step'; exit 1 }
 exit ([int]$t.recorded)
