@@ -1,0 +1,161 @@
+# Blind verify r7 (not part of the fix): break tests for nut-ai 3dff459 / guide v16 round 7.
+# Runs only on pushes to verify/r7-blind. Every guide command runs through Iris for Windows 0.9.15's
+# own code (recipeFromGuide + PowerShellSession, vendored verbatim in .github/verify-r7/iris),
+# detached, with a registry environment, as in round 6.
+name: blind-r7
+on:
+  push:
+    branches: ['verify/r7-blind']
+  workflow_dispatch:
+jobs:
+  # D1: a reader with Temurin 25 installed (installer: Machine PATH) and JAVA_HOME = 25 (User).
+  # gradle-props also has org.gradle.java.home = JDK 25 in ~/.gradle/gradle.properties.
+  jdk25:
+    runs-on: windows-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [javahome, gradle-props]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - id: jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: fresh reader PC with Temurin 25 as JAVA_HOME (${{ matrix.variant }})
+        run: |
+          $env:NEWJAVA = '${{ steps.jdk.outputs.path }}'
+          $env:PRE_JDK25 = '1'
+          if ('${{ matrix.variant }}' -eq 'gradle-props') { $env:GRADLE_PROPS_JDK25 = '1' }
+          ./.github/verify-r7/fresh-pc.ps1
+      - name: every Windows guide command through Iris 0.9.15's code
+        timeout-minutes: 170
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r7/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r7/iris-drive.mts .github/verify-r7/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') jdk25-${{ matrix.variant }} @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: verdict
+        if: always()
+        run: |
+          $saved = Get-Content (Join-Path $HOME '.nut-ai-java-home') -TotalCount 1 -ErrorAction SilentlyContinue
+          "saved JDK (~/.nut-ai-java-home): $saved" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          if ($saved) { & (Join-Path $saved 'bin\java.exe') -version 2>&1 | Select-Object -First 1 | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY }
+          "User JAVA_HOME after the guide: $([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User'))" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -ErrorAction SilentlyContinue | ForEach-Object { "Program Files has: $($_.Name)" } | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          node .github/verify-r7/verdict.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl')
+          $code = $LASTEXITCODE
+          $apk = Get-ChildItem "$HOME\nut-ai\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($apk) { "APK: $($apk.Name) $([math]::Round($apk.Length / 1MB, 1)) MB" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY } else { 'no release APK' | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY }
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-r7-jdk25-${{ matrix.variant }}
+          path: ${{ runner.temp }}/blind/results.jsonl
+
+  # D2: a returning reader whose ~/nut-ai is an old clone at 71ee482 (no 3dff459 object):
+  # built (old packages, old prebuild, old Gradle release build), dirty (tracked change + new file),
+  # branch (a local branch with its own commit). Then the whole guide, then pin-source + dependencies again.
+  returning:
+    runs-on: windows-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [built, dirty, branch]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: fresh reader PC
+        run: ./.github/verify-r7/fresh-pc.ps1
+      - name: old clone as an older guide left it (${{ matrix.variant }})
+        timeout-minutes: 90
+        run: ./.github/verify-r7/old-clone.ps1 -variant ${{ matrix.variant }}
+      - name: every Windows guide command through Iris 0.9.15's code
+        timeout-minutes: 170
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r7/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r7/iris-drive.mts .github/verify-r7/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') first @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: pin-source and dependencies a second time
+        timeout-minutes: 30
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          node .github/verify-r7/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r7/iris-drive.mts .github/verify-r7/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') second enter-folder pin-source dependencies
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: verdict
+        if: always()
+        run: |
+          node .github/verify-r7/verdict-returning.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl') ${{ matrix.variant }} "$HOME\nut-ai"
+          $code = $LASTEXITCODE
+          node .github/verify-r7/compare-trees.mjs returning-${{ matrix.variant }} "$HOME\nut-ai" "$HOME\nut-ai"
+          if ($LASTEXITCODE -ne 0) { $code = 1 }
+          Push-Location "$HOME\nut-ai"; npm ls --all *> $null; "npm ls --all exit: $LASTEXITCODE" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY; Pop-Location
+          $apk = Get-ChildItem "$HOME\nut-ai\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($apk) { "APK: $($apk.Name) $([math]::Round($apk.Length / 1MB, 1)) MB $($apk.LastWriteTime)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY }
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-r7-returning-${{ matrix.variant }}
+          path: ${{ runner.temp }}/blind/results.jsonl
+
+  # The new dependencies command (npm install --no-save) on a fresh clone vs npm ci, on both OSes.
+  npm-tree:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        node: ['22', 'lts/*']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: two fresh clones at 3dff459; A = the guide's command, B = npm ci
+        run: |
+          node --version; npm --version
+          $pin = '3dff45971c6a52410bd7b2ba40a38e331bd04938'
+          foreach ($x in 'a', 'b') {
+            $d = Join-Path $env:RUNNER_TEMP $x
+            git clone --quiet https://github.com/Blueturboguy07/nut-ai.git $d
+            git -C $d fetch --quiet --no-tags https://github.com/Blueturboguy07/nut-ai.git $pin
+            git -C $d checkout --quiet $pin
+          }
+          Push-Location (Join-Path $env:RUNNER_TEMP 'a')
+          $t = Get-Date
+          node scripts/check-node-version.cjs
+          if ($LASTEXITCODE -eq 0) { npm install --no-save 2>&1 | Select-Object -Last 4 }
+          "A (npm install --no-save): exit $LASTEXITCODE after $([math]::Round(((Get-Date) - $t).TotalSeconds)) s; git status: $(@(git status --porcelain).Count) entries" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          git status --porcelain
+          npm ls --all *> $null; "A npm ls --all exit: $LASTEXITCODE" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          Pop-Location
+          Push-Location (Join-Path $env:RUNNER_TEMP 'b')
+          $t = Get-Date
+          npm ci 2>&1 | Select-Object -Last 4
+          "B (npm ci): exit $LASTEXITCODE after $([math]::Round(((Get-Date) - $t).TotalSeconds)) s; git status: $(@(git status --porcelain).Count) entries" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          Pop-Location
+      - name: compare the trees on disk
+        run: node .github/verify-r7/compare-trees.mjs "${{ matrix.os }} node ${{ matrix.node }}" (Join-Path $env:RUNNER_TEMP 'a') (Join-Path $env:RUNNER_TEMP 'a') (Join-Path $env:RUNNER_TEMP 'b')
