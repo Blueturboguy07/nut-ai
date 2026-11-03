@@ -54,14 +54,20 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # Exactly the guide's step. The output is kept so the next step can
-      # prove no native build ran: this runner HAS Visual Studio, so a
-      # node-gyp rebuild would quietly succeed here and only fail on a
-      # reader's PC.
-      - name: npm install (the guide's "Install dependencies" step)
+      # Exactly the guide's step (dependencies.ps1: the Node check, then
+      # npm.cmd install), as Iris runs it: Windows PowerShell 5.1, PATH from
+      # the registry, so this job's Node goes into the machine Path first. The
+      # output is kept so the next step can prove no native build ran: this
+      # runner HAS Visual Studio, so a node-gyp rebuild would quietly succeed
+      # here and only fail on a reader's PC.
+      - name: npm install (the guide's "Install dependencies" step, as Iris runs it)
         run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
           node --version
-          npm install 2>&1 | Tee-Object -FilePath npm-install.log
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/dependencies.ps1 $env:GITHUB_WORKSPACE npm-install.log 1500
+          if ($LASTEXITCODE -ne 0) { Write-Error "the guide's dependencies step failed (Iris $LASTEXITCODE)"; exit 1 }
 
       - name: no native build ran
         run: |
@@ -127,6 +133,29 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
+      # The guide's step runs the Node check before npm starts, so a bad Node
+      # is named in seconds, before npm fetches anything (as the root
+      # preinstall, the same check came about 75 s in, after the downloads).
+      - name: the guide's dependencies step on Node ${{ matrix.node }} stops before npm starts
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          [Environment]::SetEnvironmentVariable('Path', "$nodeDir;$machine", 'Machine')
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/dependencies.ps1 $env:GITHUB_WORKSPACE deps-unsupported.log 300
+          $code = $LASTEXITCODE
+          $t = Get-Content deps-unsupported.log.timing.json | ConvertFrom-Json
+          Get-Content deps-unsupported.log -Tail 8
+          if ($code -eq 0) { Write-Error "the guide's dependencies step passed on Node ${{ matrix.node }}"; exit 1 }
+          if (-not (Select-String -Path deps-unsupported.log -Pattern 'Nut AI needs Node 22.16.0 or newer, and not Node 23.' -SimpleMatch -Quiet)) {
+            Write-Error "the step failed (Iris $code) without naming the Node floor"; exit 1
+          }
+          if (Test-Path node_modules) { Write-Error 'node_modules exists: npm started before the check stopped the step'; exit 1 }
+          if ($t.endedAt -gt 30) { Write-Error "the step ended at $($t.endedAt) s, not before npm"; exit 1 }
+          Write-Output "stopped before npm: Iris $code at $($t.endedAt) s"
+          "| dependencies on Node ${{ matrix.node }} | Iris $code | 'close' at $($t.endedAt) s | no node_modules |" >> $env:GITHUB_STEP_SUMMARY
+
+      # A plain `npm install` (not the guide's step) still stops: the same
+      # check is the root preinstall.
       - name: npm install on Node ${{ matrix.node }} stops and names the Node floor
         run: |
           node --version
@@ -148,7 +177,9 @@ jobs:
         if: always()
         with:
           name: unsupported-node-install-log-${{ matrix.node }}
-          path: npm-install-unsupported.log
+          path: |
+            deps-unsupported.log
+            npm-install-unsupported.log
 
   # The guide's install-jdk step (Windows) on a PC whose java is Java 8: Java
   # 8 first on the machine PATH and JAVA_HOME pointing at it. Guide v16 first
@@ -239,7 +270,7 @@ jobs:
           if (-not $saved -or -not (Test-Path "$saved\bin\java.exe")) { Write-Error 'no usable User JAVA_HOME saved'; exit 1 }
 
       # The build steps' prelude (prepare-gradle.ps1 verbatim, the same in all
-      # four build steps), then the same Gradle probe as the control instead
+      # seven build steps), then the same Gradle probe as the control instead
       # of the release build. --no-daemon: a daemon outlives the step (see the
       # next step).
       - name: the guide's build-step prelude, as Iris runs it - Gradle builds on 17
@@ -331,20 +362,30 @@ jobs:
   # on the pipe 'close'. The cold release build was one step of 16m20s for
   # ONE ABI (run 41417884164), and the guide's command really built all four
   # ABIs (expo passes Gradle no ABI for a release build). The guide now builds
-  # for the phone's ABI only and runs the build as four steps:
-  # prepare-gradle, build-native, build-libraries and run-android. This job
-  # runs the four guide commands cold, one after another, through
-  # run-like-iris.mjs (a copy of Iris's step runner), then all four again
+  # for the phone's ABI only. Round 5 ran the build as four steps; on the
+  # slowest runners build-libraries still took 481-483 s, so round 6 runs it
+  # as seven: prepare-gradle, build-native-1, build-native-2,
+  # build-native-app, build-libraries, prepare-app and run-android. This job
+  # runs the seven guide commands cold, one after another, through
+  # run-like-iris.mjs (a copy of Iris's step runner), then all seven again
   # (each step must be safe to run again). Every step must end (pipe
-  # 'close', Iris exit 0) within 720 s: Iris's 900 s less 3 minutes. No phone
-  # here: run-android's last line is replaced by expo-build-no-phone.mjs
-  # (expo's own eager JS export and Gradle run, without the device lookup and
-  # the install), and the ABI query gets no answer, so the arm64-v8a
-  # fallback is what builds. Manual only: a cold release build is long.
+  # 'close', Iris exit 0) within the verdict's limit. No phone here:
+  # run-android's last line is replaced by expo-build-no-phone.mjs (expo's
+  # own eager JS export and Gradle run, without the device lookup and the
+  # install), and the ABI query gets no answer, so the arm64-v8a fallback is
+  # what builds. Manual only: a cold release build is long.
+  #
+  # Three runners at once: runner speed varies by up to 1.7x between runs, and
+  # each step must stay under about 360 s on the slowest one.
   run-android-split-steps:
+    name: run-android-split-steps (runner ${{ matrix.runner }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2, 3]
     defaults:
       run:
         shell: pwsh
@@ -393,14 +434,17 @@ jobs:
           "| step | run | deadline (s) | Iris records | BUILD line at (s) | 'close' at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
           "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
 
-      - name: check the four build steps share one prelude, and write the CI command files
+      - name: check the 7 build steps share one prelude, and write the CI command files
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'r5'
           $ends = [ordered]@{
-            'prepare-gradle'  = '.\gradlew.bat help'
-            'build-native'    = '.\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease'
-            'build-libraries' = '.\gradlew.bat assembleRelease :app:externalNativeBuildRelease -x :app:assembleRelease'
-            'run-android'     = 'npx.cmd expo run:android --variant release --no-bundler'
+            'prepare-gradle'   = '.\gradlew.bat help'
+            'build-native-1'   = '.\gradlew.bat :react-native-worklets:externalNativeBuildRelease :react-native-nitro-modules:externalNativeBuildRelease :react-native-screens:externalNativeBuildRelease :expo-modules-core:externalNativeBuildRelease'
+            'build-native-2'   = '.\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease'
+            'build-native-app' = '.\gradlew.bat :app:externalNativeBuildRelease'
+            'build-libraries'  = '.\gradlew.bat assembleRelease -x :app:assembleRelease'
+            'prepare-app'      = '.\gradlew.bat lintVitalAnalyzeRelease :app:mergeExtDexRelease -x :app:lintVitalAnalyzeRelease'
+            'run-android'      = 'npx.cmd expo run:android --variant release --no-bundler'
           }
           $prelude = $null
           foreach ($id in $ends.Keys) {
@@ -415,7 +459,7 @@ jobs:
           $standIn = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
           Set-Content "$dir\run-android-no-phone.ps1" ($prelude + "`n" + $standIn)
           Set-Content "$dir\abi-probe.ps1" ($prelude + "`n" + 'Write-Output ("ABI=" + $env:ORG_GRADLE_PROJECT_reactNativeArchitectures)')
-          Write-Output "== the prelude the four steps share ($(@($prelude -split "`n").Count) lines)"
+          Write-Output "== the prelude the 7 steps share ($(@($prelude -split "`n").Count) lines)"
           $prelude
           Write-Output "== run-android in CI ends with: $standIn"
 
@@ -485,54 +529,90 @@ jobs:
           if ($adbAlive -lt 1) { Write-Error 'no adb server left: the prelude did not start it'; exit 1 }
           exit 0
 
-      # Cold: the four steps in the guide's order on a PC that never built
+      # Cold: the 7 steps in the guide's order on a PC that never built
       # this app. The deadline is longer than Iris's 900 s only so that a slow
       # step still reports its real time; the verdict below holds each step
-      # to 720 s.
-      - name: cold 1/4 - prepare-gradle
+      # to $limit.
+      - name: cold 1/7 - prepare-gradle
         working-directory: apps/mobile/android
         timeout-minutes: 40
         run: |
           & ../../../.github/iris-guide/run-build-step.ps1 -Step 'prepare-gradle' -Run 'cold' -CommandFile ../../../.github/iris-guide/prepare-gradle.ps1 -WorkDir (Get-Location).Path -Deadline 1800
 
-      - name: cold 2/4 - build-native
+      - name: cold 2/7 - build-native-1
         working-directory: apps/mobile/android
         timeout-minutes: 40
         run: |
-          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native' -Run 'cold' -CommandFile ../../../.github/iris-guide/build-native.ps1 -WorkDir (Get-Location).Path -Deadline 1800
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-1' -Run 'cold' -CommandFile ../../../.github/iris-guide/build-native-1.ps1 -WorkDir (Get-Location).Path -Deadline 1800
 
-      - name: cold 3/4 - build-libraries
+      - name: cold 3/7 - build-native-2
+        working-directory: apps/mobile/android
+        timeout-minutes: 40
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-2' -Run 'cold' -CommandFile ../../../.github/iris-guide/build-native-2.ps1 -WorkDir (Get-Location).Path -Deadline 1800
+
+      - name: cold 4/7 - build-native-app
+        working-directory: apps/mobile/android
+        timeout-minutes: 40
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-app' -Run 'cold' -CommandFile ../../../.github/iris-guide/build-native-app.ps1 -WorkDir (Get-Location).Path -Deadline 1800
+
+      - name: cold 5/7 - build-libraries
         working-directory: apps/mobile/android
         timeout-minutes: 40
         run: |
           & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-libraries' -Run 'cold' -CommandFile ../../../.github/iris-guide/build-libraries.ps1 -WorkDir (Get-Location).Path -Deadline 1800
 
-      - name: cold 4/4 - run-android (expo's eager export and Gradle run, no phone)
+      - name: cold 6/7 - prepare-app
+        working-directory: apps/mobile/android
+        timeout-minutes: 40
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'prepare-app' -Run 'cold' -CommandFile ../../../.github/iris-guide/prepare-app.ps1 -WorkDir (Get-Location).Path -Deadline 1800
+
+      - name: cold 7/7 - run-android (expo's eager export and Gradle run, no phone)
         working-directory: apps/mobile
         timeout-minutes: 40
         run: |
           & ../../.github/iris-guide/run-build-step.ps1 -Step 'run-android' -Run 'cold' -CommandFile "$env:RUNNER_TEMP\r5\run-android-no-phone.ps1" -WorkDir (Get-Location).Path -Deadline 1800 -NoCi
 
       # Again: each step must be safe to run again and end on its own.
-      - name: again 1/4 - prepare-gradle
+      - name: again 1/7 - prepare-gradle
         working-directory: apps/mobile/android
         timeout-minutes: 20
         run: |
           & ../../../.github/iris-guide/run-build-step.ps1 -Step 'prepare-gradle' -Run 'again' -CommandFile ../../../.github/iris-guide/prepare-gradle.ps1 -WorkDir (Get-Location).Path
 
-      - name: again 2/4 - build-native
+      - name: again 2/7 - build-native-1
         working-directory: apps/mobile/android
         timeout-minutes: 20
         run: |
-          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native' -Run 'again' -CommandFile ../../../.github/iris-guide/build-native.ps1 -WorkDir (Get-Location).Path
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-1' -Run 'again' -CommandFile ../../../.github/iris-guide/build-native-1.ps1 -WorkDir (Get-Location).Path
 
-      - name: again 3/4 - build-libraries
+      - name: again 3/7 - build-native-2
+        working-directory: apps/mobile/android
+        timeout-minutes: 20
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-2' -Run 'again' -CommandFile ../../../.github/iris-guide/build-native-2.ps1 -WorkDir (Get-Location).Path
+
+      - name: again 4/7 - build-native-app
+        working-directory: apps/mobile/android
+        timeout-minutes: 20
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-native-app' -Run 'again' -CommandFile ../../../.github/iris-guide/build-native-app.ps1 -WorkDir (Get-Location).Path
+
+      - name: again 5/7 - build-libraries
         working-directory: apps/mobile/android
         timeout-minutes: 20
         run: |
           & ../../../.github/iris-guide/run-build-step.ps1 -Step 'build-libraries' -Run 'again' -CommandFile ../../../.github/iris-guide/build-libraries.ps1 -WorkDir (Get-Location).Path
 
-      - name: again 4/4 - run-android (expo's eager export and Gradle run, no phone)
+      - name: again 6/7 - prepare-app
+        working-directory: apps/mobile/android
+        timeout-minutes: 20
+        run: |
+          & ../../../.github/iris-guide/run-build-step.ps1 -Step 'prepare-app' -Run 'again' -CommandFile ../../../.github/iris-guide/prepare-app.ps1 -WorkDir (Get-Location).Path
+
+      - name: again 7/7 - run-android (expo's eager export and Gradle run, no phone)
         working-directory: apps/mobile
         timeout-minutes: 20
         run: |
@@ -553,21 +633,25 @@ jobs:
           "APK: $text" >> $env:GITHUB_STEP_SUMMARY
           Set-Content (Join-Path $env:RUNNER_TEMP 'r5\apk-abis.txt') ($abis -join ',')
 
-      - name: verdict - each step closed within 720 s, built one ABI, and did not redo an earlier step
+      - name: verdict - each step closed within the limit, built one ABI, and did not redo an earlier step
         if: always()
         run: |
           & .github/iris-guide/build-processes.ps1 -Label 'at the end' -Stop
           $file = Join-Path $env:RUNNER_TEMP 'r5\results.jsonl'
           if (-not (Test-Path $file)) { Write-Error 'no results'; exit 1 }
           $rows = @(Get-Content $file | ForEach-Object { $_ | ConvertFrom-Json })
-          $steps = 'prepare-gradle', 'build-native', 'build-libraries', 'run-android'
+          $steps = 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android'
+          # About 360 s is the target on the slowest runner (2.5x under Iris's
+          # 900 s); the gate is 400 s so that one slow runner does not hide
+          # the numbers of the others. The summary gives every step's time.
+          $limit = 400
           $fail = @()
           foreach ($run in 'cold', 'again') {
             foreach ($id in $steps) {
               $r = $rows | Where-Object { $_.step -eq $id -and $_.run -eq $run } | Select-Object -Last 1
               if (-not $r) { $fail += "$id ($run) did not run"; continue }
               if ($r.recorded -ne 0) { $fail += "$id ($run): Iris would record $($r.recorded)" }
-              if ($r.closeAt -gt 720) { $fail += "$id ($run): 'close' at $($r.closeAt) s, over 720 s" }
+              if ($r.closeAt -gt $limit) { $fail += "$id ($run): 'close' at $($r.closeAt) s, over $limit s" }
               if ($r.said -notmatch 'BUILD SUCCESSFUL') { $fail += "$id ($run): no BUILD SUCCESSFUL" }
               if ($r.daemonLeft) { $fail += "$id ($run): a Gradle daemon outlived the step" }
               if ($r.abis -and $r.abis -ne 'arm64-v8a') { $fail += "$id ($run): CMake ABIs $($r.abis)" }
@@ -581,10 +665,13 @@ jobs:
           # allows 2 files (run-build-step.ps1 lists them in the log), 'some'
           # is at least 1; a real native build here compiles hundreds.
           $expect = @{
-            'prepare-gradle'  = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
-            'build-native'    = @{ ninjaLib = 'some'; ninjaApp = 'none'; libKotlinRan = 'none' }
-            'build-libraries' = @{ ninjaLib = 'none'; ninjaApp = 'some'; libKotlinRan = 'some' }
-            'run-android'     = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'prepare-gradle'   = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'build-native-1'   = @{ ninjaLib = 'some'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'build-native-2'   = @{ ninjaLib = 'some'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'build-native-app' = @{ ninjaLib = 'none'; ninjaApp = 'some'; libKotlinRan = 'none' }
+            'build-libraries'  = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'some' }
+            'prepare-app'      = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'run-android'      = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
           }
           foreach ($id in $steps) {
             if (-not $cold[$id]) { continue }
@@ -601,16 +688,16 @@ jobs:
           if ($apkAbis -ne 'arm64-v8a') { $fail += "the APK holds native code for: $apkAbis" }
           $total = 0
           foreach ($id in $steps) { if ($cold[$id]) { $total += $cold[$id].closeAt } }
-          $line = "cold total: $([math]::Round($total, 1)) s over 4 steps; longest step: $(($cold.Values | Sort-Object closeAt | Select-Object -Last 1).step) at $(($cold.Values | Sort-Object closeAt | Select-Object -Last 1).closeAt) s"
+          $line = "cold total: $([math]::Round($total, 1)) s over 7 steps; longest step: $(($cold.Values | Sort-Object closeAt | Select-Object -Last 1).step) at $(($cold.Values | Sort-Object closeAt | Select-Object -Last 1).closeAt) s"
           Write-Output $line
           $line >> $env:GITHUB_STEP_SUMMARY
           if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Output "FAIL: $_" }; Write-Error "$($fail.Count) check(s) failed"; exit 1 }
-          Write-Output 'every step closed within 720 s with Iris exit 0, built arm64-v8a only, did its own part of the build once, and redid nothing when run again'
+          Write-Output "every step closed within $limit s with Iris exit 0, built arm64-v8a only, did its own part of the build once, and redid nothing when run again"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: run-android-split-steps-logs
+          name: run-android-split-steps-logs-${{ matrix.runner }}
           path: ${{ runner.temp }}/r5/
 
   # Round 5, the comparison: the guide's run-android as it was before this

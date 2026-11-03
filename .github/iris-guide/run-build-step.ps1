@@ -12,6 +12,7 @@
 #     library Kotlin compiles RAN (a task header with no UP-TO-DATE /
 #     NO-SOURCE / SKIPPED suffix). Together they show that a later step does
 #     not redo an earlier one;
+#   - per project, how long its ninja compile ran in the step;
 #   - whether a Gradle daemon outlived the step.
 # Appends one JSON line to $RUNNER_TEMP/r5/results.jsonl and one row to the
 # job summary. Exit code: the code Iris would record, or 1 when a Gradle
@@ -61,6 +62,22 @@ function Get-NewNinjaEntries($Before, $After, [string]$Group) {
       ForEach-Object { ($_ -split "`t")[3] }
   }
 }
+# Per .ninja_log with new compiles: how long ninja ran in this step (first
+# start to last end of the new .o entries; ninja logs both in ms) and how many
+# object files it compiled. Shows which project's C++ takes the step's time.
+function Get-NinjaSpans($Before, $After) {
+  foreach ($path in $After.Keys) {
+    $skip = if ($Before.ContainsKey($path)) { $Before[$path].lines } else { 0 }
+    $objs = @(Get-Content $path | Where-Object { $_ -and -not $_.StartsWith('#') } | Select-Object -Skip $skip |
+        Where-Object { ($_ -split "`t")[3] -like '*.o' })
+    if ($objs.Count -eq 0) { continue }
+    $starts = @($objs | ForEach-Object { [long](($_ -split "`t")[0]) })
+    $ends = @($objs | ForEach-Object { [long](($_ -split "`t")[1]) })
+    $name = if ($path -match 'node_modules\\(@[^\\]+\\[^\\]+|[^\\]+)\\android\\') { $Matches[1] } else { 'app' }
+    $span = (($ends | Measure-Object -Maximum).Maximum - ($starts | Measure-Object -Minimum).Minimum) / 1000
+    [pscustomobject]@{ project = $name; files = $objs.Count; seconds = [math]::Round($span, 1) }
+  }
+}
 $ninjaBefore = Get-NinjaLogs
 $log = Join-Path $dir "$Step-$Run.log"
 $sdkForCi = $env:ANDROID_HOME
@@ -76,6 +93,8 @@ $newLib = @(Get-NewNinjaEntries $ninjaBefore $ninjaAfter 'libraries')
 $newApp = @(Get-NewNinjaEntries $ninjaBefore $ninjaAfter 'app')
 $ninjaLib = @($newLib | Where-Object { $_ -like '*.o' }).Count
 $ninjaApp = @($newApp | Where-Object { $_ -like '*.o' }).Count
+$spans = @(Get-NinjaSpans $ninjaBefore $ninjaAfter | Sort-Object seconds -Descending)
+$spanText = ($spans | ForEach-Object { "$($_.project) $($_.seconds) s ($($_.files) files)" }) -join '; '
 @($newLib | ForEach-Object { "libraries`t$_" }) + @($newApp | ForEach-Object { "app`t$_" }) | Set-Content (Join-Path $dir "$Step-$Run.ninja.txt")
 
 & (Join-Path $PSScriptRoot 'build-processes.ps1') -Label "after $Step ($Run)" -FailOnDaemon
@@ -96,13 +115,14 @@ $row = [ordered]@{
   step = $Step; run = $Run; deadline = $Deadline; recorded = [int]$t.recorded; kind = $t.kind
   closeAt = [double]$t.endedAt; exitedAt = $t.exitedAt; buildLineAt = $t.buildLineAt; eagerAt = $eagerAt
   said = $said; tasksRan = $ran.Count; ninjaLib = $ninjaLib; ninjaApp = $ninjaApp; libKotlinRan = $libKotlinRan
-  abis = ($abis -join ','); downloads = $downloads; daemonLeft = $daemonLeft
+  abis = ($abis -join ','); downloads = $downloads; daemonLeft = $daemonLeft; ninjaSpans = $spanText
 }
 ($row | ConvertTo-Json -Compress) | Add-Content (Join-Path $dir 'results.jsonl')
 $eagerText = if ($null -ne $eagerAt) { "; eager JS export ended at $eagerAt s" } else { '' }
 "| $Step | $Run | $Deadline | $($t.recorded) | $($t.buildLineAt) | $($t.endedAt) | $said$eagerText; tasks run $($ran.Count), C/C++ compiled $ninjaLib (libraries) + $ninjaApp (app), library Kotlin run $libKotlinRan, ABIs [$($abis -join ' ')] |" >> $env:GITHUB_STEP_SUMMARY
 Write-Output "--- $Step ($Run): Iris $($t.recorded), powershell.exe exited at $($t.exitedAt) s, 'close' at $($t.endedAt) s; $said"
 Write-Output "--- tasks run: $($ran.Count); C/C++ files compiled: $ninjaLib (libraries) + $ninjaApp (app), of $($newLib.Count + $newApp.Count) new ninja entries; library Kotlin run: $libKotlinRan; ABIs: $($abis -join ' ')$eagerText"
+if ($spanText) { Write-Output "--- ninja per project (compile time in this step): $spanText" }
 if (($newLib.Count + $newApp.Count) -le 10) { @($newLib | ForEach-Object { "    ninja, libraries: $_" }) + @($newApp | ForEach-Object { "    ninja, app: $_" }) }
 if ($daemonLeft) { Write-Output '--- a Gradle daemon outlived the step'; exit 1 }
 exit ([int]$t.recorded)

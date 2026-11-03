@@ -12,10 +12,11 @@
  *   - done on the child's 'close' event (every output pipe closed), not on
  *     'exit', and a deadline after which the tree is killed (Iris: 15 min).
  *
- * install-jdk.ps1, prepare-gradle.ps1, build-native.ps1, build-libraries.ps1
- * and run-android.ps1 beside this file are VERBATIM copies of the Windows
- * commands in publik lib/guides/nut-ai.ts (guide v16), one file per guide
- * step. Do not edit them here; copy them again from the guide.
+ * dependencies.ps1, install-jdk.ps1, prepare-gradle.ps1, build-native-1.ps1,
+ * build-native-2.ps1, build-native-app.ps1, build-libraries.ps1,
+ * prepare-app.ps1 and run-android.ps1 beside this file are VERBATIM copies of
+ * the Windows commands in publik lib/guides/nut-ai.ts (guide v16), one file
+ * per guide step. Do not edit them here; copy them again from the guide.
  *
  * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds] [linger-seconds]
  * linger-seconds is NOT Iris behavior, only a CI time saver for long
