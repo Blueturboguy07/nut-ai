@@ -36,7 +36,8 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 # nothing changed, so the report counts compiled object files (.o) and
 # lists every new entry.
 function Get-NinjaLogs {
-  $ws = $env:GITHUB_WORKSPACE
+  # The copy the steps build in: ~/nut-ai in the split job, else the checkout.
+  $ws = if ($env:NUT_AI) { $env:NUT_AI } else { $env:GITHUB_WORKSPACE }
   $groups = @{
     app = @(Join-Path $ws 'apps\mobile\android\app\.cxx')
     libraries = @(Get-ChildItem (Join-Path $ws 'node_modules') -Directory -Force -ErrorAction SilentlyContinue |
