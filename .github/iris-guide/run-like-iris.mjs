@@ -19,8 +19,10 @@
  * commands in publik lib/guides/nut-ai.ts (guide v16), one file per guide
  * step. pin-source.ps1 and pin-source.sh (the macOS command) are verbatim
  * too, except that the pinned sha is replaced by 40 zeros: a copy in this
- * repository cannot name its own commit, so CI puts $GITHUB_SHA there. Do
- * not edit them here; copy them again from the guide.
+ * repository cannot name its own commit, so CI puts $GITHUB_SHA there.
+ * install-jdk.sh, prepare-gradle.sh and build-native-1.sh are the verbatim
+ * macOS commands of those steps (the mac-reader-java job runs them in zsh).
+ * Do not edit them here; copy them again from the guide.
  *
  * Usage: node run-like-iris.mjs <command-file> <working-directory> <log-file> [deadline-seconds] [linger-seconds]
  * linger-seconds is NOT Iris behavior, only a CI time saver for long

@@ -581,7 +581,7 @@ jobs:
             $head = @($lines[0..($lines.Count - 2)]) -join "`n"
             if ($null -eq $prelude) { $prelude = $head } elseif ($head -ne $prelude) { Write-Error "$id.ps1 has a different prelude"; exit 1 }
           }
-          foreach ($must in @("`$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'", '$adb.UseShellExecute = $true', '$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi', "`$jh = Get-Content -Path (`$HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue")) {
+          foreach ($must in @('$env:GRADLE_OPTS = ''-Dorg.gradle.daemon=false "-Dorg.gradle.java.home='' + $jh + ''"''', '$jh = $jh.TrimEnd(''\'')', '$adb.UseShellExecute = $true', '$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi', "`$jh = Get-Content -Path (`$HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue")) {
             if (-not $prelude.Contains($must)) { Write-Error "the prelude lacks: $must"; exit 1 }
           }
           $standIn = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
@@ -945,8 +945,24 @@ jobs:
   # in run-android-split-steps); 24, 25 and 26 must end on a Temurin 17 that
   # install-jdk installs. Then the seven build steps run cold, with that
   # JAVA_HOME still set, and must all pass.
+  #
+  # Round 8 (Nov 3 2026), two more readers from the round 7 blind verify:
+  # - gradle-properties: JAVA_HOME = JDK 25 AND ~/.gradle/gradle.properties
+  #   org.gradle.java.home = JDK 25. install-jdk saved Temurin 17, but the
+  #   build ran on JDK 25 (org.gradle.java.home picks the JVM the build runs
+  #   in; JAVA_HOME starts only the launcher) and build-native-1 failed (run
+  #   41615250694). The build steps now pass -Dorg.gradle.java.home=<saved
+  #   JDK> in GRADLE_OPTS, which wins over every gradle.properties.
+  # - jre: only the Temurin 17 JRE (a Java runtime, no javac), installed by
+  #   winget under Program Files, and JAVA_HOME pointing at it with a
+  #   trailing backslash. install-jdk saved the JRE and Gradle stopped with
+  #   "No Java compiler found"; a rerun picked the JRE again (run
+  #   41615650785). install-jdk now skips a folder with no javac.exe, so it
+  #   must install the Temurin 17 JDK, save it (no trailing backslash), and
+  #   keep it on a rerun.
+  # Both must pass the seven build steps to the end, through run-like-iris.
   reader-java:
-    name: reader-java (JAVA_HOME = JDK ${{ matrix.java }})
+    name: reader-java (${{ matrix.label }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 170
@@ -956,14 +972,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - java: '21'
+          - label: JAVA_HOME = JDK 21
+            java: '21'
             saved: 21
-          - java: '24'
+          - label: JAVA_HOME = JDK 24
+            java: '24'
             saved: 17
-          - java: '25'
+          - label: JAVA_HOME = JDK 25
+            java: '25'
             saved: 17
-          - java: '26'
+          - label: JAVA_HOME = JDK 26
+            java: '26'
             saved: 17
+          - label: JAVA_HOME = JDK 25 and gradle.properties org.gradle.java.home = JDK 25
+            java: '25'
+            saved: 17
+            gradleProps: true
+          - label: only a Java 17 JRE (no JDK) under Program Files, also as JAVA_HOME
+            java: ''
+            saved: 17
+            jre: true
     defaults:
       run:
         shell: pwsh
@@ -985,11 +1013,26 @@ jobs:
           if (-not (Test-Path android/gradlew.bat)) { Write-Error 'no android/gradlew.bat'; exit 1 }
 
       - uses: actions/setup-java@v4
+        if: matrix.java != ''
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
-      - name: make this runner a reader's PC whose JAVA_HOME is JDK ${{ matrix.java }}
+      # A Java runtime only: winget's Temurin 17 JRE (C:\Program Files\Eclipse
+      # Adoptium\jre-17...), no javac.exe. The reader's JAVA_HOME points at it,
+      # written with a trailing backslash as installers write it.
+      - name: the Temurin 17 JRE from winget, and JAVA_HOME on it
+        if: matrix.jre
+        run: |
+          winget install --id EclipseAdoptium.Temurin.17.JRE -e --source winget --accept-source-agreements --accept-package-agreements 2>&1 | Select-Object -Last 3
+          $jre = Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -Directory -Filter 'jre-17*' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $jre) { Write-Error 'winget installed no jre-17 folder'; exit 1 }
+          if (Test-Path (Join-Path $jre.FullName 'bin\javac.exe')) { Write-Error "$($jre.FullName) has javac.exe: not a JRE"; exit 1 }
+          & (Join-Path $jre.FullName 'bin\java.exe') -version
+          Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -Directory | ForEach-Object { "under Program Files\Eclipse Adoptium: $($_.Name)" }
+          "JAVA_HOME=$($jre.FullName)\" >> $env:GITHUB_ENV
+
+      - name: make this runner a reader's PC (${{ matrix.label }})
         run: |
           $nodeDir = Split-Path (Get-Command node).Source
           $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -998,6 +1041,13 @@ jobs:
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $null, 'Machine')
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $env:JAVA_HOME, 'User')
           & "$env:JAVA_HOME\bin\java.exe" -version
+          if ('${{ matrix.gradleProps }}' -eq 'true') {
+            $gp = Join-Path $HOME '.gradle'
+            New-Item -ItemType Directory -Force $gp | Out-Null
+            Add-Content -Path (Join-Path $gp 'gradle.properties') -Value ('org.gradle.java.home=' + ($env:JAVA_HOME -replace '\\', '/')) -Encoding ASCII
+            Write-Output "~/.gradle/gradle.properties:"
+            Get-Content (Join-Path $gp 'gradle.properties')
+          }
           $sdkDefault = Join-Path $HOME 'AppData\Local\Android\Sdk'
           if (-not (Test-Path $sdkDefault)) {
             New-Item -ItemType Directory -Force (Split-Path $sdkDefault) | Out-Null
@@ -1011,7 +1061,7 @@ jobs:
           "| step | run | deadline (s) | Iris records | BUILD line at (s) | 'close' at (s) | what it said |" >> $env:GITHUB_STEP_SUMMARY
           "|---|---|---|---|---|---|---|" >> $env:GITHUB_STEP_SUMMARY
 
-      - name: the guide's install-jdk, as Iris runs it (JAVA_HOME = JDK ${{ matrix.java }})
+      - name: the guide's install-jdk, as Iris runs it (${{ matrix.label }})
         run: |
           node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME "$env:RUNNER_TEMP\r5\install-jdk.log" 900
           $code = $LASTEXITCODE
@@ -1022,9 +1072,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'User') -ne $env:JAVA_HOME) { Write-Error "install-jdk changed the reader's JAVA_HOME"; exit 1 }
 
-      # gradlew --version through the guide's prelude while JAVA_HOME is still
-      # the reader's JDK: Gradle must run on the saved JDK.
-      - name: Gradle runs on the saved JDK, not on JAVA_HOME
+      # A rerun must keep the JDK it saved (round 7: a rerun picked the JRE
+      # again) and must not install anything a second time.
+      - name: install-jdk again keeps the same JDK
+        if: matrix.jre
+        run: |
+          $first = (Get-Content "$HOME\.nut-ai-java-home" -TotalCount 1 -Encoding UTF8).Trim()
+          node .github/iris-guide/run-like-iris.mjs .github/iris-guide/install-jdk.ps1 $HOME "$env:RUNNER_TEMP\r5\install-jdk-again.log" 900
+          if ($LASTEXITCODE -ne 0) { Write-Error "install-jdk again failed (Iris exit $LASTEXITCODE)"; exit 1 }
+          $again = (Get-Content "$HOME\.nut-ai-java-home" -TotalCount 1 -Encoding UTF8).Trim()
+          if ($again -ne $first) { Write-Error "the rerun saved $again, not $first"; exit 1 }
+          if (Select-String -Path "$env:RUNNER_TEMP\r5\install-jdk-again.log" -Pattern 'winget|Found Eclipse Temurin|Successfully installed' -Quiet) { Write-Error 'the rerun ran winget'; exit 1 }
+          "install-jdk again: kept $again, no winget" >> $env:GITHUB_STEP_SUMMARY
+
+      # gradlew --version through the guide's prelude while JAVA_HOME (and,
+      # for one reader, ~/.gradle/gradle.properties) still names the reader's
+      # Java: Gradle's launcher AND the JVM the build runs in (Daemon JVM)
+      # must be the saved JDK.
+      - name: Gradle runs on the saved JDK, not on JAVA_HOME or gradle.properties
         working-directory: ${{ env.NUT_AI }}\apps\mobile\android
         run: |
           $guide = Get-Content "$env:GITHUB_WORKSPACE\.github\iris-guide\prepare-gradle.ps1" -Raw
@@ -1032,12 +1097,15 @@ jobs:
           Set-Content $probe $guide.Replace('.\gradlew.bat help', '.\gradlew.bat --version')
           node "$env:GITHUB_WORKSPACE\.github\iris-guide\run-like-iris.mjs" $probe (Get-Location).Path "$env:RUNNER_TEMP\r5\jvm-probe.log" 900
           if ($LASTEXITCODE -ne 0) { Write-Error "gradlew --version failed (Iris exit $LASTEXITCODE)"; exit 1 }
-          $jvm = Select-String -Path "$env:RUNNER_TEMP\r5\jvm-probe.log" -Pattern 'JVM:\s+(\d+)' | Select-Object -First 1
-          if (-not $jvm) { Write-Error 'gradlew --version printed no JVM line'; exit 1 }
-          $line = "with JAVA_HOME = JDK ${{ matrix.java }}, Gradle says: $($jvm.Line.Trim())"
+          $saved = (Get-Content "$HOME\.nut-ai-java-home" -TotalCount 1 -Encoding UTF8).Trim()
+          $launcher = Select-String -Path "$env:RUNNER_TEMP\r5\jvm-probe.log" -Pattern 'Launcher JVM:\s+(\d+)' | Select-Object -First 1
+          $daemon = Select-String -Path "$env:RUNNER_TEMP\r5\jvm-probe.log" -Pattern 'Daemon JVM:\s+(.+)$' | Select-Object -First 1
+          if (-not $launcher -or -not $daemon) { Write-Error 'gradlew --version printed no Launcher JVM or Daemon JVM line'; exit 1 }
+          $line = "Gradle says: $($launcher.Line.Trim()); $($daemon.Line.Trim())"
           Write-Output $line
           $line >> $env:GITHUB_STEP_SUMMARY
-          if ([int]$jvm.Matches[0].Groups[1].Value -ne ${{ matrix.saved }}) { Write-Error 'Gradle does not run on the saved JDK'; exit 1 }
+          if ([int]$launcher.Matches[0].Groups[1].Value -ne ${{ matrix.saved }}) { Write-Error "Gradle's launcher does not run on the saved JDK"; exit 1 }
+          if ($daemon.Line.IndexOf($saved, [StringComparison]::OrdinalIgnoreCase) -lt 0) { Write-Error "the build JVM is not the saved JDK ($saved)"; exit 1 }
 
       - name: the seven build steps, cold, as Iris runs them
         timeout-minutes: 120
@@ -1047,7 +1115,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: reader-java-${{ matrix.java }}-logs
+          name: reader-java-${{ strategy.job-index }}-logs
           path: ${{ runner.temp }}/r5/
 
   # Round 7 (Nov 3 2026). A reader who built Nut AI with guide v15 has a
@@ -1207,6 +1275,126 @@ jobs:
         with:
           name: returning-reader-logs
           path: ${{ runner.temp }}/r5/
+
+  # Round 8 (Nov 3 2026), on macOS: the guide's own macOS commands
+  # (install-jdk.sh, prepare-gradle.sh and build-native-1.sh, verbatim) on a
+  # Mac whose JAVA_HOME is JDK 25, whose ~/.gradle/gradle.properties sets
+  # org.gradle.java.home to JDK 25, and whose only other Java is the Temurin
+  # 17 JRE where its .pkg puts it (/Library/Java/JavaVirtualMachines/
+  # temurin-17.jre; any JDK the runner image has there is moved away first).
+  # install-jdk must skip JDK 25 and the JRE (no javac), download Temurin 17
+  # (the pinned archive) and save it; Gradle's launcher and the JVM the build
+  # runs in must be that JDK; prepare-gradle and build-native-1 (the step
+  # that failed on JDK 25) must pass. Each step runs in a fresh zsh that
+  # still has JAVA_HOME = JDK 25, as a resumed install would.
+  mac-reader-java:
+    name: mac-reader-java (JAVA_HOME = JDK 25, gradle.properties = JDK 25, only a JRE 17 installed)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      NUT_AI: /Users/runner/nut-ai
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: a copy of this commit in ~/nut-ai, its npm install and Android project (the guide's earlier steps)
+        run: |
+          git clone --no-hardlinks --quiet "$GITHUB_WORKSPACE" "$NUT_AI"
+          cd "$NUT_AI"
+          npm install --no-audit --no-fund 2>&1 | tail -3
+          cd apps/mobile
+          npx expo prebuild --platform android 2>&1 | tail -3
+          test -x android/gradlew
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: make this runner a reader's Mac (JAVA_HOME = JDK 25, gradle.properties = JDK 25, the Temurin 17 JRE)
+        run: |
+          "$JAVA_HOME/bin/java" -version
+          mkdir -p ~/.gradle
+          echo "org.gradle.java.home=$JAVA_HOME" >> ~/.gradle/gradle.properties
+          echo "~/.gradle/gradle.properties:"; cat ~/.gradle/gradle.properties
+          mkdir -p "$RUNNER_TEMP/hidden-jdks"
+          for d in /Library/Java/JavaVirtualMachines/* ~/Library/Java/JavaVirtualMachines/*; do
+            [ -e "$d" ] || continue
+            echo "moved away: $d"
+            sudo mv "$d" "$RUNNER_TEMP/hidden-jdks/"
+          done
+          case "$(uname -m)" in arm64) arch=aarch64 ;; *) arch=x64 ;; esac
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/jre.tar.gz" "https://api.adoptium.net/v3/binary/latest/17/ga/mac/$arch/jre/hotspot/normal/eclipse"
+          mkdir -p "$RUNNER_TEMP/jre"
+          tar -xzf "$RUNNER_TEMP/jre.tar.gz" -C "$RUNNER_TEMP/jre"
+          sudo mkdir -p /Library/Java/JavaVirtualMachines
+          sudo mv "$RUNNER_TEMP"/jre/*/ /Library/Java/JavaVirtualMachines/temurin-17.jre
+          jre=/Library/Java/JavaVirtualMachines/temurin-17.jre/Contents/Home
+          "$jre/bin/java" -version
+          if [ -e "$jre/bin/javac" ]; then echo "$jre has javac: not a JRE"; exit 1; fi
+          ls -la /Library/Java/JavaVirtualMachines
+          echo "reader's JAVA_HOME: $JAVA_HOME; JRE: $jre" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: the guide's install-jdk (macOS command, a fresh zsh with JAVA_HOME = JDK 25)
+        run: |
+          set +e
+          cd ~
+          zsh -f -c "$(cat "$GITHUB_WORKSPACE/.github/iris-guide/install-jdk.sh")" > "$RUNNER_TEMP/install-jdk.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/install-jdk.log"
+          [ "$code" = 0 ] || { echo "install-jdk failed ($code)"; exit 1; }
+          read -r saved < ~/.nut-ai-java-home
+          echo "install-jdk saved: $saved" | tee -a "$GITHUB_STEP_SUMMARY"
+          case "$saved" in *temurin-17.jre*|"$JAVA_HOME") echo "saved the JRE or JDK 25"; exit 1 ;; esac
+          [ -x "$saved/bin/javac" ] || { echo "no javac in $saved"; exit 1; }
+          "$saved/bin/java" -version 2>&1 | grep -E 'version "17[."]' || { echo "the saved JDK is not 17"; exit 1; }
+
+      - name: Gradle runs on the saved JDK, not on JAVA_HOME or gradle.properties (macOS)
+        working-directory: ${{ env.NUT_AI }}/apps/mobile/android
+        run: |
+          set +e
+          read -r saved < ~/.nut-ai-java-home
+          sed 's#^\./gradlew help$#./gradlew --version#' "$GITHUB_WORKSPACE/.github/iris-guide/prepare-gradle.sh" > "$RUNNER_TEMP/jvm-probe.sh"
+          grep -qx './gradlew --version' "$RUNNER_TEMP/jvm-probe.sh" || { echo 'prepare-gradle.sh no longer ends with ./gradlew help'; exit 1; }
+          zsh -f -c "$(cat "$RUNNER_TEMP/jvm-probe.sh")" > "$RUNNER_TEMP/jvm-probe.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/jvm-probe.log"
+          [ "$code" = 0 ] || { echo "gradlew --version failed ($code)"; exit 1; }
+          launcher=$(grep -E '^Launcher JVM:' "$RUNNER_TEMP/jvm-probe.log")
+          daemon=$(grep -E '^Daemon JVM:' "$RUNNER_TEMP/jvm-probe.log")
+          echo "Gradle says: $launcher; $daemon" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$launcher" | grep -Eq 'JVM: +17[.]' || { echo "Gradle's launcher is not on 17"; exit 1; }
+          case "$daemon" in *"$saved"*) ;; *) echo "the build JVM is not the saved JDK ($saved)"; exit 1 ;; esac
+
+      - name: prepare-gradle and build-native-1 (macOS commands, each in a fresh zsh with JAVA_HOME = JDK 25)
+        working-directory: ${{ env.NUT_AI }}/apps/mobile/android
+        timeout-minutes: 60
+        run: |
+          set +e
+          for step in prepare-gradle build-native-1; do
+            start=$SECONDS
+            zsh -f -c "$(cat "$GITHUB_WORKSPACE/.github/iris-guide/$step.sh")" > "$RUNNER_TEMP/$step.log" 2>&1
+            code=$?
+            tail -25 "$RUNNER_TEMP/$step.log"
+            echo "$step: exit $code in $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
+            if grep -q 'restricted method in java.lang.System' "$RUNNER_TEMP/$step.log"; then echo "$step ran on JDK 24 or newer"; exit 1; fi
+            [ "$code" = 0 ] && grep -q 'BUILD SUCCESSFUL' "$RUNNER_TEMP/$step.log" || { echo "$step failed"; exit 1; }
+          done
+          ./gradlew --stop >/dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-reader-java-logs
+          path: |
+            ${{ runner.temp }}/*.log
 
   # Round 7: the pin-source step alone on old clones (clean, changed,
   # diverged, ssh origin, another repository, offline, run again), on

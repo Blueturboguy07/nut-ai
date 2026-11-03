@@ -1,5 +1,6 @@
 $jh = Get-Content -Path ($HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue
-if (-not $jh) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }
+if (-not $jh -or -not (Test-Path -LiteralPath ($jh + '\bin\javac.exe'))) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }
+$jh = $jh.TrimEnd('\')
 $env:JAVA_HOME = $jh
 $env:Path = $jh + '\bin;' + $env:Path
 $sdk = $env:ANDROID_HOME
@@ -15,5 +16,5 @@ if ($sdk -and (Test-Path $adb.FileName)) { $abis = & $adb.FileName shell getprop
 $abi = @("$abis" -split '[,\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' -contains $_ })[0]
 if (-not $abi) { $abi = 'arm64-v8a' }
 $env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi
-$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'
+$env:GRADLE_OPTS = '-Dorg.gradle.daemon=false "-Dorg.gradle.java.home=' + $jh + '"'
 .\gradlew.bat lintVitalAnalyzeRelease :app:mergeExtDexRelease -x :app:lintVitalAnalyzeRelease
