@@ -1,0 +1,42 @@
+# Blind verify r7 (not part of the fix): a reader who has only the Temurin 17 JRE (no JDK).
+# install-jdk accepts any folder whose bin\java says 17; does the build then work?
+name: blind-r7-jre
+on:
+  push:
+    branches: ['verify/r7-jre']
+jobs:
+  jre17:
+    runs-on: windows-latest
+    timeout-minutes: 200
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: fresh reader PC with only the Temurin 17 JRE
+        run: |
+          $env:PRE_JRE17 = '1'
+          ./.github/verify-r7/fresh-pc.ps1
+      - name: every Windows guide command through Iris 0.9.15's code
+        timeout-minutes: 170
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r7/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r7/iris-drive.mts .github/verify-r7/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') jre17 @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: verdict
+        if: always()
+        run: |
+          $saved = Get-Content (Join-Path $HOME '.nut-ai-java-home') -TotalCount 1 -ErrorAction SilentlyContinue
+          "saved Java (~/.nut-ai-java-home): $saved; javac there: $(if ($saved) { Test-Path (Join-Path $saved 'bin\javac.exe') })" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -ErrorAction SilentlyContinue | ForEach-Object { "Program Files has: $($_.Name)" } | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          node .github/verify-r7/verdict.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-r7-jre17
+          path: ${{ runner.temp }}/blind/results.jsonl

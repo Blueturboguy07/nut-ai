@@ -41,6 +41,11 @@ if ($env:PRE_JDK25) {
     Write-Output ('~/.gradle/gradle.properties: ' + (Get-Content (Join-Path $gp 'gradle.properties')))
   }
 }
+if ($env:PRE_JRE17) {
+  # A reader who installed the Temurin 17 JRE (runtime only, no javac/jlink) with its installer.
+  winget install --id EclipseAdoptium.Temurin.17.JRE -e --source winget --accept-source-agreements --accept-package-agreements 2>&1 | Select-Object -Last 3
+  Get-ChildItem (Join-Path $env:ProgramFiles 'Eclipse Adoptium') -Directory -ErrorAction SilentlyContinue | ForEach-Object { "JRE install made: $($_.FullName); javac: $(Test-Path (Join-Path $_.FullName 'bin\javac.exe')); jlink: $(Test-Path (Join-Path $_.FullName 'bin\jlink.exe'))" }
+}
 if ($env:NEWJAVA) {
   [Environment]::SetEnvironmentVariable('JAVA_HOME', $env:NEWJAVA, 'User')
   Write-Output "reader's own JAVA_HOME (User): $env:NEWJAVA"
