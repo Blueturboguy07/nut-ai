@@ -1073,8 +1073,12 @@ jobs:
           Set-Location $env:NUT_AI
           git checkout --quiet $env:OLD_PIN
           git log --oneline -1
-          # v15's dependencies step at 71ee482 (better-sqlite3 era).
-          npm install --no-audit --no-fund 2>&1 | Select-Object -Last 5
+          # v15's dependencies step at 71ee482. Its better-sqlite3 node-gyp
+          # build fails here (run 41602070184: "gyp ERR! not ok" on Node
+          # 22.23.4), as it did on readers' PCs without Visual Studio, the bug
+          # guide v16 removed. So the old clone keeps v15's downloaded
+          # packages without their install scripts.
+          npm install --no-audit --no-fund --ignore-scripts 2>&1 | Select-Object -Last 5
           if ($LASTEXITCODE -ne 0) { exit 1 }
           # v15's run-android began with expo's own prebuild of android/.
           Set-Location apps/mobile

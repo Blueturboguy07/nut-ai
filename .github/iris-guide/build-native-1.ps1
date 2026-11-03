@@ -1,5 +1,5 @@
 $jh = Get-Content -Path ($HOME + '\.nut-ai-java-home') -TotalCount 1 -Encoding UTF8 -ErrorAction SilentlyContinue
-if (-not $jh) { throw 'Run the Install Java 17 step first. It picks the Java this build needs.' }
+if (-not $jh) { Write-Output 'Run the Install Java 17 step first. It picks the Java this build needs.'; exit 1 }
 $env:JAVA_HOME = $jh
 $env:Path = $jh + '\bin;' + $env:Path
 $sdk = $env:ANDROID_HOME

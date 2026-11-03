@@ -21,9 +21,9 @@ if (-not $jdk) {
   winget install --id EclipseAdoptium.Temurin.17.JDK -e --source winget --accept-source-agreements --accept-package-agreements
   $jdk = Find-Jdk (Get-Jdks) 17 17
 }
-if (-not $jdk) { throw 'Java 17 is still missing. Install Temurin 17 from adoptium.net, then run this step again.' }
+if (-not $jdk) { Write-Output 'Java 17 is still missing. Install Temurin 17 from adoptium.net, then run this step again.'; exit 1 }
 Set-Content -Path ($HOME + '\.nut-ai-java-home') -Value $jdk -Encoding UTF8
 $env:JAVA_HOME = $jdk
 $env:Path = $jdk + '\bin;' + $env:Path
-Write-Host ('The Android build uses the Java in ' + $jdk)
+Write-Output ('The Android build uses the Java in ' + $jdk)
 cmd /c "java -version 2>&1"
