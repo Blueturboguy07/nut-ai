@@ -894,3 +894,116 @@ jobs:
         with:
           name: run-android-old-one-step-logs
           path: ${{ runner.temp }}/r5/
+
+  # ---- Blind verify r6 (not part of the fix): the whole Windows guide through
+  # Iris for Windows 0.9.15's own code (recipeFromGuide + PowerShellSession,
+  # vendored verbatim in .github/verify-r6/iris), detached, registry
+  # environment, fresh SDK, no Java, Node LTS; then every step again.
+  blind-r6-full-guide-iris-0915:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 200
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: make this runner a fresh reader PC
+        run: ./.github/verify-r6/fresh-pc.ps1
+      - name: cold - every Windows guide command through Iris 0.9.15's code
+        timeout-minutes: 170
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r6/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r6/iris-drive.mts .github/verify-r6/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') cold @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: again - every step a second time
+        timeout-minutes: 120
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          $env:STANDIN = 'node "' + (Join-Path $env:GITHUB_WORKSPACE '.github\iris-guide\expo-build-no-phone.mjs') + '"'
+          $steps = 'check-tools', 'clone', 'enter-folder', 'pin-source', 'dependencies', 'build-corpus', 'install-jdk', 'prebuild-android', 'prepare-gradle', 'build-native-1', 'build-native-2', 'build-native-app', 'build-libraries', 'prepare-app', 'run-android', 'run-android@standin'
+          node .github/verify-r6/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r6/iris-drive.mts .github/verify-r6/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') again @steps
+          Write-Output "driver exit $LASTEXITCODE"
+      - name: verdict
+        if: always()
+        run: |
+          node .github/verify-r6/verdict.mjs (Join-Path $env:RUNNER_TEMP 'blind\results.jsonl')
+          $code = $LASTEXITCODE
+          $apk = Get-ChildItem "$HOME\nut-ai\apps\mobile\android\app\build\outputs\apk\release" -Filter *.apk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($apk) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($apk.FullName)
+            $abis = @($zip.Entries | Where-Object { $_.FullName -match '^lib/([^/]+)/' } | ForEach-Object { $Matches[1] } | Sort-Object -Unique)
+            $zip.Dispose()
+            "APK: $($apk.Name) $([math]::Round($apk.Length / 1MB, 1)) MB, native code for: $($abis -join ', ')" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          } else { 'no release APK' | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY }
+          Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk" -ErrorAction SilentlyContinue | ForEach-Object { "SDK after the build has: $($_.Name)" }
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blind-r6-full-guide-iris-0915
+          path: ${{ runner.temp }}/blind/results.jsonl
+
+  # Blind verify r6: the dependencies step on an unsupported Node, through Iris's code.
+  blind-r6-node-gate-iris-0915:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22.15.0', '23']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: make this runner a fresh reader PC
+        run: ./.github/verify-r6/fresh-pc.ps1
+      - name: guide steps up to dependencies through Iris 0.9.15's code
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          node .github/verify-r6/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r6/iris-drive.mts .github/verify-r6/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') node-${{ matrix.node }} check-tools clone enter-folder pin-source dependencies
+          node .github/verify-r6/verdict-node-gate.mjs (Join-Path $dir 'results.jsonl') "$HOME\nut-ai\node_modules"
+
+  # Blind verify r6: a reader whose own JAVA_HOME is a NEWER JDK (install-jdk accepts any 17+).
+  blind-r6-newer-java-iris-0915:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['25', '26']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - id: jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: make this runner a fresh reader PC with JAVA_HOME = JDK ${{ matrix.java }}
+        run: |
+          $env:NEWJAVA = '${{ steps.jdk.outputs.path }}'
+          ./.github/verify-r6/fresh-pc.ps1
+      - name: guide steps through build-native-1 via Iris 0.9.15's code
+        timeout-minutes: 75
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'blind'
+          node .github/verify-r6/launch-like-electron.mjs (Join-Path $dir 'env.json') (Get-Command node).Source $env:TSX_CLI .github/verify-r6/iris-drive.mts .github/verify-r6/nut-ai-guide-v16.json (Join-Path $dir 'results.jsonl') java-${{ matrix.java }} check-tools clone enter-folder pin-source dependencies build-corpus install-jdk prebuild-android prepare-gradle build-native-1
+          node .github/verify-r6/verdict.mjs (Join-Path $dir 'results.jsonl')
