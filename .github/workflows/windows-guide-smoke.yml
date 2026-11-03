@@ -398,8 +398,8 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'r5'
           $ends = [ordered]@{
             'prepare-gradle'  = '.\gradlew.bat help'
-            'build-native'    = '.\gradlew.bat externalNativeBuildRelease'
-            'build-libraries' = '.\gradlew.bat assembleRelease -x :app:assembleRelease'
+            'build-native'    = '.\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease'
+            'build-libraries' = '.\gradlew.bat assembleRelease :app:externalNativeBuildRelease -x :app:assembleRelease'
             'run-android'     = 'npx.cmd expo run:android --variant release --no-bundler'
           }
           $prelude = $null
@@ -575,10 +575,26 @@ jobs:
           }
           $cold = @{}
           foreach ($r in ($rows | Where-Object { $_.run -eq 'cold' })) { $cold[$r.step] = $r }
-          if ($cold['build-native'] -and $cold['build-native'].cmakeRan -lt 1) { $fail += 'build-native ran no CMake task' }
-          if ($cold['build-libraries'] -and $cold['build-libraries'].libKotlinRan -lt 1) { $fail += 'build-libraries ran no library Kotlin compile' }
-          if ($cold['build-libraries'] -and $cold['build-libraries'].cmakeRan -gt 0) { $fail += 'build-libraries ran CMake again' }
-          if ($cold['run-android'] -and ($cold['run-android'].cmakeRan + $cold['run-android'].libKotlinRan) -gt 0) { $fail += 'run-android redid native or library work' }
+          # Where the work happened: ninja outputs built (libraries, app) and
+          # library Kotlin compiles run, per cold step. Each part of the build
+          # is done once, in its own step; a run again redoes nothing.
+          $expect = @{
+            'prepare-gradle'  = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'build-native'    = @{ ninjaLib = 'some'; ninjaApp = 'none'; libKotlinRan = 'none' }
+            'build-libraries' = @{ ninjaLib = 'none'; ninjaApp = 'some'; libKotlinRan = 'some' }
+            'run-android'     = @{ ninjaLib = 'none'; ninjaApp = 'none'; libKotlinRan = 'none' }
+          }
+          foreach ($id in $steps) {
+            if (-not $cold[$id]) { continue }
+            foreach ($field in 'ninjaLib', 'ninjaApp', 'libKotlinRan') {
+              $n = [int]$cold[$id].$field
+              $want = $expect[$id][$field]
+              if (($want -eq 'none' -and $n -ne 0) -or ($want -eq 'some' -and $n -lt 1)) { $fail += "$id (cold): $field = $n, expected $want" }
+            }
+          }
+          foreach ($r in ($rows | Where-Object { $_.run -eq 'again' })) {
+            if (([int]$r.ninjaLib + [int]$r.ninjaApp + [int]$r.libKotlinRan) -gt 0) { $fail += "$($r.step) (again) redid work: ninja $($r.ninjaLib)+$($r.ninjaApp), library Kotlin $($r.libKotlinRan)" }
+          }
           $apkAbis = Get-Content (Join-Path $env:RUNNER_TEMP 'r5\apk-abis.txt') -ErrorAction SilentlyContinue
           if ($apkAbis -ne 'arm64-v8a') { $fail += "the APK holds native code for: $apkAbis" }
           $total = 0
@@ -587,7 +603,7 @@ jobs:
           Write-Output $line
           $line >> $env:GITHUB_STEP_SUMMARY
           if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Output "FAIL: $_" }; Write-Error "$($fail.Count) check(s) failed"; exit 1 }
-          Write-Output 'every step closed within 720 s with Iris exit 0, built arm64-v8a only, and the later steps did not redo native or library work'
+          Write-Output 'every step closed within 720 s with Iris exit 0, built arm64-v8a only, did its own part of the build once, and redid nothing when run again'
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -14,4 +14,4 @@ $abi = @("$abis" -split '[,\s]+' | Where-Object { 'armeabi-v7a', 'arm64-v8a', 'x
 if (-not $abi) { $abi = 'arm64-v8a' }
 $env:ORG_GRADLE_PROJECT_reactNativeArchitectures = $abi
 $env:GRADLE_OPTS = '-Dorg.gradle.daemon=false'
-.\gradlew.bat externalNativeBuildRelease
+.\gradlew.bat externalNativeBuildRelease -x :app:externalNativeBuildRelease
