@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // expo's own class, from the installed expo package: what the phone's global
 // fetch throws (see ./deadline).
 import { FetchError } from 'expo/src/winter/fetch/FetchErrors'
-import { runLabelScan, runScanWithFallback, runWebLookup, SCAN_TIMEOUT_MS, VISION_TIMEOUT_MS } from './pathA/client'
+import {
+  runExerciseEstimate,
+  runLabelScan,
+  runReceiptScan,
+  runScanWithFallback,
+  runWebLookup,
+  SCAN_TIMEOUT_MS,
+  VISION_TIMEOUT_MS,
+} from './pathA/client'
 import { validateCredential } from './pathA/validate'
 import { ACCOUNT_CALL_TIMEOUT_MS, fetchWallet, provision, revokeInstall, type PublikBuildConfig } from './publik-core'
 
@@ -21,8 +29,14 @@ import { ACCOUNT_CALL_TIMEOUT_MS, fetchWallet, provision, revokeInstall, type Pu
  * timeout cases here fail.
  *
  * Two places the abort can land: before the response (fetch itself
- * rejects), and while the body is read (the gateway answered with headers
- * and heartbeat bytes, then text() rejects with the native error).
+ * rejects), and while the body is read (the headers are in, the body is not).
+ * In the second case the abort does NOT reject the read on a phone (expo
+ * 57.0.9 native code, blind verify r7): on iOS text() and json() never
+ * settle; on Android text() resolves with the bytes read so far and json()
+ * throws a SyntaxError. The two models below copy those, and every call site
+ * runs against both. On nut-ai 5584518 the iOS cases never settle, and the
+ * Android scan says "malformed JSON" and the Android key check says the key
+ * works.
  */
 
 /** What expo/fetch throws when its signal aborts the request. */
@@ -49,25 +63,64 @@ function hangsUntilAborted() {
   return { seen, impl: impl as unknown as typeof fetch }
 }
 
-/** A fetch whose headers arrive at once (the gateway's heartbeat) and whose body never ends. */
-function bodyHangsUntilAborted(status = 200) {
+type Platform = 'ios' | 'android'
+
+/**
+ * A fetch whose headers arrive at once and whose body stalls until the abort,
+ * read the way expo/fetch 57.0.9 reads it on each platform:
+ * - ios: text() waits for "body completed", which never comes after a cancel
+ *   (ExpoFetchModule.swift text/arrayBuffer; NativeResponse emitRequestCanceled).
+ * - android: the cancel still marks the body completed, so text() resolves
+ *   soon after the abort with the bytes read so far (ExpoFetchModule.kt text;
+ *   NativeResponse.kt pump).
+ * json() is expo's own: JSON.parse(await this.text()) (FetchResponse.ts).
+ */
+function bodyStalls(platform: Platform, status = 200, soFar = '') {
+  const reads = { started: 0 }
   const impl = vi.fn(async (_url: unknown, init: { signal: AbortSignal }) => {
-    const body = () =>
-      new Promise<never>((_, reject) => {
-        init.signal.addEventListener('abort', () =>
-          reject(Object.assign(new Error('Fetch request has been canceled'), { code: 'ERR_FETCH_REQUEST_CANCELED' })),
-        )
+    const text = () => {
+      reads.started++
+      return new Promise<string>((resolve) => {
+        if (platform === 'ios') return
+        const done = () => queueMicrotask(() => resolve(soFar))
+        if (init.signal.aborted) done()
+        else init.signal.addEventListener('abort', done)
       })
+    }
     return {
       ok: status >= 200 && status < 300,
       status,
       headers: new Headers({ 'x-publik-request-id': 'r1' }),
-      text: body,
-      json: body,
+      text,
+      json: async () => JSON.parse(await text()),
     } as unknown as Response
   })
-  return impl as unknown as typeof fetch
+  return { impl: impl as unknown as typeof fetch, reads }
 }
+
+/**
+ * Advances fake time by `ms` and reports whether `pending` settled, without
+ * waiting on it: a read that never settles fails the test instead of hanging it.
+ */
+async function settleWithin<T>(pending: Promise<T>, ms: number): Promise<{ settled: false } | { settled: true; value: T }> {
+  let out: { settled: false } | { settled: true; value: T } = { settled: false }
+  void pending.then((value) => {
+    out = { settled: true, value }
+  })
+  await vi.advanceTimersByTimeAsync(ms)
+  return out
+}
+
+/** `pending` is still open 1 ms before `ms` and settled at `ms`; returns its value. */
+async function settlesAtDeadline<T>(pending: Promise<T>, ms: number): Promise<T> {
+  const early = await settleWithin(pending, ms - 1)
+  expect(early.settled).toBe(false)
+  const late = await settleWithin(pending, 1)
+  expect(late.settled).toBe(true)
+  return (late as { settled: true; value: T }).value
+}
+
+const PLATFORMS: Platform[] = ['ios', 'android']
 
 const PUBLIK = 'https://publikhq.com/api/v1'
 const SCAN = {
@@ -133,12 +186,38 @@ describe('a meal scan on a phone that waits too long', () => {
     expect(impl).toHaveBeenCalledTimes(1)
   })
 
-  it('is a timeout too when the abort lands while the answer is being read', async () => {
-    const pending = runScanWithFallback(SCAN, bodyHangsUntilAborted())
-    await vi.advanceTimersByTimeAsync(SCAN_TIMEOUT_MS)
-    const r = await pending
+  // Blind verify r7: on iOS this never ended; on Android it said "malformed JSON".
+  it.each(PLATFORMS)('%s: is the same timeout when the abort lands while the answer is being read', async (platform) => {
+    const { impl, reads } = bodyStalls(platform)
+    const r = await settlesAtDeadline(runScanWithFallback(SCAN, impl), SCAN_TIMEOUT_MS)
+    expect(reads.started).toBe(1)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe('timeout-ambiguous')
+    expect(r.error.retryable).toBe(false)
+    expect(r.error.message).toBe(
+      'publik API did not answer within 240 seconds. The call was probably still charged, so it is not retried. Check your charges before you scan this photo again.',
+    )
+    expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+    expect(impl).toHaveBeenCalledTimes(1)
+  })
+
+  it('android: the bytes read before the abort are not an answer, even when they parse', async () => {
+    const whole = JSON.stringify({ choices: [{ message: { content: '{"items":[]}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+    for (const soFar of ['{"choices":[{"message":{"content":"{\\"ite', whole]) {
+      const { impl } = bodyStalls('android', 200, soFar)
+      const r = await settlesAtDeadline(runScanWithFallback(SCAN, impl), SCAN_TIMEOUT_MS)
+      expect(!r.ok && r.error.kind).toBe('timeout-ambiguous')
+      expect(!r.ok && r.error.retryable).toBe(false)
+      expect(impl).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it.each(PLATFORMS)('%s: a vendor key whose answer is still being read gets its own timeout sentence', async (platform) => {
+    const { impl } = bodyStalls(platform)
+    const r = await settlesAtDeadline(runScanWithFallback({ ...SCAN, baseUrl: undefined, model: 'gpt-5-mini' }, impl), SCAN_TIMEOUT_MS)
     expect(!r.ok && r.error.kind).toBe('timeout-ambiguous')
-    expect(!r.ok && r.error.retryable).toBe(false)
+    expect(!r.ok && r.error.message).toBe('The request timed out. It may still have been charged, so we will not retry automatically.')
   })
 
   it('a vendor key gets the same kind, with its own sentence', async () => {
@@ -187,6 +266,55 @@ describe('label, receipt and lookup calls on a phone', () => {
   })
 })
 
+describe('label, receipt, exercise and lookup calls whose answer is still being read', () => {
+  const cred = SCAN.credential
+  const calls: Array<[string, number, (impl: typeof fetch) => Promise<{ error?: { kind: string; retryable: boolean } }>]> = [
+    ['label scan', VISION_TIMEOUT_MS, (impl) => runLabelScan('openai', { model: 'publik-fast', imageBase64: 'AAAA', baseUrl: PUBLIK }, cred, impl)],
+    ['receipt scan', VISION_TIMEOUT_MS, (impl) => runReceiptScan('openai', { model: 'publik-fast', imageBase64: 'AAAA', baseUrl: PUBLIK }, cred, impl)],
+    [
+      'exercise estimate',
+      20_000,
+      (impl) => runExerciseEstimate('openai', { model: 'publik-fast', description: 'ran 5 km', weightKg: 70, baseUrl: PUBLIK }, cred, impl),
+    ],
+    [
+      'web lookup',
+      VISION_TIMEOUT_MS,
+      (impl) =>
+        runWebLookup('openai', { model: 'publik-fast', itemName: 'oat milk', brand: 'Oatly', baseUrl: PUBLIK, webSearch: false }, cred, impl),
+    ],
+  ]
+  for (const platform of PLATFORMS) {
+    it.each(calls)(`${platform}: the %s is a timeout at its deadline, not "malformed JSON"`, async (_name, ms, call) => {
+      const { impl, reads } = bodyStalls(platform)
+      const r = await settlesAtDeadline(call(impl), ms)
+      expect(reads.started).toBe(1)
+      expect(r.error?.kind).toBe('timeout-ambiguous')
+      expect(r.error?.retryable).toBe(false)
+    })
+  }
+})
+
+describe('key checks whose answer is still being read', () => {
+  const checks: Array<['openai' | 'anthropic' | 'google', string]> = [
+    ['openai', 'gpt-5-mini'],
+    ['anthropic', 'claude-haiku-4-5'],
+    ['google', 'gemini-2.5-flash'],
+  ]
+  for (const platform of PLATFORMS) {
+    it.each(checks)(`${platform}: the %s key check says it timed out at 15 s, not that the key works`, async (provider, model) => {
+      const { impl, reads } = bodyStalls(platform)
+      const res = await settlesAtDeadline(validateCredential(provider, model, { kind: 'api_key', value: 'k' }, impl), 15_000)
+      expect(reads.started).toBe(1)
+      expect(res.ok).toBe(false)
+      if (!res.ok) {
+        expect(res.error.kind).toBe('timeout-ambiguous')
+        expect(res.error.message).toBe('The check timed out.')
+      }
+      expect(impl).toHaveBeenCalledTimes(1)
+    })
+  }
+})
+
 describe('the key check and the publik link on a phone', () => {
   it('a key check that waits 15 s says it timed out, not "No connection"', async () => {
     const { impl } = hangsUntilAborted()
@@ -213,11 +341,14 @@ describe('the key check and the publik link on a phone', () => {
   })
 
   // Blind verify r6, D6: the abort landing in res.json() said "Update Nut AI".
-  it('linking publik API whose answer is still being read at 15 s is "unavailable", not "malformed"', async () => {
-    const pending = provision(PROVISION_INPUT, bodyHangsUntilAborted(201))
-    await vi.advanceTimersByTimeAsync(15_000)
-    expect(await pending).toEqual({ ok: false, kind: 'unavailable', status: 201 })
-    // A body that is not JSON at all is still "malformed".
+  // Blind verify r7: on iOS the json() read never ended.
+  it.each(PLATFORMS)('%s: linking publik API whose answer is still being read at 15 s is "unavailable", not "malformed"', async (platform) => {
+    const { impl, reads } = bodyStalls(platform, 201)
+    expect(await settlesAtDeadline(provision(PROVISION_INPUT, impl), 15_000)).toEqual({ ok: false, kind: 'unavailable', status: 201 })
+    expect(reads.started).toBe(1)
+  })
+
+  it('linking publik API: a body that is not JSON at all, read in time, is still "malformed"', async () => {
     const garbage = vi.fn(async () => ({
       ok: true,
       status: 201,
@@ -261,14 +392,16 @@ describe('Disconnect and the wallet read on a phone', () => {
     expect(await revokeInstall(BASE, KEY, done)).toBe('revoked')
   })
 
-  it('the wallet read gives up after 15 s, also while the answer is being read', async () => {
+  it('the wallet read gives up after 15 s', async () => {
     const { impl } = hangsUntilAborted()
-    const pending = fetchWallet(BASE, KEY, 'anonymous', impl)
-    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
-    expect(await pending).toBeNull()
-    const slowBody = fetchWallet(BASE, KEY, 'anonymous', bodyHangsUntilAborted())
-    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
-    expect(await slowBody).toBeNull()
+    expect(await settlesAtDeadline(fetchWallet(BASE, KEY, 'anonymous', impl), ACCOUNT_CALL_TIMEOUT_MS)).toBeNull()
+  })
+
+  // Blind verify r7: on iOS the wallet read never ended.
+  it.each(PLATFORMS)('%s: the wallet read gives up after 15 s while the answer is being read', async (platform) => {
+    const { impl, reads } = bodyStalls(platform)
+    expect(await settlesAtDeadline(fetchWallet(BASE, KEY, 'anonymous', impl), ACCOUNT_CALL_TIMEOUT_MS)).toBeNull()
+    expect(reads.started).toBe(1)
   })
 
   it('the wallet read still returns the snapshot when publik answers', async () => {

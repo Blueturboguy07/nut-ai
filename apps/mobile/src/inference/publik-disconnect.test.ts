@@ -56,6 +56,20 @@ const silent = vi.fn(
     }),
 ) as unknown as typeof fetch
 
+/**
+ * Headers at once, then a body that stalls until the abort, read as expo/fetch
+ * 57.0.9 reads it (see expo-fetch-timeout.test.ts): on iOS text() never
+ * settles; on Android it resolves with the bytes so far ("") soon after.
+ */
+const stalledBody = (platform: 'ios' | 'android') =>
+  vi.fn(async (_url: unknown, init: { signal: AbortSignal }) => {
+    const text = () =>
+      new Promise<string>((resolve) => {
+        if (platform === 'android') init.signal.addEventListener('abort', () => queueMicrotask(() => resolve('')))
+      })
+    return { ok: true, status: 200, headers: new Headers(), text, json: async () => JSON.parse(await text()) }
+  }) as unknown as typeof fetch
+
 beforeEach(() => {
   vi.useFakeTimers()
   secure.clear()
@@ -88,6 +102,22 @@ describe('publik Disconnect and wallet refresh when publik never answers', () =>
     const pending = refreshPublikWallet(silent)
     await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
     expect(await pending).toBeNull()
+    expect(kv.get('publik.wallet')).toBe(JSON.stringify({ balanceMicros: 5 }))
+  })
+
+  // Blind verify r7: with the headers in and the body stalled, iOS never ended.
+  it.each(['ios', 'android'] as const)('%s: the wallet refresh ends after 15 s also while the answer is being read', async (platform) => {
+    let settled = false
+    let value: unknown = 'not settled'
+    void refreshPublikWallet(stalledBody(platform)).then((w) => {
+      settled = true
+      value = w
+    })
+    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS - 1)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(true)
+    expect(value).toBeNull()
     expect(kv.get('publik.wallet')).toBe(JSON.stringify({ balanceMicros: 5 }))
   })
 })

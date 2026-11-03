@@ -276,14 +276,16 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
   const started = Date.now()
 
   try {
-    const res = await fetchImpl(built.url, {
-      method: 'POST',
-      headers: built.headers,
-      body: JSON.stringify(built.body),
-      signal: deadline.signal,
-    })
+    const res = await deadline.within(
+      fetchImpl(built.url, {
+        method: 'POST',
+        headers: built.headers,
+        body: JSON.stringify(built.body),
+        signal: deadline.signal,
+      }),
+    )
 
-    const text = await res.text()
+    const text = await deadline.within(res.text())
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
 
     let json: unknown
@@ -409,13 +411,15 @@ async function postVisionJson(
 ): Promise<WebLookupOutcome> {
   const deadline = startDeadline(timeoutMs)
   try {
-    const res = await fetchImpl(built.url, {
-      method: 'POST',
-      headers: built.headers,
-      body: JSON.stringify(built.body),
-      signal: deadline.signal,
-    })
-    const text = await res.text()
+    const res = await deadline.within(
+      fetchImpl(built.url, {
+        method: 'POST',
+        headers: built.headers,
+        body: JSON.stringify(built.body),
+        signal: deadline.signal,
+      }),
+    )
+    const text = await deadline.within(res.text())
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
     const m = metered(res)
 
@@ -498,13 +502,15 @@ export async function runWebLookup(
   const built = buildWebLookupRequest(provider, input, credential)
   const deadline = startDeadline(timeoutMs)
   try {
-    const res = await fetchImpl(built.url, {
-      method: 'POST',
-      headers: built.headers,
-      body: JSON.stringify(built.body),
-      signal: deadline.signal,
-    })
-    const text = await res.text()
+    const res = await deadline.within(
+      fetchImpl(built.url, {
+        method: 'POST',
+        headers: built.headers,
+        body: JSON.stringify(built.body),
+        signal: deadline.signal,
+      }),
+    )
+    const text = await deadline.within(res.text())
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
     const m = metered(res)
 

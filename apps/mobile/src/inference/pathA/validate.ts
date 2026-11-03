@@ -87,13 +87,15 @@ async function attempt(
 ): Promise<{ status: number; body: string } | { aborted: true } | { offline: true }> {
   const deadline = startDeadline(timeoutMs)
   try {
-    const res = await fetchImpl(url, {
-      method: postBody === undefined ? 'GET' : 'POST',
-      headers,
-      body: postBody === undefined ? undefined : JSON.stringify(postBody),
-      signal: deadline.signal,
-    })
-    const body = await res.text()
+    const res = await deadline.within(
+      fetchImpl(url, {
+        method: postBody === undefined ? 'GET' : 'POST',
+        headers,
+        body: postBody === undefined ? undefined : JSON.stringify(postBody),
+        signal: deadline.signal,
+      }),
+    )
+    const body = await deadline.within(res.text())
     return { status: res.status, body: body.slice(0, 400) }
   } catch {
     // The deadline's own state, not the error's name: on a phone an aborted

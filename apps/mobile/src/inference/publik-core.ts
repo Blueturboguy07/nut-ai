@@ -140,24 +140,26 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
   if (!isUsableAppToken(cfg.appToken)) return { ok: false, kind: 'unavailable' }
   const deadline = startDeadline(PROVISION_TIMEOUT_MS)
   try {
-    const res = await fetchImpl(`${cfg.baseUrl.replace(/\/+$/, '')}/installs`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        app_token: cfg.appToken,
-        app_slug: cfg.appSlug,
-        app_version: input.appVersion,
-        os: input.os,
-        os_version: input.osVersion,
-        device_name: input.deviceName,
-        install_id: input.installId,
-        disclosure_version: cfg.disclosureVersion,
-        // Chat Completions only: the Responses web_search tool is not sent on
-        // publik mode (its surcharge is unmetered), so the dialect is not claimed.
-        dialects: ['chat_completions'],
+    const res = await deadline.within(
+      fetchImpl(`${cfg.baseUrl.replace(/\/+$/, '')}/installs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          app_token: cfg.appToken,
+          app_slug: cfg.appSlug,
+          app_version: input.appVersion,
+          os: input.os,
+          os_version: input.osVersion,
+          device_name: input.deviceName,
+          install_id: input.installId,
+          disclosure_version: cfg.disclosureVersion,
+          // Chat Completions only: the Responses web_search tool is not sent on
+          // publik mode (its surcharge is unmetered), so the dialect is not claimed.
+          dialects: ['chat_completions'],
+        }),
+        signal: deadline.signal,
       }),
-      signal: deadline.signal,
-    })
+    )
     if (res.status === 429) {
       return { ok: false, kind: 'rate-limited', status: 429, retryAfterSec: Number(res.headers?.get('retry-after')) || 60 }
     }
@@ -165,10 +167,12 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     if (!res.ok) return { ok: false, kind: 'unavailable', status: res.status }
     let j: Record<string, any>
     try {
-      j = (await res.json()) as Record<string, any>
+      j = (await deadline.within(res.json())) as Record<string, any>
     } catch {
       // The deadline can fire while the answer is read: that is no answer,
-      // not an answer this build cannot parse ("Update Nut AI").
+      // not an answer this build cannot parse ("Update Nut AI"). `within`
+      // gives up at the deadline also when the phone's json() never settles
+      // (iOS) or throws on the cut body (Android); see ./deadline.
       return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'malformed', status: res.status }
     }
     // A 200 replay of a known install_id carries key:null (CONTRACT §3.2). A
@@ -212,11 +216,13 @@ export async function revokeInstall(
 ): Promise<'revoked' | 'refused' | 'timed-out' | 'offline'> {
   const deadline = startDeadline(ACCOUNT_CALL_TIMEOUT_MS)
   try {
-    const res = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/installs/revoke`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}` },
-      signal: deadline.signal,
-    })
+    const res = await deadline.within(
+      fetchImpl(`${baseUrl.replace(/\/+$/, '')}/installs/revoke`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        signal: deadline.signal,
+      }),
+    )
     return res.ok ? 'revoked' : 'refused'
   } catch {
     return deadline.timedOut ? 'timed-out' : 'offline'
@@ -237,12 +243,14 @@ export async function fetchWallet(
 ): Promise<PublikWallet | null> {
   const deadline = startDeadline(ACCOUNT_CALL_TIMEOUT_MS)
   try {
-    const res = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/wallet`, {
-      headers: { authorization: `Bearer ${key}` },
-      signal: deadline.signal,
-    })
+    const res = await deadline.within(
+      fetchImpl(`${baseUrl.replace(/\/+$/, '')}/wallet`, {
+        headers: { authorization: `Bearer ${key}` },
+        signal: deadline.signal,
+      }),
+    )
     if (!res.ok) return null
-    return walletFromJson((await res.json()) as Record<string, any>, claimState)
+    return walletFromJson((await deadline.within(res.json())) as Record<string, any>, claimState)
   } catch {
     return null
   } finally {
