@@ -87,7 +87,7 @@ The listing says about $0.01 per use; only the fast tier makes that true.
 The app also asks for `reasoning_effort: "low"` on publik mode (the tiers
 default a reasoning model to "medium", whose thinking counts inside
 `max_tokens`), sends `max_tokens` 8,192 for a scan, 2,048 for a label and
-4,096 for a lookup, waits 150 s for a scan and 90 s for the smaller calls,
+4,096 for a lookup, waits 240 s for a scan and 90 s for the smaller calls,
 and names a `finish_reason: "length"` answer whose JSON does not parse as a
 billed, cut-short call instead of "unexpected shape". A capped answer whose
 JSON is complete (the gateway shrinks the cap to fit a low balance) is used.

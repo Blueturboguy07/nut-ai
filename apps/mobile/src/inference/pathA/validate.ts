@@ -1,5 +1,6 @@
 import { ANTHROPIC_OAUTH_BETA, type ProviderId } from '@nutai/prompt'
 import type { Credential, ScanFailure } from './client'
+import { startDeadline } from '../deadline'
 
 /**
  * Credential validation.
@@ -84,22 +85,22 @@ async function attempt(
   timeoutMs: number,
   postBody?: unknown,
 ): Promise<{ status: number; body: string } | { aborted: true } | { offline: true }> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const deadline = startDeadline(timeoutMs)
   try {
     const res = await fetchImpl(url, {
       method: postBody === undefined ? 'GET' : 'POST',
       headers,
       body: postBody === undefined ? undefined : JSON.stringify(postBody),
-      signal: controller.signal,
+      signal: deadline.signal,
     })
     const body = await res.text()
     return { status: res.status, body: body.slice(0, 400) }
-  } catch (e) {
-    if ((e as Error)?.name === 'AbortError') return { aborted: true }
-    return { offline: true }
+  } catch {
+    // The deadline's own state, not the error's name: on a phone an aborted
+    // fetch rejects with expo's FetchError (see ../deadline).
+    return deadline.timedOut ? { aborted: true } : { offline: true }
   } finally {
-    clearTimeout(timer)
+    deadline.clear()
   }
 }
 

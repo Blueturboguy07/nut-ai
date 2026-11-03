@@ -73,8 +73,15 @@ export const DISCONNECTED_MESSAGE =
 export const USAGE_URL = 'https://publikhq.com/wallet'
 export const USAGE_ACTION = { label: 'See charges on publik', url: USAGE_URL }
 
+/**
+ * A call this phone stopped waiting for. The gateway reads upstream to the
+ * end after the phone hangs up and settles the charge (a 45 s abort on the
+ * old pin was charged $0.058, blind verify Nov 2 2026), so the call was most
+ * likely charged: the copy says so, sends the user to the charges first, and
+ * the failure is not retryable (no Retry button).
+ */
 export function maybeChargedTimeoutMessage(seconds: number): string {
-  return `publik API did not answer within ${seconds} seconds. The call may still have been charged, so it is not retried automatically.`
+  return `publik API did not answer within ${seconds} seconds. The call was probably still charged, so it is not retried. Check your charges before you scan this photo again.`
 }
 
 /**

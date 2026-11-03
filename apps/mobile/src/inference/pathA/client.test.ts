@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { FetchError } from 'expo/src/winter/fetch/FetchErrors'
 import { runLabelScan, runScan, runScanWithFallback, runWebLookup } from './client'
 
 /**
@@ -373,9 +374,12 @@ describe('publik mode', () => {
  * "unexpected shape". Every one of those paths is pinned here.
  */
 describe('a billed call never fails silently', () => {
-  const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' })
+  // What the phone's fetch (expo/fetch) throws on abort: expo's FetchError,
+  // named "Error". A test that threw a name 'AbortError' here passed while
+  // the phone showed "offline" (see ../expo-fetch-timeout.test.ts).
+  const abortError = () => FetchError.createFromError(new Error('Fetch request has been canceled'))
 
-  it('waits 150 s for a scan, not 45: a reasoning tier takes 50-110 s through the gateway', async () => {
+  it('waits 240 s for a scan, not 45: a reasoning tier takes 50-113 s through the gateway', async () => {
     vi.useFakeTimers()
     try {
       let signal: AbortSignal | undefined
@@ -390,14 +394,16 @@ describe('a billed call never fails silently', () => {
       await vi.advanceTimersByTimeAsync(45_001)
       expect(signal!.aborted).toBe(false)
       await vi.advanceTimersByTimeAsync(150_000 - 45_001)
+      expect(signal!.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(240_000 - 150_000)
       expect(signal!.aborted).toBe(true)
       const r = await pending
       expect(r.ok).toBe(false)
       if (!r.ok) {
         expect(r.error.kind).toBe('timeout-ambiguous')
         expect(r.error.retryable).toBe(false)
-        expect(r.error.message).toContain('150 seconds')
-        expect(r.error.message).toContain('may still have been charged')
+        expect(r.error.message).toContain('240 seconds')
+        expect(r.error.message).toContain('probably still charged')
         expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
       }
     } finally {

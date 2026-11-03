@@ -26,6 +26,7 @@ import {
   USAGE_ACTION,
   maybeChargedTimeoutMessage,
 } from '../publik-copy'
+import { startDeadline } from '../deadline'
 
 /**
  * Path A — the cloud inference client.
@@ -115,14 +116,19 @@ export interface ScanRequest {
 }
 
 /**
- * How long a meal scan waits. 150 s, not 45: through publik's gateway a
- * reasoning tier took 53-113 s per photo (measured Oct 2 and Nov 1 2026),
- * and the gateway never cancels upstream when the phone hangs up — so every
- * 45 s abort was a full charge with no answer. The gateway's own upstream
- * deadline is 270 s; this stays under it so a timeout here is still the
- * phone's decision, not the server's.
+ * How long a meal scan waits. 240 s, not 45 (the old pin) or 150 (round 1 of
+ * this fix): through publik's gateway a reasoning tier took 53-113 s per
+ * photo (measured Oct 2 and Nov 1 2026) and 91.9 s for a user who picked
+ * publik-balanced (blind verify, Nov 2 2026), and the gateway never cancels
+ * upstream when the phone hangs up, so every early abort is a full charge
+ * with no answer. 240 s is 2.1 times the slowest scan measured. It stays
+ * under the gateway's own upstream deadline (270 s; the route's limit is
+ * 300 s) with 30 s for the upload and the reply, so a timeout here is still
+ * the phone's decision and the phone's copy, not a cut the server makes.
+ * On Android nothing cuts the call sooner: expo/fetch uses React Native's
+ * OkHttp client, whose connect, read and write timeouts are 0 (none).
  */
-export const SCAN_TIMEOUT_MS = 150_000
+export const SCAN_TIMEOUT_MS = 240_000
 /** Label, receipt, lookup: one small JSON object, but the same tiers. */
 export const VISION_TIMEOUT_MS = 90_000
 
@@ -161,12 +167,16 @@ function failOrTruncated(capped: boolean, res: Response): (e: ScanFailure) => We
 }
 
 /**
- * The two ways a call dies on this side. On publik mode both say the call
- * may still have been charged and link the usage page: the gateway settles
- * the charge whether or not the phone was still listening.
+ * The two ways a call dies on this side. On publik mode both name the charge
+ * and link the usage page: the gateway settles the charge whether or not the
+ * phone was still listening. `timedOut` is the call's own deadline state
+ * (see ../deadline): on a phone an aborted fetch does not throw an
+ * AbortError, so the error cannot tell a timeout from a dropped connection.
+ * A timeout is never retryable: the gateway most likely ran the call to the
+ * end and charged it.
  */
-function transportFailure(err: unknown, publik: boolean, timeoutMs: number, what: string): ScanFailure {
-  if ((err as Error)?.name === 'AbortError') {
+function transportFailure(timedOut: boolean, publik: boolean, timeoutMs: number, what: string): ScanFailure {
+  if (timedOut) {
     return publik
       ? { kind: 'timeout-ambiguous', message: maybeChargedTimeoutMessage(Math.round(timeoutMs / 1000)), retryable: false, action: USAGE_ACTION }
       : { kind: 'timeout-ambiguous', message: `${what} timed out. It may still have been charged, so we will not retry automatically.`, retryable: false }
@@ -262,8 +272,7 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
         : buildGeminiRequest(input, req.credential.value)
 
   const timeoutMs = req.timeoutMs ?? SCAN_TIMEOUT_MS
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const deadline = startDeadline(timeoutMs)
   const started = Date.now()
 
   try {
@@ -271,7 +280,7 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
       method: 'POST',
       headers: built.headers,
       body: JSON.stringify(built.body),
-      signal: controller.signal,
+      signal: deadline.signal,
     })
 
     const text = await res.text()
@@ -311,13 +320,13 @@ export async function runScan(req: ScanRequest, fetchImpl: typeof fetch = fetch)
         ...(m.wallet ? { wallet: m.wallet } : {}),
       },
     }
-  } catch (err) {
+  } catch {
     // A timeout MAY have been billed. Never auto-retry — no provider offers
     // an idempotency key here, so a retry can double-charge for one photo. The
     // user is told, and chooses.
-    return { ok: false, error: transportFailure(err, publik, timeoutMs, 'The request') }
+    return { ok: false, error: transportFailure(deadline.timedOut, publik, timeoutMs, 'The request') }
   } finally {
-    clearTimeout(timer)
+    deadline.clear()
   }
 }
 
@@ -398,14 +407,13 @@ async function postVisionJson(
   fetchImpl: typeof fetch,
   timeoutMs: number,
 ): Promise<WebLookupOutcome> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const deadline = startDeadline(timeoutMs)
   try {
     const res = await fetchImpl(built.url, {
       method: 'POST',
       headers: built.headers,
       body: JSON.stringify(built.body),
-      signal: controller.signal,
+      signal: deadline.signal,
     })
     const text = await res.text()
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
@@ -447,10 +455,10 @@ async function postVisionJson(
     } catch {
       return fail({ kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false })
     }
-  } catch (err) {
-    return { ok: false, error: transportFailure(err, isPublikUrl(built.url), timeoutMs, 'The scan') }
+  } catch {
+    return { ok: false, error: transportFailure(deadline.timedOut, isPublikUrl(built.url), timeoutMs, 'The scan') }
   } finally {
-    clearTimeout(timer)
+    deadline.clear()
   }
 }
 
@@ -488,14 +496,13 @@ export async function runWebLookup(
   timeoutMs = VISION_TIMEOUT_MS,
 ): Promise<WebLookupOutcome> {
   const built = buildWebLookupRequest(provider, input, credential)
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const deadline = startDeadline(timeoutMs)
   try {
     const res = await fetchImpl(built.url, {
       method: 'POST',
       headers: built.headers,
       body: JSON.stringify(built.body),
-      signal: controller.signal,
+      signal: deadline.signal,
     })
     const text = await res.text()
     if (!res.ok) return { ok: false, error: classify(res.status, text) }
@@ -538,9 +545,9 @@ export async function runWebLookup(
     } catch {
       return fail({ kind: 'schema-violation', message: 'The response JSON did not parse.', retryable: false })
     }
-  } catch (err) {
-    return { ok: false, error: transportFailure(err, input.baseUrl != null, timeoutMs, 'The lookup') }
+  } catch {
+    return { ok: false, error: transportFailure(deadline.timedOut, input.baseUrl != null, timeoutMs, 'The lookup') }
   } finally {
-    clearTimeout(timer)
+    deadline.clear()
   }
 }

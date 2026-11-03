@@ -1,4 +1,5 @@
 import type { ScanFailure } from './pathA/client'
+import { startDeadline } from './deadline'
 import { insufficientCreditMessage, linkButtonLabel } from './publik-copy'
 
 /**
@@ -131,8 +132,7 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 export async function provision(input: ProvisionInput, fetchImpl: typeof fetch = fetch): Promise<ProvisionResult> {
   const { cfg } = input
   if (!isUsableAppToken(cfg.appToken)) return { ok: false, kind: 'unavailable' }
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), PROVISION_TIMEOUT_MS)
+  const deadline = startDeadline(PROVISION_TIMEOUT_MS)
   try {
     const res = await fetchImpl(`${cfg.baseUrl.replace(/\/+$/, '')}/installs`, {
       method: 'POST',
@@ -150,7 +150,7 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
         // publik mode (its surcharge is unmetered), so the dialect is not claimed.
         dialects: ['chat_completions'],
       }),
-      signal: controller.signal,
+      signal: deadline.signal,
     })
     if (res.status === 429) {
       return { ok: false, kind: 'rate-limited', status: 429, retryAfterSec: Number(res.headers?.get('retry-after')) || 60 }
@@ -183,10 +183,12 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     if (wallet.balanceMicros == null) wallet.balanceMicros = num(j.balance_micros) ?? starterMicros
     if (wallet.claimUrl == null) wallet.claimUrl = install.claimUrl
     return { ok: true, key: j.key, install, wallet, starterMicros }
-  } catch (e) {
-    return { ok: false, kind: (e as Error)?.name === 'AbortError' ? 'unavailable' : 'offline' }
+  } catch {
+    // The deadline's own state, not the error's name: on a phone an aborted
+    // fetch rejects with expo's FetchError (see ./deadline).
+    return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'offline' }
   } finally {
-    clearTimeout(timer)
+    deadline.clear()
   }
 }
 
