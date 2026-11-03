@@ -2,10 +2,11 @@
 name: verify-r6-java-boundary
 on:
   workflow_dispatch:
+  push:
+    branches: ['verify/r6-java']
 jobs:
   # Blind verify r6: a reader whose own JAVA_HOME is a NEWER JDK (install-jdk accepts any 17+).
   blind-r6-newer-java-iris-0915:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
