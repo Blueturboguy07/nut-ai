@@ -18,8 +18,17 @@ command="$(sed "s/$zeros/$GITHUB_SHA/g" "$here/pin-source.sh")"
 fail=0
 
 new_clone() {
-  git clone --quiet --single-branch --branch main https://github.com/Blueturboguy07/nut-ai.git "$dir/$1"
-  git -C "$dir/$1" checkout --quiet "$old_pin"
+  local c="$dir/$1"
+  git clone --quiet --no-tags --single-branch --branch main https://github.com/Blueturboguy07/nut-ai.git "$c"
+  # Rewind to guide v15's clone: main and origin/main at the old pin and no
+  # copy of anything newer. Once the commit under test is on main, a fresh
+  # clone of main has it, so drop it here or the test proves nothing.
+  git -C "$c" reset --quiet --hard "$old_pin"
+  git -C "$c" update-ref refs/remotes/origin/main "$old_pin"
+  rm -f "$c/.git/ORIG_HEAD"
+  git -C "$c" reflog expire --expire=now --all
+  git -C "$c" gc --quiet --prune=now
+  git -C "$c" checkout --quiet "$old_pin"
   if git -C "$dir/$1" cat-file -e "$GITHUB_SHA" 2>/dev/null; then echo "the old clone already has $GITHUB_SHA"; exit 1; fi
 }
 pin() { # <case> [env...]

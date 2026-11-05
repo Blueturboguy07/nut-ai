@@ -28,7 +28,15 @@ $who = @('-c', 'user.name=ci', '-c', 'user.email=ci@localhost')
 # A fresh old clone per case, as guide v15 made it.
 function New-Clone([string]$Name) {
   $path = Join-Path $dir $Name
-  git clone --quiet --single-branch --branch main https://github.com/Blueturboguy07/nut-ai.git $path
+  git clone --quiet --no-tags --single-branch --branch main https://github.com/Blueturboguy07/nut-ai.git $path
+  # Rewind to guide v15's clone: main and origin/main at the old pin and no
+  # copy of anything newer. Once the commit under test is on main, a fresh
+  # clone of main has it, so drop it here or the test proves nothing.
+  git -C $path reset --quiet --hard $OldPin
+  git -C $path update-ref refs/remotes/origin/main $OldPin
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $path '.git\ORIG_HEAD')
+  git -C $path reflog expire --expire=now --all
+  git -C $path gc --quiet --prune=now
   git -C $path checkout --quiet $OldPin
   git -C $path cat-file -e $env:GITHUB_SHA 2>$null
   if ($LASTEXITCODE -eq 0) { throw "the old clone already has $env:GITHUB_SHA" }
