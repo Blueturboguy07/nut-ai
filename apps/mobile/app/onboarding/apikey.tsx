@@ -5,7 +5,7 @@ import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { CredentialForm, PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { explainProvision, PublikCard, PublikDisclosureBody } from '../../src/components/PublikDisclosure'
 import { putSetting, recordConsent } from '../../src/data/repo'
-import { connectPublik } from '../../src/inference/publik'
+import { connectPublik, setPublikChoice } from '../../src/inference/publik'
 import { PUBLIK_MODEL_PICK_SETTING, type ProvisionResult } from '../../src/inference/publik-core'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
@@ -73,6 +73,7 @@ export default function ApiKeyScreen() {
             await putSetting('provider_model', '')
             await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
             await recordConsent('publik.disclosure', String(r.install.disclosureVersion))
+            await setPublikChoice('publik')
             setBusy(false)
             setMinted(r)
           })()
@@ -113,6 +114,7 @@ export default function ApiKeyScreen() {
         onSaved={(modelId) => {
           setAnswer('providerModel', modelId)
           setSaved(true)
+          void setPublikChoice('own_key')
         }}
       />
     </OnboardingScreen>

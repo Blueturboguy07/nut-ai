@@ -1,0 +1,152 @@
+# Sign in with publik: the unit tests, then the two test builds of the phone app.
+#
+#   ios-sim-app        NutAI.app for the iOS SIMULATOR (arm64, unsigned, Release:
+#                      the JS bundle is inside), zipped. The job also runs the
+#                      publik self-test on a simulator.
+#   android-debug-apk  a test APK: the release variant (the JS bundle is inside,
+#                      no Metro, no dev launcher), debuggable, signed with the
+#                      debug key, cleartext allowed for a local fake publik.
+#
+# The app token comes from the repo secret PUBLIK_APP_TOKEN and goes into
+# apps/mobile/publik-build.json for the build only. It is never printed.
+# Nothing here signs for a store, tags or releases.
+
+name: mobile build
+
+on:
+  push:
+    branches: [signin-gate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: '1'
+  EXPO_NO_TELEMETRY: '1'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Unit tests (apps/mobile)
+        run: npx vitest run apps/mobile
+      - name: Typecheck (apps/mobile)
+        run: npm --prefix apps/mobile run typecheck
+
+  ios-sim:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Put the app token in publik-build.json
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: node .github/scripts/publik-build-token.mjs apps/mobile/publik-build.json
+      - name: Prebuild ios/
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform ios --clean --no-install
+          command -v pod >/dev/null || brew install cocoapods
+          cd ios && pod install
+      - name: Build NutAI.app for the simulator (arm64, unsigned)
+        working-directory: apps/mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -workspace NutAI.xcworkspace -scheme NutAI -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/NutAI.app"
+          test -d "$APP"
+          lipo -info "$APP/NutAI"
+          mkdir -p "$RUNNER_TEMP/out"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/out/NutAI-0.1.1-simulator-arm64.zip"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-sim-app
+          path: ${{ runner.temp }}/out/NutAI-0.1.1-simulator-arm64.zip
+          if-no-files-found: error
+      - name: publik self-test on a simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices
+            const all = Object.entries(d).filter(([rt]) => /iOS/.test(rt)).sort(([a], [b]) => b.localeCompare(a, undefined, { numeric: true }))
+            for (const [, list] of all) { const p = list.find((x) => /^iPhone/.test(x.name)); if (p) { console.log(p.udid); break } }')
+          test -n "$UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          LOG="$RUNNER_TEMP/selftest.log"
+          SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+          PID=$!
+          for i in $(seq 1 120); do
+            grep -q 'publik self-test:' "$LOG" && break
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+          done
+          sleep 2
+          kill "$PID" 2>/dev/null || true
+          grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; exit 1; }
+          grep -q 'publik self-test: ok nut-ai 0.1.1' "$LOG"
+
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/.ghcup && df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Put the app token in publik-build.json
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: node .github/scripts/publik-build-token.mjs apps/mobile/publik-build.json
+      - name: Prebuild android/ (test settings)
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q 'usesCleartextTraffic' "$M" || sed -i 's/<application /<application android:usesCleartextTraffic="true" /' "$M"
+          if [ -f android/app/build.gradle ]; then
+            printf '\nandroid { buildTypes { release { debuggable true } } }\n' >> android/app/build.gradle
+          else
+            printf '\nandroid { buildTypes { getByName("release") { isDebuggable = true } } }\n' >> android/app/build.gradle.kts
+          fi
+          printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
+      - name: Build the test APK
+        working-directory: apps/mobile/android
+        run: |
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
+          mkdir -p "$RUNNER_TEMP/out"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.1-test.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.1-test.apk
+          if-no-files-found: error

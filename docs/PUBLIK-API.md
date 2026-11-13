@@ -3,7 +3,7 @@
 Photo scans, label and receipt transcription, the branded-food lookup and the
 "describe a workout" estimate all need an AI model. By default they run on
 **publik API** (`https://publikhq.com/api/v1`): the phone mints its own
-bounded key on first run, after the user accepts a two-part disclosure, and
+bounded key at the first start (Sign in with publik, below), and
 every call is metered at 50% of the model's published list price against a
 publik balance. A new install starts at $0.00 (publik migration 0059), and
 every metered call answers 402 `insufficient_credit` until the phone is linked
@@ -12,6 +12,76 @@ key. Linking gives $0.05 of free use, once per publik account; it is the only
 free use publik API gives. A user who prefers their own
 Anthropic, OpenAI or Google key still gets the neutral vendor picker; a
 user-entered key always wins and publik code never touches the vendor slots.
+
+## Sign in with publik (the gate)
+
+Nut AI opens with **Sign in with publik**, like every app on publik. The gate
+is the publik module in `apps/mobile/src/inference/publik-core.ts`
+(`ensureSignedIn`, the same screens, words and endpoints as publikhq.com's
+`sdk/publik.ts.md`). `apps/mobile/src/inference/publik.ts` gives it the phone
+(`runPublikGate`), and `apps/mobile/src/components/PublikGate.tsx` draws its
+screens. `app/_layout.tsx` wraps the whole app in `PublikGate`, so no tab, no
+onboarding step and no database read happens before the gate passes.
+
+At each start the gate:
+
+1. loads this phone's `pk_` key, or mints one (`POST /api/v1/installs`);
+2. reads `GET /api/v1/wallet` and shows **Sign in with publik** until
+   `claim_state` is `claimed`. The button opens `claim_url` in the system
+   browser. The gate checks `GET /wallet` every 3 s while the app is in the
+   foreground, for at most 10 minutes, and at once when the person comes back
+   from the browser. There is no other way past this screen. With no
+   connection: "publik is not reachable. Check your connection." and
+   **Retry**;
+3. asks once how Nut AI pays for AI: **Choose how to pay for AI** (no plan,
+   no balance: **Get a plan** or **Use my own key**) or **Connect your plan**
+   (**Connect your plan** or **Use my own key**). The answer is stored in
+   `publik.install` (`choice`) and sets the app's `provider` setting:
+   `publik`, or the person's own key (the vendor picker, exactly as before);
+4. starts usage counting: `app_opened`, then `active_session` every 30
+   minutes (`POST /api/v1/telemetry`, `Authorization: Bearer pk_...`). Send
+   and forget: no content, no health data, no name. `DO_NOT_TRACK=1` or
+   `PUBLIK_TELEMETRY=0` turns it off. publik counts macos, windows and linux
+   today, so it answers 400 to a phone's `os` until it counts phones.
+
+Profile → AI provider has **Sign out of publik** (revoke the key, then the
+gate again) and **Ask again at the next start** (clears the choice). Picking
+publik or saving an own key there also stores the choice. A revoked key (401)
+is forgotten and minted again once.
+
+Offline: the gate needs publik once per start. Without a connection it shows
+the Retry screen; nothing of the app opens until publik answers.
+
+### Launch values (tests only)
+
+A phone app has no shell environment, so the module reads these from the
+launch (`apps/mobile/modules/publik-launch`): on iOS an environment variable
+(`SIMCTL_CHILD_<NAME>=... xcrun simctl launch`) or a launch argument
+(`-<NAME> <value>`); on Android an intent extra
+(`adb shell am start -n com.nutai.app/.MainActivity -e <NAME> <value>`), read
+only by a debuggable build such as the CI test APK.
+
+| Name | Effect |
+|---|---|
+| `PUBLIK_API_BASE_URL` | the whole module uses this publik (for example a local fake); its links open like publikhq.com's |
+| `PUBLIK_SELF_TEST=1` | mint a key, `GET /wallet`, print `publik self-test: ok nut-ai <version>` on stdout, exit |
+| `DO_NOT_TRACK`, `PUBLIK_TELEMETRY=0` | no usage counting |
+| `PUBLIK_TELEMETRY_DEBUG=1` | log each event and publik's answer |
+
+The self-test on a simulator:
+
+```sh
+SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty booted com.nutai.app
+```
+
+### CI
+
+`.github/workflows/mobile-build.yml` runs the unit tests and the typecheck,
+then builds `ios-sim-app` (NutAI.app for the simulator, arm64, unsigned) and
+`android-debug-apk` (the release variant, debuggable, signed with the debug
+key, cleartext allowed). Both builds take the app token from the repo secret
+`PUBLIK_APP_TOKEN` (`.github/scripts/publik-build-token.mjs`, which never
+prints it). The iOS job runs the self-test on a simulator.
 
 ## The one value a build needs
 
@@ -102,7 +172,7 @@ tool is used exactly as before.
 
 `EXPO_PUBLIC_PUBLIK_API_BASE_URL=https://<preview>/api/v1 npm run prebuild`
 points a dev build at a preview gateway (Metro inlines `EXPO_PUBLIC_*` at
-bundle time). There is deliberately no env override for the token: it is a
+bundle time). `PUBLIK_API_BASE_URL` at launch (above) wins over it. There is deliberately no env override for the token: it is a
 file so an Xcode GUI build, which does not inherit the shell, cannot silently
 differ from a CLI build.
 
@@ -111,10 +181,11 @@ differ from a CLI build.
 | What | Where | In a backup? |
 |---|---|---|
 | `pk_live_` key | SecureStore `key.publik` / `kind.publik`, beside the vendor keys | never |
-| install identity (`install_id`, claim link, claim state) | SecureStore `publik.install` | never |
+| install identity (`install_id`, claim link, claim state, the gate's `choice`) | SecureStore `publik.install` | never |
+| usage-counting ID (a random UUID, telemetry only) | kv-store `publik.telemetry_install_id` | never |
 | wallet snapshot (balance, week, links) | kv-store `publik.wallet` | never |
 | the choice of publik (`settings.provider = 'publik'`) | `settings` table | yes — a restore remembers the choice and mints a fresh install on Connect |
 | the disclosure consent | `consents` table (`publik.disclosure`) | yes |
 
-Profile → Start over revokes the phone's key on the server (best effort) and
-forgets all of it.
+Profile → Start over revokes the phone's key on the server (best effort),
+forgets all of it, and shows Sign in with publik again.

@@ -6,7 +6,7 @@ import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { OptionCard } from '../../src/components/onboarding/Controls'
 import type { IconName } from '../../src/components/Icon'
 import { putSetting } from '../../src/data/repo'
-import { publikAvailable } from '../../src/inference/publik'
+import { publikAvailable, publikChoice } from '../../src/inference/publik'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -41,7 +41,9 @@ export default function ProviderScreen() {
   const theme = useTheme()
   const a = useAnswers()
   const order = providersByPrice()
-  const publik = publikAvailable()
+  // After "Use my own key" on the sign-in gate, publik API is not offered
+  // here again (Profile → AI provider still has it).
+  const publik = publikAvailable() && publikChoice() !== 'own_key'
 
   // Preselection is an onboarding behaviour only: a fresh run with no answer
   // yet lands on publik; an existing install with a vendor key is never

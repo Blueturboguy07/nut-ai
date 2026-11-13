@@ -10,12 +10,14 @@ import { putSetting, recordConsent, setting } from '../src/data/repo'
 import { clearCredential, loadCredential, maskCredential } from '../src/inference/credentials'
 import {
   connectPublik,
-  disconnectPublik,
   loadPublikInstall,
   loadPublikWallet,
   publikAvailable,
   publikBuildConfig,
+  publikChoice,
   refreshPublikWallet,
+  setPublikChoice,
+  signOutOfPublik,
 } from '../src/inference/publik'
 import { PUBLIK_MODEL_PICK_SETTING, PUBLIK_MODELS, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
 import { publikScanModelSetting } from '../src/inference/resolve'
@@ -31,6 +33,12 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
  * is the same component the onboarding first-run card uses (CONTRACT §12.2):
  * balance, justification, and the link button for as long as the install is
  * anonymous — "Add a plan or pack" once it is claimed.
+ *
+ * This is also the setting of the sign-in gate's plan choice (the publik
+ * module's setChoice): picking publik API stores "publik", saving or picking
+ * an own key stores "own_key", and "Ask again at the next start" clears it.
+ * The install key is the app's publik sign-in, so the old Disconnect is now
+ * "Sign out of publik": it revokes the key and shows Sign in with publik.
  */
 
 type Chip = ProviderId | 'publik'
@@ -61,6 +69,9 @@ export default function ProviderSettings() {
   const [publikWallet, setPublikWallet] = useState<PublikWallet | null>(null)
   const [publikBusy, setPublikBusy] = useState(false)
   const [publikError, setPublikError] = useState<string | null>(null)
+  // Re-render after "Ask again at the next start" (publikChoice() is a cache, not state).
+  const [, setChoiceRound] = useState(0)
+  const choice = publikChoice()
   const publik = publikAvailable()
 
   const loadPublik = useCallback(async () => {
@@ -116,25 +127,25 @@ export default function ProviderSettings() {
       await putSetting('provider_model', '')
       await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
       await recordConsent('publik.disclosure', String(r.install.disclosureVersion))
+      await setPublikChoice('publik')
       setPublikBusy(false)
       refresh()
     })()
   }
 
-  function disconnect() {
+  function signOut() {
     Alert.alert(
-      'Disconnect publik API?',
-      "This phone's publik key is revoked and forgotten. Photo scans stop working until you reconnect or add your own key. Your logged data is not touched.",
+      'Sign out of publik?',
+      "This phone's publik key is revoked and forgotten, and Nut AI asks you to sign in with publik again. Your logged data is not touched.",
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Disconnect',
+          text: 'Sign out',
           style: 'destructive',
           onPress: () => {
             void (async () => {
-              await disconnectPublik()
               await putSetting('provider', 'none')
-              refresh()
+              await signOutOfPublik()
             })()
           },
         },
@@ -178,6 +189,7 @@ export default function ProviderSettings() {
                       await putSetting('provider', 'publik')
                       await putSetting('provider_model', '')
                       await putSetting(PUBLIK_MODEL_PICK_SETTING, '')
+                      await setPublikChoice('publik')
                       setModelId(publikBuildConfig().models.scan)
                     }
                   })()
@@ -193,6 +205,7 @@ export default function ProviderSettings() {
                     const m = PROVIDER_MODELS[p][0]!.id
                     setModelId(m)
                     await putSetting('provider_model', m)
+                    await setPublikChoice('own_key')
                   }
                 })()
               }}
@@ -220,7 +233,7 @@ export default function ProviderSettings() {
                   starterMicros={null}
                   secondary={[
                     { label: 'Use my own key instead', onPress: useOwnKey },
-                    { label: 'Disconnect publik API', onPress: disconnect, destructive: true },
+                    { label: 'Sign out of publik', onPress: signOut, destructive: true },
                   ]}
                 />
               </View>
@@ -313,6 +326,7 @@ export default function ProviderSettings() {
               provider={provider}
               onSaved={(m) => {
                 setModelId(m)
+                void setPublikChoice('own_key')
                 refresh()
               }}
             />
@@ -350,6 +364,30 @@ export default function ProviderSettings() {
               better at portion size, which is where nearly all the error lives.
             </Text>
           </>
+        ) : null}
+
+        {publik ? (
+          <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+            <Text style={[type.bodyStrong, { color: theme.text }]}>How Nut AI pays for AI</Text>
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 18 }]}>
+              {!choice
+                ? 'Nut AI asks again at the next start.'
+                : choice === 'publik'
+                  ? 'Your publik plan (Connect your plan).'
+                  : 'Your own key.'}
+            </Text>
+            {!choice ? null : (
+              <Pressable
+                onPress={() => {
+                  void setPublikChoice(null).then(() => setChoiceRound((n) => n + 1))
+                }}
+                hitSlop={space.sm}
+                style={{ marginTop: space.md }}
+              >
+                <Text style={[type.label, { color: theme.protein }]}>Ask again at the next start</Text>
+              </Pressable>
+            )}
+          </View>
         ) : null}
       </ScrollView>
     </View>

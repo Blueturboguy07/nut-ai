@@ -8,7 +8,7 @@ import { availability, requestPermissions } from '../../src/health/healthkit'
 import { exportAndShareBackup, finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { currentGoal, resetEverything, setting, type CurrentGoal } from '../../src/data/repo'
 import { loadCredential, maskCredential } from '../../src/inference/credentials'
-import { loadPublikWallet, publikConnected } from '../../src/inference/publik'
+import { loadPublikWallet, publikConnected, requestPublikSignIn } from '../../src/inference/publik'
 import { formatMicros } from '../../src/inference/publik-core'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { Icon } from '../../src/components/Icon'
@@ -252,14 +252,16 @@ export default function Profile() {
           onPress={() => {
             Alert.alert(
               'Erase everything and start over?',
-              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and disconnects publik API. It cannot be undone, and there is no backup on a server because there is no server of ours.',
+              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and signs this phone out of publik. It cannot be undone, and there is no backup on a server because there is no server of ours.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
                   text: 'Erase and restart',
                   style: 'destructive',
                   onPress: () => {
-                    void resetEverything().then(() => router.replace('/onboarding' as never))
+                    // The key is gone, so Sign in with publik shows again;
+                    // after it, the onboarding gate opens onboarding.
+                    void resetEverything().then(() => requestPublikSignIn())
                   },
                 },
               ],

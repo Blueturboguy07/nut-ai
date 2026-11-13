@@ -14,7 +14,13 @@ const creds = new Map<string, { kind: 'api_key'; value: string }>()
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => '11111111-2222-4333-8444-555555555555' }))
 vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.2.0' } } }))
-vi.mock('react-native', () => ({ Platform: { OS: 'android', Version: 35 } }))
+vi.mock('react-native', () => ({
+  Platform: { OS: 'android', Version: 35 },
+  AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+  Linking: { openURL: async () => undefined },
+}))
+// The native launch switches (PUBLIK_API_BASE_URL...): none in a unit test.
+vi.mock('../../modules/publik-launch', () => ({ launchValue: () => null, printLineAndExit: () => undefined }))
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 0,
   getItemAsync: async (k: string) => secure.get(k) ?? null,
