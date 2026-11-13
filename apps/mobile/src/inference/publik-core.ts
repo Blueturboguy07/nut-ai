@@ -640,6 +640,7 @@ const SIGN_IN_WAITING = 'Waiting for you to sign in in your browser.'
 const SIGN_IN_TIMEOUT = 'No sign-in after 10 minutes. Click Sign in with publik to try again.'
 const PLAN_WAITING = 'Waiting for your plan. Finish in your browser.'
 const PLAN_TIMEOUT = 'No plan after 10 minutes. Click Get a plan to try again.'
+const KEEP_KEY_FAILED = `This phone could not keep its publik key. Restart ${APP_NAME} and try again.`
 
 /** The words of the gate. The same in every publik module. */
 export function gateScreen(id: GateScreen['id'], w: GateWallet | null, note: string | null = null, message?: string): GateScreen {
@@ -745,14 +746,15 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
   for (;;) {
     let stored = await d.load()
     if (!stored) {
-      const p = await d.provision()
-      if (!p.ok) {
+      // A store that refuses the key (SecureStore throws) is a Retry screen too, not a loop.
+      const p = await d.provision().catch(() => null)
+      if (p && !p.ok) {
         await ask(ui, gateScreen('unreachable', null, null, provisionGateMessage(p, d.cfg)), d)
         continue
       }
-      stored = await d.load()
+      stored = p ? await d.load() : null
       if (!stored) {
-        await ask(ui, gateScreen('unreachable', null, null, `This phone could not keep its publik key. Restart ${APP_NAME} and try again.`), d)
+        await ask(ui, gateScreen('unreachable', null, null, KEEP_KEY_FAILED), d)
         continue
       }
     }

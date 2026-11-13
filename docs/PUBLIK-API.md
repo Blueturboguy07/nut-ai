@@ -77,7 +77,8 @@ SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty booted com.nut
 ### CI
 
 `.github/workflows/mobile-build.yml` runs the unit tests and the typecheck,
-then builds `ios-sim-app` (NutAI.app for the simulator, arm64, unsigned) and
+then builds `ios-sim-app` (NutAI.app for the simulator, arm64, no
+certificate: only the ad-hoc signature that the simulator keychain needs) and
 `android-debug-apk` (the release variant, debuggable, signed with the debug
 key, cleartext allowed). Both builds take the app token from the repo secret
 `PUBLIK_APP_TOKEN` (`.github/scripts/publik-build-token.mjs`, which never

@@ -304,6 +304,16 @@ describe('ensureSignedIn against a fake publik', () => {
     expect(seen[0]).toMatchObject({ title: WORDS.title, body: 'This key is not valid.', buttons: [{ action: 'retry', label: WORDS.retry }] })
   })
 
+  it('a phone that cannot keep the key gets Retry, not a loop', async () => {
+    const p = phone()
+    p.device.provision = async () => {
+      throw new Error("Calling the 'setValueWithKeyAsync' function has failed")
+    }
+    const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
+    await expect(ensureSignedIn(ui, p.device)).rejects.toThrow('stopped')
+    expect(seen[0]).toMatchObject({ title: WORDS.title, body: 'This phone could not keep its publik key. Restart Nut AI and try again.', buttons: [{ action: 'retry', label: WORDS.retry }] })
+  })
+
   it('telemetry is off with DO_NOT_TRACK, and the gate still runs', async () => {
     wallets = [claimedPlan]
     const p = phone({ DO_NOT_TRACK: '1', PUBLIK_TELEMETRY_DEBUG: '1' })

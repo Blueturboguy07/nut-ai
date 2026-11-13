@@ -1,8 +1,12 @@
 # Sign in with publik: the unit tests, then the two test builds of the phone app.
 #
-#   ios-sim-app        NutAI.app for the iOS SIMULATOR (arm64, unsigned, Release:
-#                      the JS bundle is inside), zipped. The job also runs the
-#                      publik self-test on a simulator.
+#   ios-sim-app        NutAI.app for the iOS SIMULATOR (arm64, Release: the JS
+#                      bundle is inside), zipped. No certificate and no team:
+#                      only Xcode's ad-hoc "Sign to Run Locally" signature,
+#                      because the simulator keychain (SecureStore, where the
+#                      app keeps its publik key) refuses an app with no
+#                      signature. The job also runs the publik self-test on a
+#                      simulator.
 #   android-debug-apk  a test APK: the release variant (the JS bundle is inside,
 #                      no Metro, no dev launcher), debuggable, signed with the
 #                      debug key, cleartext allowed for a local fake publik.
@@ -65,17 +69,18 @@ jobs:
           npx expo prebuild --platform ios --clean --no-install
           command -v pod >/dev/null || brew install cocoapods
           cd ios && pod install
-      - name: Build NutAI.app for the simulator (arm64, unsigned)
+      - name: Build NutAI.app for the simulator (arm64, ad-hoc, no certificate)
         working-directory: apps/mobile/ios
         run: |
           set -o pipefail
           xcodebuild -workspace NutAI.xcworkspace -scheme NutAI -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/dd" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
+            -quiet build
           APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/NutAI.app"
           test -d "$APP"
           lipo -info "$APP/NutAI"
+          codesign -dv "$APP" 2>&1 | grep -E '^(Identifier|Signature|TeamIdentifier)=' || true
           mkdir -p "$RUNNER_TEMP/out"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/out/NutAI-0.1.1-simulator-arm64.zip"
           echo "APP=$APP" >> "$GITHUB_ENV"
