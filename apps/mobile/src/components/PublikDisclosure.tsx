@@ -1,4 +1,5 @@
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { openPublikLink } from '../inference/publik'
 import {
   APP_NAME,
   DISCLOSURE_DATA_PATH,
@@ -58,7 +59,7 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
         </Text>
       </View>
       <Pressable
-        onPress={() => void Linking.openURL(TERMS_URL)}
+        onPress={() => void openPublikLink(TERMS_URL)}
         style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.md }}
       >
         <Text style={[type.caption, { color: theme.textFaint }]}>By continuing you agree to the</Text>
@@ -139,7 +140,8 @@ export function PublikCard({
         accessibilityRole="button"
         disabled={!canOpen}
         onPress={() => {
-          if (canOpen) void Linking.openURL(link)
+          // The in-app browser sheet, never the Safari app.
+          if (canOpen) void openPublikLink(link)
         }}
         style={[styles.primary, { backgroundColor: theme.text }, !canOpen && { opacity: 0.4 }]}
       >

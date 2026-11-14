@@ -15,51 +15,104 @@ user-entered key always wins and publik code never touches the vendor slots.
 
 ## Sign in with publik (the gate)
 
-Nut AI opens with **Sign in with publik**, like every app on publik. The gate
-is the publik module in `apps/mobile/src/inference/publik-core.ts`
+The gate is the publik module in `apps/mobile/src/inference/publik-core.ts`
 (`ensureSignedIn`, the same screens, words and endpoints as publikhq.com's
 `sdk/publik.ts.md`). `apps/mobile/src/inference/publik.ts` gives it the phone
-(`runPublikGate`), and `apps/mobile/src/components/PublikGate.tsx` draws its
-screens. `app/_layout.tsx` wraps the whole app in `PublikGate`, so no tab, no
-onboarding step and no database read happens before the gate passes.
+(`runPublikGate`, `runPublikSignIn`), and
+`apps/mobile/src/components/PublikGate.tsx` draws its screens.
+`app/_layout.tsx` wraps the whole app in `PublikGate`.
 
-At each start the gate:
+### Two modes: `EXPO_PUBLIC_PUBLIK_GATE_MODE`
 
-1. loads this phone's `pk_` key, or mints one (`POST /api/v1/installs`);
+| Mode | What the person sees |
+|---|---|
+| `required` (default) | **Sign in with publik** before any screen: no tab, no onboarding step and no database read before the gate passes. |
+| `optional` | No wall. Sign-in is asked when the person picks publik API (onboarding, Profile → AI provider) or taps Profile → publik account → **Sign in with publik** (`app/publik-sign-in.tsx`, the same screens with **Not now**). Nothing is counted before the sign-in. |
+
+The flag is inlined by Metro at bundle time (`src/build-flags.ts`); nothing at
+run time can change it. CI builds both (`ios-sim-app`, `ios-sim-app-optional`).
+
+### What the gate does
+
+1. loads this phone's `pk_` key, or mints one (`POST /api/v1/installs`). A
+   key store that cannot be read counts as "no key" (a new key), never as a
+   lockout;
 2. reads `GET /api/v1/wallet` and shows **Sign in with publik** until
-   `claim_state` is `claimed`. The button opens `claim_url` in the system
-   browser. The gate checks `GET /wallet` every 3 s while the app is in the
-   foreground, for at most 10 minutes, and at once when the person comes back
-   from the browser. There is no other way past this screen. With no
-   connection: "publik is not reachable. Check your connection." and
-   **Retry**;
-3. asks once how Nut AI pays for AI: **Choose how to pay for AI** (no plan,
-   no balance: **Get a plan** or **Use my own key**) or **Connect your plan**
-   (**Connect your plan** or **Use my own key**). The answer is stored in
-   `publik.install` (`choice`) and sets the app's `provider` setting:
-   `publik`, or the person's own key (the vendor picker, exactly as before);
+   `claim_state` is `claimed`. The button opens `claim_url` in an in-app
+   browser sheet (`expo-web-browser`: SFSafariViewController on iOS, a Custom
+   Tab on Android), never the Safari app. The gate checks `GET /wallet` every
+   3 s while the app is in the foreground, for at most 10 minutes, and at once
+   when the person comes back; the sheet closes when publik sees the sign-in.
+   There is no other way past this screen;
+3. asks once how Nut AI pays for AI: **Choose how to pay for AI** (**Get a
+   plan** or **Use my own key**) or **Connect your plan** (**Connect your
+   plan** or **Use my own key**). Only for an adult: the birth date from
+   onboarding (`src/onboarding/adult.ts`); an unknown age counts as a minor,
+   so the first start (before onboarding) never shows it, and the onboarding
+   provider step offers publik API only to an adult. The answer is stored in
+   `publik.install` (`choice`) and sets the app's `provider` setting;
 4. starts usage counting: `app_opened`, then `active_session` every 30
-   minutes (`POST /api/v1/telemetry`, `Authorization: Bearer pk_...`). Send
-   and forget: no content, no health data, no name. `DO_NOT_TRACK=1` or
-   `PUBLIK_TELEMETRY=0` turns it off. publik counts macos, windows and linux
-   today, so it answers 400 to a phone's `os` until it counts phones.
+   minutes while the app is in the foreground (`POST /api/v1/telemetry`,
+   `Authorization: Bearer pk_...`). The timer stops in the background and on
+   sign-out. Send and forget: no content, no health data, no name. Profile →
+   publik account → **Count app use** turns it off. publik counts macos,
+   windows and linux today, so it answers 400 to a phone's `os` until it
+   counts phones.
 
-Profile → AI provider has **Sign out of publik** (revoke the key, then the
-gate again) and **Ask again at the next start** (clears the choice). Picking
-publik or saving an own key there also stores the choice. A revoked key (401)
-is forgotten and minted again once.
+What counts as "publik did not answer": no connection, no answer in 15 s, a
+page that is not publik's JSON (a captive portal, a proxy), 408, 429 and 5xx.
+Only a 401 **with publik's JSON error** forgets the key (then one new key; a
+second 401 waits for **Retry**). A phone that signed in before opens offline
+on that sign-in; a phone that never signed in shows **Retry**. Every write in
+the gate is inside a `try`, so the gate never freezes: a failure is the Retry
+screen.
 
-Offline: the gate needs publik once per start. Without a connection it shows
-the Retry screen; nothing of the app opens until publik answers.
+### Profile → publik account
 
-### Launch values (tests only)
+| Row | What it does |
+|---|---|
+| **Sign in with publik** | optional mode, not signed in: opens the gate screens |
+| **Sign out** | confirm; the key is read into memory, the local copies are deleted, usage counting stops, then the key is revoked (best effort, 15 s) |
+| **Delete account** | confirm (the publik account is for all publik apps); asks whether to delete the food log on this phone too; signs out as above; opens `https://publikhq.com/settings/profile#delete-account-title` in the in-app browser |
+| **Count app use** | the usage counting switch |
+
+Profile → AI provider keeps **Sign out of publik** and **Ask again at the next
+start** (required mode). Keys live in SecureStore with
+`WHEN_UNLOCKED_THIS_DEVICE_ONLY` (never in an iCloud backup), and
+expo-secure-store's plugin (`configureAndroidBackup`) keeps them out of
+Android Auto Backup.
+
+### Consent before AI
+
+Before the first call to an AI provider, the app asks **Send meal photos to
+<provider>?** and names it (publik, Anthropic, OpenAI or Google;
+`src/inference/ai-consent.ts`). One consent per provider: a photo or a
+description never goes to a provider the person did not agree to.
+**Not now** sends nothing.
+
+### App Store build: `EXPO_PUBLIC_APP_STORE_BUILD`
+
+On by default in an iOS release build. It removes the **Claude CLI token**
+tab and refuses a saved CLI token (Anthropic does not allow third-party apps
+to use Claude subscription credentials). An Anthropic, OpenAI or Google API
+key works as before. Set `EXPO_PUBLIC_APP_STORE_BUILD=0` to keep the tab in
+a build that is not for the App Store.
+
+### Launch values (CI test-hooks builds only)
 
 A phone app has no shell environment, so the module reads these from the
 launch (`apps/mobile/modules/publik-launch`): on iOS an environment variable
 (`SIMCTL_CHILD_<NAME>=... xcrun simctl launch`) or a launch argument
 (`-<NAME> <value>`); on Android an intent extra
-(`adb shell am start -n com.nutai.app/.MainActivity -e <NAME> <value>`), read
-only by a debuggable build such as the CI test APK.
+(`adb shell am start -n com.nutai.app/.MainActivity -e <NAME> <value>`).
+
+They exist only in a **test-hooks build**: `PUBLIK_TEST_HOOKS=1` in the
+environment of `pod install` (Swift compile condition) and Gradle
+(`BuildConfig.PUBLIK_TEST_HOOKS`), and `EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1` at
+bundle time. A store build has neither: the native module reads no
+environment, launch argument or intent extra, the JS side reads nothing, and
+`EXPO_PUBLIC_PUBLIK_API_BASE_URL` is ignored outside a dev or test-hooks
+build. No URL scheme or web page reaches them.
 
 | Name | Effect |
 |---|---|
@@ -74,15 +127,27 @@ The self-test on a simulator:
 SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty booted com.nutai.app
 ```
 
+### A release build needs the app token
+
+`plugins/withPublikTokenCheck.js` stops a release build that has no `pat_`
+token in `apps/mobile/publik-build.json` (or still has the placeholder): an
+Xcode build phase for the Release configuration, and a check before
+`preReleaseBuild` on Android. `src/publik-token-check.test.ts` runs the iOS
+script; the CI Android job proves the Gradle check fails with no token.
+
 ### CI
 
 `.github/workflows/mobile-build.yml` runs the unit tests and the typecheck,
-then builds `ios-sim-app` (NutAI.app for the simulator, arm64, no
-certificate: only the ad-hoc signature that the simulator keychain needs) and
-`android-debug-apk` (the release variant, debuggable, signed with the debug
-key, cleartext allowed). Both builds take the app token from the repo secret
+then builds `ios-sim-app` (required mode) and `ios-sim-app-optional` (NutAI.app
+for the simulator, arm64, no certificate: only the ad-hoc signature that the
+simulator keychain needs) and `android-debug-apk` (the release variant,
+debuggable, signed with the debug key, cleartext allowed). All three are
+test-hooks builds. They take the app token from the repo secret
 `PUBLIK_APP_TOKEN` (`.github/scripts/publik-build-token.mjs`, which never
-prints it). The iOS job runs the self-test on a simulator.
+prints it). The iOS jobs print the App Store settings of the built app
+(version, build number, iPhone only, encryption, privacy manifest) and run the
+self-test on a simulator. The Android job prints the backup rules of the
+merged manifest.
 
 ## The one value a build needs
 

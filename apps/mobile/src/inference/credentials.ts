@@ -40,26 +40,44 @@ export interface StoredCredential {
 const keyFor = (p: CredentialSlot) => `key.${p}`
 const kindFor = (p: CredentialSlot) => `kind.${p}`
 
+/**
+ * Both entries are THIS_DEVICE_ONLY: never in an iCloud or iTunes backup and
+ * never synced. On Android, expo-secure-store's config plugin keeps its store
+ * out of Auto Backup (app.config.ts plugins).
+ */
 export async function saveCredential(
   provider: CredentialSlot,
   cred: StoredCredential,
 ): Promise<void> {
-  await SecureStore.setItemAsync(keyFor(provider), cred.value, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  })
-  await SecureStore.setItemAsync(kindFor(provider), cred.kind)
+  const opts = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY }
+  await SecureStore.setItemAsync(keyFor(provider), cred.value, opts)
+  await SecureStore.setItemAsync(kindFor(provider), cred.kind, opts)
 }
 
+/**
+ * The stored credential, or null. A store that cannot be read (a keychain
+ * error, an Android key lost after a restore) is "no key": the person adds
+ * the key again, or the publik gate mints a new one. Never a lockout.
+ */
 export async function loadCredential(provider: CredentialSlot): Promise<StoredCredential | null> {
-  const value = await SecureStore.getItemAsync(keyFor(provider))
-  if (!value) return null
-  const kind = (await SecureStore.getItemAsync(kindFor(provider))) as CredentialKind | null
-  return { kind: kind ?? 'api_key', value }
+  try {
+    const value = await SecureStore.getItemAsync(keyFor(provider))
+    if (!value) return null
+    const kind = (await SecureStore.getItemAsync(kindFor(provider))) as CredentialKind | null
+    return { kind: kind ?? 'api_key', value }
+  } catch {
+    return null
+  }
 }
 
 export async function clearCredential(provider: CredentialSlot): Promise<void> {
-  await SecureStore.deleteItemAsync(keyFor(provider))
-  await SecureStore.deleteItemAsync(kindFor(provider))
+  for (const k of [keyFor(provider), kindFor(provider)]) {
+    try {
+      await SecureStore.deleteItemAsync(k)
+    } catch {
+      /* nothing stored, or a store that cannot be read: nothing to keep either */
+    }
+  }
 }
 
 /** `sk-ant-…a8f2` — never the whole thing, not even to its owner by default. */

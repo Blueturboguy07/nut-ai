@@ -7,6 +7,7 @@ import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer } from '../../src/onboarding/store'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { radius, space, type } from '../../src/theme/tokens'
 
 /**
@@ -109,7 +110,7 @@ export default function HealthScreen() {
 
       <Text style={[styles.heading, { color: theme.text }]}>Connect to Apple Health</Text>
       <Text style={[type.body, { color: theme.textMuted, marginTop: space.md }]}>
-        Sync your daily activity between Nut AI and the Health app so your calorie target reflects
+        Sync your daily activity between {APP_NAME} and the Health app so your calorie target reflects
         what you actually did.
       </Text>
 

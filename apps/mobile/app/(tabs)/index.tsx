@@ -23,6 +23,7 @@ import {
   type DayTotals,
 } from '../../src/data/repo'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { radius, space, type } from '../../src/theme/tokens'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -93,7 +94,7 @@ export default function Home() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={[styles.wordmark, { color: theme.text }]}>Nut AI</Text>
+        <Text style={[styles.wordmark, { color: theme.text }]}>{APP_NAME}</Text>
         <View style={[styles.streakPill, { backgroundColor: theme.bgSunken }]}>
           <Icon name="flame" size={16} color={theme.text} />
           <Text style={[type.bodyStrong, { color: theme.text }]}>0</Text>

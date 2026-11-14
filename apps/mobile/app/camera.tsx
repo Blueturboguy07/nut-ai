@@ -7,6 +7,7 @@ import { Icon, type IconName } from '../src/components/Icon'
 import { startBarcodeScan, startLabelScan, startReceiptScan, startScan } from '../src/scan/orchestrator'
 import { setPhase } from '../src/scan/store'
 import { useTheme } from '../src/theme/ThemeProvider'
+import { APP_NAME } from '../src/inference/publik-copy'
 import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
 
 type CameraMode = 'food' | 'barcode' | 'label' | 'receipt'
@@ -49,7 +50,7 @@ export default function Camera() {
     return (
       <View style={[styles.center, { backgroundColor: theme.bg, paddingTop: insets.top }]}>
         <Text style={[type.heading, { color: theme.text, textAlign: 'center' }]}>
-          Nut AI needs your camera
+          {APP_NAME} needs your camera
         </Text>
         <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.sm }]}>
           Photos stay on your device unless you chose a cloud provider during setup.

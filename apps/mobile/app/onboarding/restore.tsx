@@ -7,6 +7,7 @@ import { describeBackup } from '../../src/data/backup-core'
 import { finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
 
 /**
@@ -33,7 +34,7 @@ export default function RestoreScreen() {
       setError(
         res.reason === 'bad-json'
           ? 'That file could not be read as JSON.'
-          : "That doesn't look like a Nut AI backup file.",
+          : `That doesn't look like a ${APP_NAME} backup file.`,
       )
       return
     }
@@ -56,7 +57,7 @@ export default function RestoreScreen() {
               try {
                 const outcome = await importBackup(payload)
                 if (!outcome.ok) {
-                  setError('This backup was made with a newer version of Nut AI — update the app first.')
+                  setError(`This backup was made with a newer version of ${APP_NAME} — update the app first.`)
                   return
                 }
                 await finishRestore()
@@ -78,7 +79,7 @@ export default function RestoreScreen() {
     <View style={[styles.root, { backgroundColor: theme.bg, paddingTop: insets.top + space.xl }]}>
       <Text style={[type.title, { color: theme.text, fontSize: 30 }]}>Restore from a backup</Text>
       <Text style={[type.body, { color: theme.textMuted, marginTop: space.sm, lineHeight: 22 }]}>
-        Pick a Nut AI export file — everything comes back exactly as it was: meals, weights,
+        Pick a {APP_NAME} export file — everything comes back exactly as it was: meals, weights,
         goals, settings.
       </Text>
 

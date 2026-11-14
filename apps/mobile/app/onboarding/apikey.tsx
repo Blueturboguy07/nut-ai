@@ -5,7 +5,9 @@ import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { CredentialForm, PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { explainProvision, PublikCard, PublikDisclosureBody } from '../../src/components/PublikDisclosure'
 import { putSetting, recordConsent } from '../../src/data/repo'
-import { connectPublik, setPublikChoice } from '../../src/inference/publik'
+import { PUBLIK_GATE_MODE } from '../../src/build-flags'
+import { connectPublik, publikSignedIn, setPublikChoice } from '../../src/inference/publik'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { PUBLIK_MODEL_PICK_SETTING, type ProvisionResult } from '../../src/inference/publik-core'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
@@ -20,7 +22,8 @@ import { setAnswer, useAnswers } from '../../src/onboarding/store'
  * On publik mode the same slot in the flow holds the publik disclosure, and
  * after the mint the first-run card (balance, justification, the link
  * button). The mint is the consent event: it runs only when the user taps
- * "Continue with publik API", never at launch.
+ * "Continue with publik API", never at launch. In an optional build, a phone
+ * that has not signed in goes to Sign in with publik first.
  */
 export default function ApiKeyScreen() {
   const a = useAnswers()
@@ -49,7 +52,7 @@ export default function ApiKeyScreen() {
       <OnboardingScreen
         step={stepIndex('apikey')}
         total={TOTAL_STEPS}
-        title="Nut AI uses publik API"
+        title={`${APP_NAME} uses publik API`}
         subtitle="Photo scans need an AI model. By default they run on publik API, with no key to paste. Your balance starts at $0.00; linking your publik account gives $0.05 of free use, once."
         cta={busy ? 'Connecting…' : 'Continue with publik API'}
         ctaDisabled={busy}
@@ -58,6 +61,11 @@ export default function ApiKeyScreen() {
           setBusy(true)
           setError(null)
           void (async () => {
+            if (PUBLIK_GATE_MODE === 'optional' && !(await publikSignedIn().catch(() => false))) {
+              setBusy(false)
+              router.push('/publik-sign-in' as never)
+              return
+            }
             const r = await connectPublik()
             if (!r.ok) {
               setBusy(false)

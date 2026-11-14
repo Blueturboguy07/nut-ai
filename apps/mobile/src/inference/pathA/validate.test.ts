@@ -68,6 +68,16 @@ describe('anthropic credential shapes', () => {
     expect(calls).toHaveLength(2)
   })
 
+  it('App Store build (apiKeyOnly): a Claude subscription token is never sent as one', async () => {
+    const { calls, impl } = scripted([{ status: 401, body: '{"error":"invalid x-api-key"}' }, { status: 200 }])
+    const res = await validateCredential('anthropic', 'm', { kind: 'oauth', value: 'sk-ant-oat01-tok' }, impl, 15_000, { apiKeyOnly: true })
+
+    expect(res.ok).toBe(false)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.headers['x-api-key']).toBe('sk-ant-oat01-tok')
+    expect(calls[0]!.headers['authorization']).toBeUndefined()
+  })
+
   it('keeps EVERY attempt in detail when both shapes fail — the hidden-error bug', async () => {
     const { impl } = scripted([
       { status: 401, body: '{"scope":"insufficient"}' },

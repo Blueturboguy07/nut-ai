@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { Icon } from '../../src/components/Icon'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { useTheme } from '../../src/theme/ThemeProvider'
 import { radius, space, type } from '../../src/theme/tokens'
 
@@ -23,7 +24,7 @@ export default function NotificationsScreen() {
     <OnboardingScreen
       step={stepIndex('notifications')}
       total={TOTAL_STEPS}
-      title="Stay on track with Nut AI"
+      title={`Stay on track with ${APP_NAME}`}
       onCta={() => router.push(nextRoute('notifications') as never)}
       scroll
     >
@@ -34,7 +35,7 @@ export default function NotificationsScreen() {
         </Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm }]}>
           Reminders learn from when you actually log rather than firing at a fixed hour, and every
-          one is local to your device. Nothing is scheduled on a server, because there is no server.
+          one is local to your device. Nothing is scheduled on a server.
         </Text>
       </View>
 

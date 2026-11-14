@@ -1,4 +1,5 @@
 import type { ExpoConfig } from 'expo/config'
+import identity from './app-identity.json'
 
 /**
  * App configuration.
@@ -6,8 +7,17 @@ import type { ExpoConfig } from 'expo/config'
  * Every identity string lives in ONE place so the eventual rename is a one-file
  * change rather than a grep across the codebase. `Nut AI` was chosen over the
  * research documents' working codename `Tally`.
+ *
+ * The display name (home screen, publik screens) is ONE setting:
+ * `app-identity.json` → `displayName`. src/inference/publik-copy.ts reads the
+ * same file. The bundle id, the slug (the publik listing) and the scheme
+ * stay as they are on a rename.
  */
-const NAME = 'Nut AI'
+const NAME = identity.displayName
+
+// Every scan sends the photo to an AI provider (publik API or the person's
+// own key); there is no on-device model, so the strings say so.
+const CAMERA_TEXT = `${NAME} uses your camera to photograph meals and scan barcodes. A meal photo goes to the AI provider you choose, which reads the food.`
 const SLUG = 'nut-ai'
 const BUNDLE_ID = 'com.nutai.app'
 const SCHEME = 'nutai'
@@ -41,12 +51,18 @@ const SCHEME = 'nutai'
  */
 const SKIP_HEALTHKIT = process.env.SKIP_HEALTHKIT !== '0'
 
+/**
+ * The build number: every App Store upload needs a new one. CI sets
+ * APP_BUILD_NUMBER (the run number); a local build is 1.
+ */
+const BUILD_NUMBER = /^[1-9][0-9]{0,8}$/.test(process.env.APP_BUILD_NUMBER ?? '') ? process.env.APP_BUILD_NUMBER! : '1'
+
 const config: ExpoConfig = {
   name: NAME,
   slug: SLUG,
   // The publik module's APP_VERSION (src/inference/publik-core.ts) says the
   // same; a test checks it.
-  version: '0.1.1',
+  version: '0.1.2',
   // The mark: a white peanut silhouette inside four scan-frame corners on
   // near-black. Source of truth is assets/icon.svg; the PNGs are rendered
   // from it (rsvg-convert), never hand-edited.
@@ -61,23 +77,93 @@ const config: ExpoConfig = {
 
   ios: {
     bundleIdentifier: BUNDLE_ID,
+    buildNumber: BUILD_NUMBER,
+    // iPhone only (TARGETED_DEVICE_FAMILY = 1): no iPad layout is tested.
     supportsTablet: false,
+    /**
+     * PrivacyInfo.xcprivacy for the app (Expo does not merge every static
+     * CocoaPod's manifest, so the app declares what its code and SDKs use):
+     *   UserDefaults CA92.1     React Native and Expo keep app settings in
+     *                           this app's own UserDefaults.
+     *   FileTimestamp C617.1    expo-file-system and expo-sqlite read the
+     *                           dates of files in the app's own container.
+     *   SystemBootTime 35F9.1   React Native measures elapsed time.
+     *   DiskSpace E174.1        expo-file-system checks free space before
+     *                           it writes (photos, backups).
+     * Tracking: none (no ad SDK, no ATT). Collected and linked to the
+     * publik account (publik keeps telemetry rows with the install and the
+     * account): the email address and name of the publik sign-in, the
+     * account (UserID), the random install ID and install key (DeviceID), and
+     * the app_opened / active_session counts (ProductInteraction). A meal
+     * photo sent through publik API: publik keeps no request content, but the
+     * AI company behind the model may, so it is declared "not linked" (that
+     * company never sees who sent it). A photo sent with the person's own key
+     * goes to the AI company they named, not to us or publik. The App Privacy
+     * answers in App Store Connect must say the same.
+     */
+    privacyManifests: {
+      NSPrivacyTracking: false,
+      NSPrivacyTrackingDomains: [],
+      NSPrivacyAccessedAPITypes: [
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults', NSPrivacyAccessedAPITypeReasons: ['CA92.1'] },
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp', NSPrivacyAccessedAPITypeReasons: ['C617.1'] },
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime', NSPrivacyAccessedAPITypeReasons: ['35F9.1'] },
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryDiskSpace', NSPrivacyAccessedAPITypeReasons: ['E174.1'] },
+      ],
+      NSPrivacyCollectedDataTypes: [
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeEmailAddress',
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        },
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeName',
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        },
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeUserID',
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality', 'NSPrivacyCollectedDataTypePurposeAnalytics'],
+        },
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeDeviceID',
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality', 'NSPrivacyCollectedDataTypePurposeAnalytics'],
+        },
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeProductInteraction',
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAnalytics'],
+        },
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypePhotosorVideos',
+          NSPrivacyCollectedDataTypeLinked: false,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        },
+      ],
+    },
     infoPlist: {
       // Required by App Store review, and true: the app talks only to HTTPS
-      // APIs (a vendor the user named, or publik API), which are exempt, so
-      // there is no non-exempt encryption to declare.
+      // APIs (a vendor the user named, or publik API) through the system's
+      // networking, which is exempt, and it has no encryption of its own
+      // (backups are plain JSON; expo-crypto only makes random IDs).
       ITSAppUsesNonExemptEncryption: false,
-      NSCameraUsageDescription:
-        'Nut AI uses your camera to photograph meals and scan barcodes. Photos stay on your device unless you choose a cloud provider during setup.',
-      NSPhotoLibraryUsageDescription:
-        'Nut AI can read a meal photo you already took. Photos stay on your device unless you choose a cloud provider during setup.',
-      NSFaceIDUsageDescription:
-        'Nut AI uses Face ID only when you reveal or edit a stored API key — never to log a meal.',
+      NSCameraUsageDescription: CAMERA_TEXT,
+      NSPhotoLibraryUsageDescription: `${NAME} can read a meal photo you already took. The photo goes to the AI provider you choose, which reads the food.`,
+      NSFaceIDUsageDescription: `${NAME} uses Face ID only when you reveal or edit a stored API key — never to log a meal.`,
     },
   },
 
   android: {
     package: BUNDLE_ID,
+    versionCode: Number(BUILD_NUMBER),
     adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#0B0B0F' },
     permissions: ['android.permission.CAMERA'],
     // No Google Play Services dependency: all notifications are local, there is
@@ -88,8 +174,9 @@ const config: ExpoConfig = {
 
   plugins: [
     'expo-router',
-    ['expo-camera', { cameraPermission: 'Nut AI uses your camera to photograph meals and scan barcodes.' }],
-    'expo-secure-store',
+    ['expo-camera', { cameraPermission: CAMERA_TEXT }],
+    // Keys stay out of Android Auto Backup (a restored phone mints a new publik key).
+    ['expo-secure-store', { configureAndroidBackup: true }],
     'expo-sqlite',
     ...(SKIP_HEALTHKIT
       ? []
@@ -100,9 +187,9 @@ const config: ExpoConfig = {
               // Both strings are required by App Review, and they must describe what we
               // actually do rather than what HealthKit could theoretically allow.
               NSHealthShareUsageDescription:
-                'Nut AI reads your steps, workouts and weight so your calorie target reflects what you actually did, instead of a fixed guess.',
+                `${NAME} reads your steps, workouts and weight so your calorie target reflects what you actually did, instead of a fixed guess.`,
               NSHealthUpdateUsageDescription:
-                'Nut AI writes the meals you log to Health so your nutrition data lives alongside the rest of your health record.',
+                `${NAME} writes the meals you log to Health so your nutrition data lives alongside the rest of your health record.`,
               // Background delivery is deliberately off. It is an extra entitlement, it
               // is a battery cost, and nothing here needs to react to a step count
               // while the app is closed.
@@ -113,6 +200,8 @@ const config: ExpoConfig = {
     // Every builder signs with their own free Apple ID — see the plugin doc
     // comment for why this can only ever set the MODE (automatic), never a team.
     './plugins/withAutomaticSigning',
+    // A release build with no publik app token (pat_) fails.
+    './plugins/withPublikTokenCheck',
   ],
 
   experiments: { typedRoutes: true },

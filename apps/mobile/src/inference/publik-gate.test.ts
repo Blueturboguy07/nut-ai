@@ -5,8 +5,11 @@ import {
   APP_SLUG,
   APP_VERSION,
   ensureSignedIn,
+  gateAtStart,
   gateScreen,
+  pauseTelemetry,
   provision,
+  resumeTelemetry,
   stopTelemetry,
   USES_AI,
   type Choice,
@@ -71,6 +74,8 @@ let walletStatus: number
 let installsStatus: number
 let offline: boolean
 let requests: Req[]
+/** When set, GET /wallet answers this instead (a captive portal, a proxy, a rate limit). */
+let walletRaw: (() => Response) | null
 
 function reply(status: number, body: unknown) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body } as unknown as Response
@@ -86,6 +91,7 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
     return reply(201, { key: KEY, install_id: JSON.parse(String(init?.body)).install_id, claim_url: 'https://publikhq.com/claim/abc', claim_state: 'anonymous' })
   }
   if (path === `${V1}/wallet`) {
+    if (walletRaw) return walletRaw()
     if (walletStatus !== 200) return reply(walletStatus, { error: { type: 'invalid_key', message: 'This key is not valid.' } })
     const w = wallets.length > 1 ? wallets.shift()! : wallets[0]!
     return reply(200, { ...w, claim_url: 'https://publikhq.com/claim/abc', top_up_url: 'https://publikhq.com/wallet?top_up=1', linked_at: null })
@@ -96,7 +102,11 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
 
 interface Phone {
   device: GateDevice
-  stored: { key: string | null; claimUrl: string | null; choice: Choice | null }
+  stored: { key: string | null; claimUrl: string | null; choice: Choice | null; claimed?: boolean }
+  /** The age check of the plan screen (false: a minor or an unknown age). */
+  adult: boolean
+  /** Profile → publik account → Count app use. */
+  counting: boolean
   provisions: number
   forgot: number
   printed: string[]
@@ -106,6 +116,8 @@ interface Phone {
 function phone(values: Record<string, string> = {}, prior?: Phone['stored']): Phone {
   const p: Phone = {
     stored: prior ?? { key: null, claimUrl: null, choice: null },
+    adult: true,
+    counting: true,
     provisions: 0,
     forgot: 0,
     printed: [],
@@ -116,14 +128,15 @@ function phone(values: Record<string, string> = {}, prior?: Phone['stored']): Ph
     cfg: CFG,
     os: 'ios',
     fetch: fakeFetch,
-    load: async () => (p.stored.key ? { key: p.stored.key, claimUrl: p.stored.claimUrl, choice: p.stored.choice } : null),
+    load: async () =>
+      p.stored.key ? { key: p.stored.key, claimUrl: p.stored.claimUrl, choice: p.stored.choice, claimed: p.stored.claimed === true } : null,
     provision: async () => {
       p.provisions += 1
       const r = await provision(
         { cfg: CFG, installId: '11111111-2222-4333-8444-555555555555', appVersion: APP_VERSION, os: 'ios', osVersion: '18.6', deviceName: 'iPhone' },
         fakeFetch,
       )
-      if (r.ok) p.stored = { key: r.key, claimUrl: r.install.claimUrl, choice: p.stored.choice }
+      if (r.ok) p.stored = { key: r.key, claimUrl: r.install.claimUrl, choice: p.stored.choice, claimed: false }
       return r
     },
     forget: async () => {
@@ -133,7 +146,11 @@ function phone(values: Record<string, string> = {}, prior?: Phone['stored']): Ph
     saveChoice: async (choice) => {
       p.stored = { ...p.stored, choice }
     },
-    noteWallet: async () => undefined,
+    noteWallet: async (w) => {
+      p.stored = { ...p.stored, claimed: w.claimState === 'claimed' }
+    },
+    planAllowed: async () => p.adult,
+    countUse: async () => p.counting,
     // Polls at once in a test (3 s on a phone); null waits for the abort.
     wait: (ms, signal) =>
       new Promise<'timer' | 'resumed'>((resolve) => {
@@ -159,6 +176,7 @@ function phone(values: Record<string, string> = {}, prior?: Phone['stored']): Ph
 function scriptedUI(press: Record<string, string> = {}) {
   const seen: GateScreen[] = []
   const opened: string[] = []
+  const closed: number[] = []
   const counts: Record<string, number> = {}
   const ui: GateUI = {
     show(s) {
@@ -174,8 +192,11 @@ function scriptedUI(press: Record<string, string> = {}) {
     openUrl(url) {
       opened.push(url)
     },
+    closeBrowser() {
+      closed.push(opened.length)
+    },
   }
-  return { ui, seen, opened }
+  return { ui, seen, opened, closed }
 }
 
 async function until(check: () => boolean, ms = 3_000): Promise<void> {
@@ -191,6 +212,7 @@ beforeEach(() => {
   installsStatus = 201
   offline = false
   requests = []
+  walletRaw = null
 })
 
 afterEach(() => {
@@ -232,7 +254,7 @@ describe('ensureSignedIn against a fake publik', () => {
     // 1: anonymous (press Sign in) 2: anonymous (waiting) 3: the check sees the claim 4: claimed, no plan (press Get a plan) 5+: the plan is there.
     wallets = [anonymous, anonymous, claimedEmpty, claimedEmpty, claimedPlan]
     const p = phone()
-    const { ui, seen, opened } = scriptedUI()
+    const { ui, seen, opened, closed } = scriptedUI()
     const gate = await ensureSignedIn(ui, p.device)
     expect(seen.map((s) => [s.title, s.note])).toEqual([
       [WORDS.title, null],
@@ -241,7 +263,9 @@ describe('ensureSignedIn against a fake publik', () => {
       [WORDS.connectTitle, null],
     ])
     expect(opened).toEqual(['https://publikhq.com/claim/abc', 'https://publikhq.com/wallet?top_up=1'])
-    expect(gate).toMatchObject({ key: KEY, choice: 'publik', chosen: true })
+    // The in-app browser sheet closes once publik sees the sign-in, and again once it sees the plan.
+    expect(closed).toEqual([1, 2])
+    expect(gate).toMatchObject({ key: KEY, choice: 'publik', chosen: true, offline: false })
     expect(p.stored.choice).toBe('publik')
     // Every /wallet call carries the key; /installs carries none.
     expect(requests.filter((r) => r.path === `${V1}/wallet`).every((r) => r.auth === `Bearer ${KEY}`)).toBe(true)
@@ -258,7 +282,7 @@ describe('ensureSignedIn against a fake publik', () => {
 
   it('active_session follows, and the debug line says what publik answered', { timeout: 10_000 }, async () => {
     wallets = [claimedPlan]
-    const p = phone({ PUBLIK_TELEMETRY_INTERVAL_SECONDS: '1', PUBLIK_TELEMETRY_DEBUG: '1' }, { key: KEY, claimUrl: null, choice: 'publik' })
+    const p = phone({ PUBLIK_TELEMETRY_INTERVAL_SECONDS: '1', PUBLIK_TELEMETRY_DEBUG: '1' }, { key: KEY, claimUrl: null, choice: 'publik', claimed: true })
     await ensureSignedIn(scriptedUI().ui, p.device)
     await until(() => requests.some((r) => r.path === `${V1}/telemetry` && r.body.includes('active_session')), 4_000)
     expect(requests.filter((r) => r.path === `${V1}/telemetry`).map((r) => JSON.parse(r.body).event).slice(0, 2)).toEqual(['app_opened', 'active_session'])
@@ -339,13 +363,193 @@ describe('PUBLIK_SELF_TEST', () => {
   })
 
   it('prints why it failed', async () => {
-    walletStatus = 500
+    walletStatus = 401
     expect(await selfTestLine()).toEqual(['publik self-test: failed: This key is not valid.'])
+    walletStatus = 500
+    expect(await selfTestLine()).toEqual(['publik self-test: failed: publik is not reachable. Check your connection.'])
     walletStatus = 200
     offline = true
     expect(await selfTestLine()).toEqual(['publik self-test: failed: publik is not reachable. Check your connection.'])
     offline = false
     installsStatus = 401
     expect(await selfTestLine()).toEqual(['publik self-test: failed: This app token is not valid. Ask the developer for a new build.'])
+  })
+})
+
+describe('the defects found in the sister apps', () => {
+  const html = (status: number) => () =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Headers({ 'content-type': 'text/html' }),
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON')
+      },
+    }) as unknown as Response
+
+  it('a captive portal (200 HTML), a 401 page that is not publik JSON, 408 and 429 are "not reachable": the key stays', async () => {
+    const answers: Array<() => Response> = [
+      html(200),
+      html(401),
+      () => reply(408, { error: { type: 'timeout', message: 'x' } }),
+      () => reply(429, { error: { type: 'rate_limited', message: 'x' } }),
+    ]
+    for (const raw of answers) {
+      walletRaw = raw
+      const p = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: false })
+      const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
+      await expect(ensureSignedIn(ui, p.device)).rejects.toThrow('stopped')
+      expect(p.forgot).toBe(0)
+      expect(p.provisions).toBe(0)
+      expect(p.stored.key).toBe(KEY)
+      expect(seen[0]).toMatchObject({ body: WORDS.unreachable, buttons: [{ action: 'retry', label: WORDS.retry }] })
+    }
+  })
+
+  it('a phone that signed in before opens offline, with its stored choice and no screen', async () => {
+    const p = phone({}, { key: KEY, claimUrl: null, choice: 'own_key', claimed: true })
+    const setUps: Array<() => void> = [
+      () => {
+        offline = true
+      },
+      () => {
+        walletRaw = html(200)
+      },
+      () => {
+        walletRaw = () => reply(503, {})
+      },
+    ]
+    for (const setUp of setUps) {
+      offline = false
+      walletRaw = null
+      setUp()
+      const { ui, seen } = scriptedUI()
+      expect(await ensureSignedIn(ui, p.device)).toMatchObject({ key: KEY, choice: 'own_key', chosen: false, offline: true })
+      expect(seen).toEqual([])
+      expect(p.forgot).toBe(0)
+      stopTelemetry()
+    }
+  })
+
+  it('a minor or an unknown age never sees the plan screen', async () => {
+    wallets = [claimedEmpty]
+    const p = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: true })
+    p.adult = false
+    const { ui, seen } = scriptedUI()
+    expect(await ensureSignedIn(ui, p.device)).toMatchObject({ choice: null, chosen: false })
+    expect(seen).toEqual([])
+    stopTelemetry()
+    p.device.planAllowed = async () => {
+      throw new Error('no profile table')
+    }
+    const again = scriptedUI()
+    expect(await ensureSignedIn(again.ui, p.device)).toMatchObject({ choice: null, chosen: false })
+    expect(again.seen).toEqual([])
+  })
+
+  it('no write can freeze the gate: saveChoice, noteWallet and forget may throw', async () => {
+    wallets = [claimedEmpty]
+    const p = phone()
+    p.device.saveChoice = async () => {
+      throw new Error('disk full')
+    }
+    p.device.noteWallet = async () => {
+      throw new Error('disk full')
+    }
+    expect(await ensureSignedIn(scriptedUI({ [WORDS.chooseTitle]: WORDS.ownKey }).ui, p.device)).toMatchObject({ choice: 'own_key', chosen: true })
+    stopTelemetry()
+    walletStatus = 401
+    const q = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: true })
+    q.device.forget = async () => {
+      q.forgot += 1
+      throw new Error('keychain locked')
+    }
+    const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
+    await expect(ensureSignedIn(ui, q.device)).rejects.toThrow('stopped')
+    expect(q.forgot).toBe(2)
+    expect(seen[0]).toMatchObject({ buttons: [{ action: 'retry', label: WORDS.retry }] })
+  })
+
+  it('a store that cannot be read is "no key" (a new key), never a lockout', async () => {
+    wallets = [claimedPlan]
+    const p = phone({}, { key: KEY, claimUrl: null, choice: 'publik', claimed: true })
+    let reads = 0
+    p.device.load = async () => {
+      reads += 1
+      if (reads === 1) throw new Error('errSecInteractionNotAllowed')
+      return { key: p.stored.key!, claimUrl: p.stored.claimUrl, choice: p.stored.choice, claimed: true }
+    }
+    expect(await ensureSignedIn(scriptedUI().ui, p.device)).toMatchObject({ key: KEY })
+    expect(p.provisions).toBe(1)
+  })
+
+  it('Count app use off: no event at all, and the gate still runs', async () => {
+    wallets = [claimedPlan]
+    const p = phone({ PUBLIK_TELEMETRY_DEBUG: '1' }, { key: KEY, claimUrl: null, choice: 'publik', claimed: true })
+    p.counting = false
+    await ensureSignedIn(scriptedUI().ui, p.device)
+    await until(() => p.logs.length > 0)
+    expect(p.logs).toContain('publik-telemetry: app_opened -> off (opt-out)')
+    expect(requests.some((r) => r.path === `${V1}/telemetry`)).toBe(false)
+  })
+
+  it('the timer stops in the background and after sign-out; the foreground starts it again with no second app_opened', { timeout: 10_000 }, async () => {
+    wallets = [claimedPlan]
+    const p = phone({ PUBLIK_TELEMETRY_INTERVAL_SECONDS: '1' }, { key: KEY, claimUrl: null, choice: 'publik', claimed: true })
+    await ensureSignedIn(scriptedUI().ui, p.device)
+    await until(() => requests.some((r) => r.path === `${V1}/telemetry`))
+    pauseTelemetry()
+    const at = requests.length
+    await new Promise((r) => setTimeout(r, 1_400))
+    expect(requests.length).toBe(at)
+    resumeTelemetry()
+    await until(() => requests.some((r) => r.body.includes('active_session')), 3_000)
+    const events = requests.filter((r) => r.path === `${V1}/telemetry`).map((r) => JSON.parse(r.body).event)
+    expect(events.filter((e) => e === 'app_opened')).toHaveLength(1)
+    expect(events).toContain('active_session')
+    stopTelemetry()
+    resumeTelemetry()
+    const after = requests.length
+    await new Promise((r) => setTimeout(r, 1_400))
+    expect(requests.length).toBe(after)
+  })
+})
+
+describe('PUBLIK_GATE_MODE', () => {
+  it('required: the gate before any screen (the sign-in screen first)', async () => {
+    const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
+    await expect(gateAtStart(ui, phone().device, 'required')).rejects.toThrow('stopped')
+    expect(seen[0]).toMatchObject({ title: WORDS.title, body: WORDS.signInBody })
+  })
+
+  it('optional: no wall, no key minted, no request and no event before the sign-in', async () => {
+    const p = phone()
+    const { ui, seen } = scriptedUI()
+    expect(await gateAtStart(ui, p.device, 'optional')).toBeNull()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(seen).toEqual([])
+    expect(p.provisions).toBe(0)
+    expect(requests).toEqual([])
+    // A key that never signed in counts nothing either.
+    const q = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: false })
+    expect(await gateAtStart(scriptedUI().ui, q.device, 'optional')).toBeNull()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(requests).toEqual([])
+  })
+
+  it('optional: a phone that signed in before counts its open, with no screen', async () => {
+    const p = phone({}, { key: KEY, claimUrl: null, choice: 'publik', claimed: true })
+    const { ui, seen } = scriptedUI()
+    expect(await gateAtStart(ui, p.device, 'optional')).toBeNull()
+    await until(() => requests.some((r) => r.path === `${V1}/telemetry`))
+    expect(seen).toEqual([])
+    expect(requests.map((r) => r.path)).toEqual([`${V1}/telemetry`])
+  })
+
+  it('optional: the self-test still runs in a test build', async () => {
+    const p = phone({ PUBLIK_SELF_TEST: '1' })
+    void gateAtStart(scriptedUI().ui, p.device, 'optional')
+    await until(() => p.printed.length > 0)
+    expect(p.printed).toEqual([`publik self-test: ok nut-ai ${APP_VERSION}`])
   })
 })

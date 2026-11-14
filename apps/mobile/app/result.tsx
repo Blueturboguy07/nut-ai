@@ -3,7 +3,6 @@ import { useState } from 'react'
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +17,7 @@ import { healthScore } from '@nutai/totals'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
+import { openPublikLink } from '../src/inference/publik'
 import { fixScan, lookupOther, retryScan } from '../src/scan/orchestrator'
 import {
   answerQuestion,
@@ -87,10 +87,11 @@ export default function Result() {
           {phase.message}
         </Text>
         {/* The one link a failure may carry (publik API's top_up_url). The URL
-            was origin-checked when the failure was classified, never here. */}
+            was origin-checked when the failure was classified, and again by
+            openPublikLink, which opens it in the in-app browser sheet. */}
         {phase.action ? (
           <Pressable
-            onPress={() => void Linking.openURL(phase.action!.url)}
+            onPress={() => void openPublikLink(phase.action!.url)}
             style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
           >
             <Text style={[type.bodyStrong, { color: theme.bg }]}>{phase.action.label}</Text>

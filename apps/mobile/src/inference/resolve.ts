@@ -1,5 +1,7 @@
 import { cheapestModel, type ProviderId } from '@nutai/prompt'
+import { APP_STORE_BUILD } from '../build-flags'
 import { setting } from '../data/repo'
+import { ensureAiConsent } from './ai-consent'
 import { loadCredential } from './credentials'
 import type { Credential } from './pathA/client'
 import { loadPublikInstall, publikBuildConfig } from './publik'
@@ -17,6 +19,11 @@ import { asCredential, PUBLIK_MODEL_PICK_SETTING, publikScanModel } from './publ
  *
  * A user-entered key always wins: publik code never reads, writes or clears
  * the three vendor slots, and the vendor branch below is exactly what it was.
+ *
+ * Two refusals before any call: no consent for this destination (the person
+ * is asked once per provider, ai-consent.ts), and, in an App Store build, a
+ * saved Claude subscription token (Anthropic does not allow third-party apps
+ * to use those; an Anthropic API key works).
  */
 
 export type ProviderSetting = ProviderId | 'publik' | 'none' | ''
@@ -38,7 +45,7 @@ export interface Resolved {
   webSearch: boolean
 }
 
-export type ResolveFailure = { kind: 'no-key' | 'key-missing' | 'publik-disconnected' }
+export type ResolveFailure = { kind: 'no-key' | 'key-missing' | 'publik-disconnected' | 'consent-declined' }
 
 export type ResolveOutcome = { ok: true; value: Resolved } | { ok: false; error: ResolveFailure }
 
@@ -49,6 +56,7 @@ export async function resolveInference(): Promise<ResolveOutcome> {
   if (provider === 'publik') {
     const [cred, install] = await Promise.all([loadCredential('publik'), loadPublikInstall()])
     if (!cred || !install) return { ok: false, error: { kind: 'publik-disconnected' } }
+    if (!(await ensureAiConsent('publik'))) return { ok: false, error: { kind: 'consent-declined' } }
     const cfg = publikBuildConfig()
     const model = await publikScanModelSetting()
     return {
@@ -68,6 +76,8 @@ export async function resolveInference(): Promise<ResolveOutcome> {
 
   const credential = await loadCredential(provider)
   if (!credential) return { ok: false, error: { kind: 'key-missing' } }
+  if (APP_STORE_BUILD && credential.kind === 'oauth') return { ok: false, error: { kind: 'key-missing' } }
+  if (!(await ensureAiConsent(provider))) return { ok: false, error: { kind: 'consent-declined' } }
   const model = (await setting('provider_model')) || cheapestModel(provider).id
   return { ok: true, value: { dialect: provider, selected: provider, model, textModel: model, credential, metered: false, webSearch: true } }
 }

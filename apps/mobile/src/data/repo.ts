@@ -148,6 +148,24 @@ export async function recordConsent(key: string, detail: string): Promise<void> 
   await h.run('INSERT OR REPLACE INTO consents (key, granted, granted_at, detail) VALUES (?, 1, ?, ?)', [key, Date.now(), detail])
 }
 
+/** True when the user gave this consent. */
+export async function consentGiven(key: string): Promise<boolean> {
+  const h = await db()
+  const row = await h.get<{ granted: number }>('SELECT granted FROM consents WHERE key = ?', [key])
+  return row?.granted === 1
+}
+
+/** The birth year from onboarding, or null (not asked yet, or no profile). */
+export async function birthYearOnFile(): Promise<number | null> {
+  try {
+    const h = await db()
+    const row = await h.get<{ birth_year: number | null }>('SELECT birth_year FROM user_profile WHERE id = 1')
+    return typeof row?.birth_year === 'number' ? row.birth_year : null
+  } catch {
+    return null
+  }
+}
+
 /** Manual target override from the plan screen's pencil icons. */
 export async function overrideTargets(
   next: { targetKcal: number; macros: MacroTargets },

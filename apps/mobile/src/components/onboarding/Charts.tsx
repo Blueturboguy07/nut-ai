@@ -1,6 +1,7 @@
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Line as SvgLine } from 'react-native-svg'
 import { StyleSheet, Text, View } from 'react-native'
 import { useTheme } from '../../theme/ThemeProvider'
+import { APP_NAME } from '../../inference/publik-copy'
 import { radius, space, type } from '../../theme/tokens'
 
 /**
@@ -81,7 +82,7 @@ export function TrendComparisonChart({ gaining }: { gaining: boolean }) {
 
       <View style={styles.legendRow}>
         <View style={[styles.pill, { backgroundColor: theme.text }]}>
-          <Text style={[type.micro, { color: theme.bg }]}>Nut AI</Text>
+          <Text style={[type.micro, { color: theme.bg }]}>{APP_NAME}</Text>
         </View>
         <Text style={[type.caption, { color: '#E8615A' }]}>Without a plan</Text>
       </View>

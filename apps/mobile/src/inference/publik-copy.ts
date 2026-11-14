@@ -15,9 +15,11 @@
  * the link.
  */
 
+import identity from '../../app-identity.json'
 import type { ProvisionResult } from './publik-core'
 
-export const APP_NAME = 'Nut AI'
+/** The display name: ONE setting, `apps/mobile/app-identity.json` (app.config.ts reads it too). */
+export const APP_NAME: string = identity.displayName
 
 /** CONTRACT §12.1(b): the one-sentence justification, verbatim from the site. */
 export function whyItCostsSentence(app = APP_NAME): string {

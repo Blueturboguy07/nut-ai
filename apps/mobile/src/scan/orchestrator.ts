@@ -82,10 +82,14 @@ async function preprocess(photoUri: string): Promise<string> {
   return base64!
 }
 
+/** "Not now" on the AI consent question: nothing was sent. */
+const CONSENT_DECLINED_MESSAGE = 'Nothing was sent. Scans need your OK to send the photo to your AI provider; you get the question again with the next scan. Barcode, search and manual logging work without it.'
+
 /** The copy for "nothing to scan with", per feature. */
 function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'label' | 'receipt'): { message: string; failureKind: 'no-key' | 'key-invalid' } {
   if (err.kind === 'key-missing') return { message: 'Your saved key is missing. Re-enter it in Profile.', failureKind: 'key-invalid' }
   if (err.kind === 'publik-disconnected') return { message: DISCONNECTED_MESSAGE, failureKind: 'no-key' }
+  if (err.kind === 'consent-declined') return { message: CONSENT_DECLINED_MESSAGE, failureKind: 'no-key' }
   const publikHint = publikAvailable() ? ' Or turn on publik API in Profile — no key needed.' : ''
   const base =
     feature === 'scan'

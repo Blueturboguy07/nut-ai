@@ -6,6 +6,7 @@ import Storage from 'expo-sqlite/kv-store'
 import { currentVersion } from '@nutai/db-adapter'
 import { ONBOARDING_DONE_KEY } from '../onboarding/done-key'
 import { db } from './repo'
+import { APP_NAME } from '../inference/publik-copy'
 import {
   buildBackupPayload,
   importBackupPayload,
@@ -57,7 +58,7 @@ export async function exportAndShareBackup(): Promise<ExportResult> {
     await Sharing.shareAsync(file.uri, {
       mimeType: 'application/json',
       UTI: 'public.json',
-      dialogTitle: 'Export Nut AI data',
+      dialogTitle: `Export ${APP_NAME} data`,
     })
     shared = true
   }

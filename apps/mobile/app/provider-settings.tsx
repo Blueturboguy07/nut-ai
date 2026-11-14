@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { PROVIDER_MODELS, providersByPrice, type ProviderId } from '@nutai/prompt'
+import { PUBLIK_GATE_MODE } from '../src/build-flags'
 import { CredentialForm, PROVIDER_NAME } from '../src/components/CredentialForm'
 import { Icon } from '../src/components/Icon'
 import { explainProvision, PublikCard, PublikDisclosureBody } from '../src/components/PublikDisclosure'
@@ -15,10 +16,13 @@ import {
   publikAvailable,
   publikBuildConfig,
   publikChoice,
+  publikPlanAllowed,
+  publikSignedIn,
   refreshPublikWallet,
   setPublikChoice,
   signOutOfPublik,
 } from '../src/inference/publik'
+import { APP_NAME } from '../src/inference/publik-copy'
 import { PUBLIK_MODEL_PICK_SETTING, PUBLIK_MODELS, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
 import { publikScanModelSetting } from '../src/inference/resolve'
 import { useTheme } from '../src/theme/ThemeProvider'
@@ -38,7 +42,11 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
  * module's setChoice): picking publik API stores "publik", saving or picking
  * an own key stores "own_key", and "Ask again at the next start" clears it.
  * The install key is the app's publik sign-in, so the old Disconnect is now
- * "Sign out of publik": it revokes the key and shows Sign in with publik.
+ * "Sign out of publik": it forgets the key, then revokes it (best effort).
+ *
+ * The publik API chip and the plan card show only to an adult (the age from
+ * onboarding; publikPlanAllowed). In an optional build, a phone that has not
+ * signed in goes to Sign in with publik (app/publik-sign-in.tsx) first.
  */
 
 type Chip = ProviderId | 'publik'
@@ -71,8 +79,11 @@ export default function ProviderSettings() {
   const [publikError, setPublikError] = useState<string | null>(null)
   // Re-render after "Ask again at the next start" (publikChoice() is a cache, not state).
   const [, setChoiceRound] = useState(0)
+  const [planOk, setPlanOk] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
   const choice = publikChoice()
-  const publik = publikAvailable()
+  const publik = publikAvailable() && planOk
+  const optional = PUBLIK_GATE_MODE === 'optional'
 
   const loadPublik = useCallback(async () => {
     const [install, cred, wallet] = await Promise.all([loadPublikInstall(), loadCredential('publik'), loadPublikWallet()])
@@ -92,7 +103,14 @@ export default function ProviderSettings() {
   const refresh = useCallback(() => {
     void (async () => {
       const p = (await setting('provider')) as Chip | 'none' | ''
-      const active: Chip = p && p !== 'none' ? p : publik ? 'publik' : 'anthropic'
+      const [allowed, inNow] = await Promise.all([
+        publikPlanAllowed(),
+        publikSignedIn().catch(() => false),
+      ])
+      const offer = publikAvailable() && allowed
+      setPlanOk(offer)
+      setSignedIn(inNow)
+      const active: Chip = p && p !== 'none' ? p : offer ? 'publik' : 'anthropic'
       setProvider(active)
       // On publik the shown tier is the one a scan uses, not the raw
       // provider_model slot (older builds wrote the old default there).
@@ -108,11 +126,16 @@ export default function ProviderSettings() {
       setShowForm(!cred)
       void loadPublik()
     })()
-  }, [publik, loadPublik])
+  }, [loadPublik])
   useFocusEffect(refresh)
 
   function connect() {
     if (publikBusy) return
+    // Optional build: publik API only after Sign in with publik (it also asks for the plan).
+    if (optional && !signedIn) {
+      router.push('/publik-sign-in' as never)
+      return
+    }
     setPublikBusy(true)
     setPublikError(null)
     void (async () => {
@@ -136,7 +159,9 @@ export default function ProviderSettings() {
   function signOut() {
     Alert.alert(
       'Sign out of publik?',
-      "This phone's publik key is revoked and forgotten, and Nut AI asks you to sign in with publik again. Your logged data is not touched.",
+      optional
+        ? 'This phone forgets its publik key, and publik API stops on this phone until you sign in again. Your logged data is not touched.'
+        : `This phone forgets its publik key, and ${APP_NAME} asks you to sign in with publik again. Your logged data is not touched.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -144,8 +169,9 @@ export default function ProviderSettings() {
           style: 'destructive',
           onPress: () => {
             void (async () => {
-              await putSetting('provider', 'none')
-              await signOutOfPublik()
+              await putSetting('provider', 'none').catch(() => undefined)
+              await signOutOfPublik().catch(() => undefined)
+              refresh()
             })()
           },
         },
@@ -160,7 +186,7 @@ export default function ProviderSettings() {
     setShowForm(true)
   }
 
-  const chips: Chip[] = [...(publik ? (['publik'] as const) : []), ...providersByPrice()]
+  const chips: Chip[] = [...(publik || provider === 'publik' ? (['publik'] as const) : []), ...providersByPrice()]
   const chipLabel = (c: Chip) => (c === 'publik' ? 'publik API' : PROVIDER_NAME[c])
 
   return (
@@ -180,6 +206,10 @@ export default function ProviderSettings() {
               onPress={() => {
                 setProvider(p)
                 setPublikError(null)
+                if (p === 'publik' && optional && !signedIn) {
+                  router.push('/publik-sign-in' as never)
+                  return
+                }
                 if (p === 'publik') {
                   setMasked(null)
                   setShowForm(false)
@@ -366,12 +396,12 @@ export default function ProviderSettings() {
           </>
         ) : null}
 
-        {publik ? (
+        {publik && !optional ? (
           <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-            <Text style={[type.bodyStrong, { color: theme.text }]}>How Nut AI pays for AI</Text>
+            <Text style={[type.bodyStrong, { color: theme.text }]}>How {APP_NAME} pays for AI</Text>
             <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 18 }]}>
               {!choice
-                ? 'Nut AI asks again at the next start.'
+                ? `${APP_NAME} asks again at the next start.`
                 : choice === 'publik'
                   ? 'Your publik plan (Connect your plan).'
                   : 'Your own key.'}

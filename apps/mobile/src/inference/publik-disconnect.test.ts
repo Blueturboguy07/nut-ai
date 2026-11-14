@@ -13,6 +13,7 @@ const kv = new Map<string, string>()
 const creds = new Map<string, { kind: 'api_key'; value: string }>()
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => '11111111-2222-4333-8444-555555555555' }))
+vi.mock('expo-web-browser', () => ({ openBrowserAsync: async () => ({ type: 'cancel' }), dismissBrowser: () => undefined }))
 vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.2.0' } } }))
 vi.mock('react-native', () => ({
   Platform: { OS: 'android', Version: 35 },
@@ -99,6 +100,35 @@ describe('publik Disconnect and wallet refresh when publik never answers', () =>
     expect(done).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     await pending
+    expect(creds.has('publik')).toBe(false)
+    expect(secure.has('publik.install')).toBe(false)
+    expect(kv.has('publik.wallet')).toBe(false)
+  })
+
+  it('Sign out deletes the key on the phone first; the revoke is sent after, best effort', async () => {
+    let keyAtRevoke: boolean | null = null
+    let installAtRevoke: boolean | null = null
+    const watching = vi.fn((url: unknown, init: { signal?: AbortSignal }) => {
+      keyAtRevoke = creds.has('publik')
+      installAtRevoke = secure.has('publik.install')
+      return (silent as unknown as (u: unknown, i: { signal?: AbortSignal }) => Promise<Response>)(url, init)
+    }) as unknown as typeof fetch
+    const pending = disconnectPublik(watching)
+    await vi.advanceTimersByTimeAsync(0)
+    // The revoke is on its way, and the key is already gone from this phone.
+    expect(keyAtRevoke).toBe(false)
+    expect(installAtRevoke).toBe(false)
+    expect(creds.has('publik')).toBe(false)
+    await vi.advanceTimersByTimeAsync(ACCOUNT_CALL_TIMEOUT_MS)
+    await pending
+  })
+
+  it('an install record that cannot be read, and no network, never stop Sign out', async () => {
+    const failing = vi.fn(async () => {
+      throw new TypeError('Network request failed')
+    }) as unknown as typeof fetch
+    secure.set('publik.install', '{not json')
+    await disconnectPublik(failing)
     expect(creds.has('publik')).toBe(false)
     expect(secure.has('publik.install')).toBe(false)
     expect(kv.has('publik.wallet')).toBe(false)

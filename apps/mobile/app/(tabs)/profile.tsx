@@ -1,15 +1,26 @@
 import { router, useFocusEffect } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, Linking } from 'react-native'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { ProviderId } from '@nutai/prompt'
 import { availability, requestPermissions } from '../../src/health/healthkit'
 import { exportAndShareBackup, finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { currentGoal, resetEverything, setting, type CurrentGoal } from '../../src/data/repo'
 import { loadCredential, maskCredential } from '../../src/inference/credentials'
-import { loadPublikWallet, publikConnected, requestPublikSignIn } from '../../src/inference/publik'
+import { PUBLIK_GATE_MODE } from '../../src/build-flags'
+import {
+  countAppUse,
+  deletePublikAccount,
+  loadPublikWallet,
+  publikConnected,
+  publikSignedIn,
+  requestPublikSignIn,
+  setCountAppUse,
+  signOutOfPublik,
+} from '../../src/inference/publik'
 import { formatMicros } from '../../src/inference/publik-core'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -24,9 +35,11 @@ import { radius, space, type } from '../../src/theme/tokens'
  *   NO "Refer a friend and earn $10" — a referral bounty is a growth mechanic,
  *   and there is no money here to pay it with.
  *   NO "Upgrade to Family Plan", no Premium crown. There is no paid tier.
- *   NO Logout / Delete Account. There is no account and no server; a delete
- *     button that only clears local data should say exactly that, which is what
- *     "Erase all data" below does.
+ *   publik account: Sign in with publik (optional builds), Sign out, Delete
+ *     account (the publik account is deleted on publikhq.com, in the in-app
+ *     browser; the food log on this phone is kept or deleted, as the person
+ *     says) and Count app use. The food log itself has no account: it is only
+ *     on this phone, and "Start over" deletes it.
  *   NO Follow Us. A settings screen is not a marketing surface.
  */
 export default function Profile() {
@@ -39,6 +52,10 @@ export default function Profile() {
   const [diet, setDiet] = useState('')
   const [providerLabel, setProviderLabel] = useState('—')
   const [dataBusy, setDataBusy] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
+  const [countUse, setCountUse] = useState(true)
+  const [accountBusy, setAccountBusy] = useState(false)
+  const [round, setRound] = useState(0)
 
   useFocusEffect(
     useCallback(() => {
@@ -53,6 +70,13 @@ export default function Profile() {
         if (!alive) return
         setGoal(g)
         setDiet(d)
+        const [inNow, counting] = await Promise.all([
+          publikSignedIn().catch(() => false),
+          countAppUse().catch(() => true),
+        ])
+        if (!alive) return
+        setSignedIn(inNow)
+        setCountUse(counting)
         setHealthAvail(avail === 'available' ? 'available' : avail === 'not-ios' ? 'not-ios' : 'unavailable')
         if (!p || p === 'none') {
           setProviderLabel('Not connected')
@@ -82,8 +106,78 @@ export default function Profile() {
       return () => {
         alive = false
       }
-    }, []),
+    }, [round]),
   )
+
+  const optional = PUBLIK_GATE_MODE === 'optional'
+
+  function signOut() {
+    Alert.alert(
+      'Sign out of publik?',
+      optional
+        ? 'This phone forgets its publik key. Your food log stays on this phone.'
+        : `This phone forgets its publik key. Sign in again to use ${APP_NAME}. Your food log stays on this phone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          style: 'destructive',
+          onPress: () => {
+            setAccountBusy(true)
+            void signOutOfPublik()
+              .catch(() => undefined)
+              .finally(() => {
+                setAccountBusy(false)
+                setRound((n) => n + 1)
+              })
+          },
+        },
+      ],
+    )
+  }
+
+  function deleteAccount() {
+    if (accountBusy) return
+    Alert.alert(
+      'Delete your publik account?',
+      `Your publik account is one account for all publik apps, not only ${APP_NAME}. You delete it on publikhq.com, on the page that opens next. First, this phone signs out of publik.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', style: 'destructive', onPress: askFoodLog },
+      ],
+    )
+  }
+
+  function askFoodLog() {
+    Alert.alert(
+      'Also delete your food log?',
+      'Your meals, weights, goals and saved API keys are only on this phone. publik does not have them. You can keep them or delete them.',
+      [
+        { text: 'Keep food log', onPress: () => void finishDelete(false) },
+        { text: 'Delete food log', style: 'destructive', onPress: () => void finishDelete(true) },
+      ],
+    )
+  }
+
+  async function finishDelete(wipe: boolean) {
+    setAccountBusy(true)
+    try {
+      // The food log first: the publik sign-in can show again when the
+      // account page closes (deletePublikAccount), and nothing may delete a
+      // key that a new sign-in made.
+      if (wipe) await resetEverything().catch(() => undefined)
+      await deletePublikAccount().catch(() => undefined)
+    } finally {
+      setAccountBusy(false)
+    }
+    if (wipe && optional) router.replace('/onboarding')
+    else setRound((n) => n + 1)
+  }
+
+  function changeCountUse(on: boolean) {
+    setCountUse(on)
+    void setCountAppUse(on).catch(() => setCountUse(!on))
+  }
 
   function connectHealth() {
     if (healthBusy) return
@@ -125,7 +219,7 @@ export default function Profile() {
       const picked = await pickBackupFile()
       if (!picked.ok) {
         if (picked.reason !== 'cancelled') {
-          Alert.alert('Not a backup', "That doesn't look like a Nut AI backup file.")
+          Alert.alert('Not a backup', `That doesn't look like a ${APP_NAME} backup file.`)
         }
         return
       }
@@ -143,7 +237,7 @@ export default function Profile() {
                 try {
                   const outcome = await importBackup(picked.payload)
                   if (!outcome.ok) {
-                    Alert.alert('Cannot restore', 'This backup is from a newer version of Nut AI — update the app first.')
+                    Alert.alert('Cannot restore', `This backup is from a newer version of ${APP_NAME} — update the app first.`)
                     return
                   }
                   await finishRestore()
@@ -173,9 +267,10 @@ export default function Profile() {
       <Text style={[type.title, { color: theme.text }]}>Profile</Text>
 
       <View style={[styles.hero, { backgroundColor: theme.bgSunken }]}>
-        <Text style={[type.bodyStrong, { color: theme.text }]}>No account needed</Text>
+        <Text style={[type.bodyStrong, { color: theme.text }]}>Your food log stays on this phone</Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
-          Everything lives on this device. There is no sign-in, no server, and nothing to breach.
+          Meals, weights and goals are stored only on this device, and we keep no copy. A meal photo
+          goes to the AI provider you choose, so that it can read the photo.
         </Text>
       </View>
 
@@ -200,6 +295,24 @@ export default function Profile() {
 
       <Section title="AI provider">
         <Row label="Provider & key" value={providerLabel} onPress={() => router.push('/provider-settings' as never)} />
+      </Section>
+
+      <Section title="publik account">
+        {optional && !signedIn ? (
+          <Row label="Sign in with publik" value="" onPress={() => router.push('/publik-sign-in' as never)} />
+        ) : null}
+        {!optional || signedIn ? (
+          <Row label={accountBusy ? 'Working…' : 'Sign out'} value="" onPress={accountBusy ? undefined : signOut} />
+        ) : null}
+        <Row label="Delete account" value="" onPress={accountBusy ? undefined : deleteAccount} />
+        <View style={[styles.row, { borderBottomColor: theme.border }]}>
+          <Text style={[type.body, { color: theme.text, flex: 1 }]}>Count app use</Text>
+          <Switch accessibilityLabel="Count app use" value={countUse} onValueChange={changeCountUse} />
+        </View>
+        <Text style={[type.caption, { color: theme.textFaint, padding: space.lg, paddingTop: space.xs, lineHeight: 18 }]}>
+          When this is on, publik counts when {APP_NAME} opens and how long it stays open. The count
+          has no food data and no photos.{optional ? ' Nothing is counted before you sign in.' : ''}
+        </Text>
       </Section>
 
       <Section title="Apple Health">
@@ -252,16 +365,22 @@ export default function Profile() {
           onPress={() => {
             Alert.alert(
               'Erase everything and start over?',
-              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and signs this phone out of publik. It cannot be undone, and there is no backup on a server because there is no server of ours.',
+              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and signs this phone out of publik. You cannot undo it. We keep no copy of your food log, so export it first if you want to keep it.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
                   text: 'Erase and restart',
                   style: 'destructive',
                   onPress: () => {
-                    // The key is gone, so Sign in with publik shows again;
-                    // after it, the onboarding gate opens onboarding.
-                    void resetEverything().then(() => requestPublikSignIn())
+                    // Required mode: the key is gone, so Sign in with publik
+                    // shows again; after it, the onboarding gate opens
+                    // onboarding. Optional mode has no wall: onboarding now.
+                    void resetEverything()
+                      .catch(() => undefined)
+                      .then(() => {
+                        requestPublikSignIn()
+                        if (optional) router.replace('/onboarding')
+                      })
                   },
                 },
               ],
@@ -276,7 +395,7 @@ export default function Profile() {
       </Section>
 
       <Text style={[type.caption, { color: theme.textFaint, marginTop: space.xl, lineHeight: 19 }]}>
-        Nut AI's estimates are AI-generated approximations and may not be accurate. It is not a
+        {APP_NAME}'s estimates are AI-generated approximations and may not be accurate. It is not a
         medical device and does not diagnose, treat, cure or prevent any condition. Consult a
         registered dietitian or healthcare provider before making medical decisions.
       </Text>

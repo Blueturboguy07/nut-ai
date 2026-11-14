@@ -147,7 +147,7 @@ export function allowPublikOrigin(baseUrl: string | null): void {
   }
 }
 
-/** Only publikhq.com links (or the configured publik's) are ever handed to Linking.openURL. */
+/** Only publikhq.com links (or the configured publik's) are ever opened (in the in-app browser sheet). */
 export function isSafePublikLink(url: unknown): url is string {
   if (typeof url !== 'string') return false
   try {
@@ -489,27 +489,35 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
 //
 // publikhq.com's publik module (sdk/publik.ts.md) on a phone. Every app on
 // publik opens with Sign in with publik; this is that gate, with the same
-// screens, words and endpoints. At start, before any screen of the app,
-// `ensureSignedIn(ui, device)`:
+// screens, words and endpoints. `gateAtStart(ui, device, mode)` runs at start:
+//
+// required (the default build): `ensureSignedIn(ui, device)`, before any
+// screen of the app:
 //   1. loads or provisions this phone's publik key (POST /api/v1/installs);
 //   2. shows Sign in with publik until GET /api/v1/wallet says "claimed" (no
-//      other way past it);
-//   3. asks once how the app pays for AI and stores the answer;
+//      other way past it while publik answers);
+//   3. asks once how the app pays for AI and stores the answer (never for a
+//      minor or an unknown age: then the onboarding AI step asks);
 //   4. starts usage counting: app_opened now, active_session every 30
 //      minutes (POST /api/v1/telemetry).
+// optional (EXPO_PUBLIC_PUBLIK_GATE_MODE=optional): no wall. The app asks
+// for sign-in at the AI plan choice or in Profile, and counts usage only
+// after sign-in.
+//
 // What a phone changes: the key and the choice live in SecureStore
 // (`key.publik`, `publik.install`), not in a credential file; "Sign in with
-// publik" opens the claim link in the system browser, and the gate checks
-// GET /wallet every 3 s while the app is in the foreground and at once when
-// the person comes back from the browser; the switches (PUBLIK_SELF_TEST,
-// DO_NOT_TRACK, PUBLIK_API_BASE_URL...) are launch values: an environment
-// variable or a launch argument (modules/publik-launch). publik.ts gives the
-// gate the phone as a GateDevice.
+// publik" opens the claim link in an in-app browser sheet, and the gate
+// checks GET /wallet every 3 s while the app is in the foreground and at once
+// when the person comes back; it closes the sheet when publik says
+// "claimed". A phone that signed in before opens without a connection. The
+// test switches (PUBLIK_SELF_TEST, PUBLIK_API_BASE_URL...) exist only in a CI
+// test build (modules/publik-launch). publik.ts gives the gate the phone as a
+// GateDevice.
 
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.1'
+export const APP_VERSION = '0.1.2'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -537,10 +545,16 @@ export interface GateScreen {
   note: string | null
   buttons: { action: GateAction; label: string }[]
 }
-/** show(): draw the screen and resolve with the button pressed. When `signal` aborts, the gate has moved on (the promise may stay pending). */
+/**
+ * show(): draw the screen and resolve with the button pressed. When `signal`
+ * aborts, the gate has moved on (the promise may stay pending). openUrl():
+ * open a publik page (sign in, get a plan) in the in-app browser sheet.
+ * closeBrowser(): publik saw the sign-in or the plan; close that sheet.
+ */
 export interface GateUI {
   show(screen: GateScreen, signal: AbortSignal): Promise<GateAction>
   openUrl(url: string): void
+  closeBrowser?(): void
 }
 export interface GateResult {
   key: string
@@ -548,6 +562,16 @@ export interface GateResult {
   choice: Choice | null
   /** True when the person answered the plan screen in this run (not a stored answer). */
   chosen: boolean
+  /** True when publik did not answer and the phone opened on its earlier sign-in. */
+  offline: boolean
+}
+
+/** What this phone keeps for the gate: the key, its claim link, the plan choice, and whether it signed in before. */
+export interface StoredGateKey {
+  key: string
+  claimUrl: string | null
+  choice: Choice | null
+  claimed: boolean
 }
 
 /** The phone, as the gate needs it. publik.ts builds the real one; the tests build a fake. */
@@ -555,21 +579,25 @@ export interface GateDevice {
   cfg: PublikBuildConfig
   os: 'ios' | 'android'
   fetch: typeof fetch
-  /** The stored key, its claim link and the plan choice; null when this phone holds no key. */
-  load: () => Promise<{ key: string; claimUrl: string | null; choice: Choice | null } | null>
+  /** The stored key; null when this phone holds no key OR the store cannot be read (then the gate mints a new key, no lockout). */
+  load: () => Promise<StoredGateKey | null>
   /** POST /api/v1/installs and store the key (publik.ts connectPublik). */
   provision: () => Promise<ProvisionResult>
-  /** Forget a key that publik does not know any more (401). */
+  /** Forget a key that publik does not know any more (401 with publik's JSON error). */
   forget: () => Promise<void>
   saveChoice: (choice: Choice) => Promise<void>
-  /** Keep the settings card's wallet snapshot in step with the gate's GET /wallet. */
+  /** Keep the settings card's wallet snapshot (and the stored claim state) in step with the gate's GET /wallet. */
   noteWallet: (snapshot: PublikWallet) => Promise<void>
+  /** False for a minor or an unknown age: the plan screen is never shown then. */
+  planAllowed: () => Promise<boolean>
+  /** Profile → publik account → Count app use. */
+  countUse: () => Promise<boolean>
   /**
    * Wait `ms` of foreground time (null: no timer). Resolves 'resumed' at once
    * when the app comes back to the foreground, and 'timer' when `signal` aborts.
    */
   wait: (ms: number | null, signal: AbortSignal) => Promise<'timer' | 'resumed'>
-  /** A launch value: an environment variable or a launch argument. */
+  /** A launch value of a CI test build (always null in a release build). */
   value: (name: string) => string | null
   /** The self-test: one line on stdout, then the app exits. */
   printAndExit: (line: string) => void
@@ -578,7 +606,7 @@ export interface GateDevice {
   log: (line: string) => void
 }
 
-/** GET /wallet answered, but without a body the gate can read. */
+/** GET /wallet answered with publik's JSON: a wallet, or publik's error (401: the key is gone). */
 export interface WalletRead {
   status: number
   wallet: GateWallet | null
@@ -586,7 +614,11 @@ export interface WalletRead {
   message: string | null
 }
 
-/** No answer from publik: no connection, or no answer within ACCOUNT_CALL_TIMEOUT_MS. */
+/**
+ * No answer from publik: no connection, no answer within
+ * ACCOUNT_CALL_TIMEOUT_MS, a page that is not publik's JSON (a captive
+ * portal, a proxy), 408, 429 or 5xx.
+ */
 export class PublikUnreachable extends Error {
   constructor() {
     super(UNREACHABLE_MESSAGE)
@@ -606,7 +638,19 @@ export function gateWalletFromJson(b: Record<string, any>): GateWallet {
   }
 }
 
-/** GET /api/v1/wallet with the install key. Throws PublikUnreachable when publik does not answer. */
+/** publik's error body: `{ "error": { "type": ..., "message": ... } }`. Null when the body is not one. */
+function publikErrorMessage(b: Record<string, any>): string | null {
+  const e = b.error
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return null
+  if (typeof e.type !== 'string' && typeof e.message !== 'string') return null
+  return typeof e.message === 'string' ? e.message : ''
+}
+
+/**
+ * GET /api/v1/wallet with the install key. Throws PublikUnreachable unless
+ * publik itself answered: a 401 counts (the key is gone) only with publik's
+ * JSON error, so a captive portal or a proxy never signs the phone out.
+ */
 export async function readWallet(d: Pick<GateDevice, 'cfg' | 'fetch'>, key: string): Promise<WalletRead> {
   const deadline = startDeadline(ACCOUNT_CALL_TIMEOUT_MS)
   try {
@@ -618,16 +662,21 @@ export async function readWallet(d: Pick<GateDevice, 'cfg' | 'fetch'>, key: stri
     } catch {
       throw new PublikUnreachable()
     }
-    let b: Record<string, any> = {}
+    if (res.status === 408 || res.status === 429 || res.status >= 500) throw new PublikUnreachable()
+    let b: Record<string, any> | null = null
     try {
       const parsed = await deadline.within(res.json())
-      if (parsed && typeof parsed === 'object') b = parsed as Record<string, any>
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) b = parsed as Record<string, any>
     } catch {
-      if (deadline.timedOut) throw new PublikUnreachable()
+      /* not JSON: not publik's answer */
     }
-    if (!res.ok || typeof b.claim_state !== 'string') {
-      return { status: res.status, wallet: null, snapshot: null, message: typeof b.error?.message === 'string' ? b.error.message : null }
+    if (!b || deadline.timedOut) throw new PublikUnreachable()
+    const err = publikErrorMessage(b)
+    if (!res.ok) {
+      if (err === null) throw new PublikUnreachable()
+      return { status: res.status, wallet: null, snapshot: null, message: err || null }
     }
+    if (typeof b.claim_state !== 'string') throw new PublikUnreachable()
     const wallet = gateWalletFromJson(b)
     return { status: res.status, wallet, snapshot: walletFromJson(b, wallet.claimState), message: null }
   } finally {
@@ -731,20 +780,64 @@ async function ask(ui: GateUI, screen: GateScreen, d: GateDevice, watch?: Watch)
   }
 }
 
-/** The gate (see the top of this section). Resolves once the person is signed in; `choice` is null when USES_AI is false. */
+/** A signed-in phone with no answer from publik: what the gate knows without one. */
+function offlineWallet(): GateWallet {
+  return { claimState: 'claimed', claimUrl: null, handle: null, plan: { kind: 'none', label: null }, balanceMicros: 0, topUpUrl: null }
+}
+
+/** The stored key, or null: a store that cannot be read counts as no key (the gate mints a new one), never as a lockout. */
+async function loadStored(d: GateDevice): Promise<StoredGateKey | null> {
+  try {
+    return await d.load()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The gate (see the top of this section). Resolves once the person is signed
+ * in; `choice` is null when USES_AI is false or the plan screen was not
+ * shown. It never freezes: every write is inside a try, and every failure is
+ * the Retry screen.
+ */
 export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateResult> {
   if (d.value('PUBLIK_SELF_TEST')) {
     d.printAndExit(await selfTest(d))
     return new Promise<GateResult>(() => {})
   }
   const origin = originOf(d.cfg.baseUrl)
+  // The page open in the in-app browser sheet; it closes when publik shows
+  // that the person finished there (signed in, or got the plan).
+  let sheet: 'sign_in' | 'plan' | null = null
+  const open = (url: string, page: 'sign_in' | 'plan') => {
+    try {
+      ui.openUrl(url)
+      sheet = page
+    } catch {
+      /* no browser: the screen stays, and Retry works */
+    }
+  }
+  const close = () => {
+    if (!sheet) return
+    sheet = null
+    try {
+      ui.closeBrowser?.()
+    } catch {
+      /* nothing open */
+    }
+  }
+  const pass = (stored: StoredGateKey, wallet: GateWallet, choice: Choice | null, chosen: boolean, offline: boolean): GateResult => {
+    close()
+    startTelemetry(d)
+    return { key: stored.key, wallet, choice, chosen, offline }
+  }
   let signNote: string | null = null
   let signPoll = true
   let planNote: string | null = null
   let planPoll = false
   let refused = 0
   for (;;) {
-    let stored = await d.load()
+    let stored = await loadStored(d)
     if (!stored) {
       // A store that refuses the key (SecureStore throws) is a Retry screen too, not a loop.
       const p = await d.provision().catch(() => null)
@@ -752,7 +845,7 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
         await ask(ui, gateScreen('unreachable', null, null, provisionGateMessage(p, d.cfg)), d)
         continue
       }
-      stored = p ? await d.load() : null
+      stored = p ? await loadStored(d) : null
       if (!stored) {
         await ask(ui, gateScreen('unreachable', null, null, KEEP_KEY_FAILED), d)
         continue
@@ -762,13 +855,15 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
     try {
       r = await readWallet(d, stored.key)
     } catch {
+      // publik did not answer. A phone that signed in before opens on that sign-in.
+      if (stored.claimed) return pass(stored, offlineWallet(), USES_AI ? stored.choice : null, false, true)
       await ask(ui, gateScreen('unreachable', null), d)
       continue
     }
     if (r.status === 401) {
-      // The key is gone (revoked): forget it and provision again, once; a
-      // second 401 in a row waits for Retry instead of looping.
-      await d.forget()
+      // publik says the key is gone (revoked): forget it and provision again,
+      // once; a second 401 in a row waits for Retry instead of looping.
+      await d.forget().catch(() => undefined)
       refused += 1
       if (refused < 2) continue
       refused = 0
@@ -785,21 +880,24 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
     if (w.claimState !== 'claimed') {
       const a = await ask(ui, gateScreen('sign_in', w, signNote), d, { key: stored.key, until: (x) => x.claimState === 'claimed', poll: signPoll })
       if (a === 'sign_in') {
-        ui.openUrl(w.claimUrl ?? stored.claimUrl ?? `${origin}/wallet`)
+        open(w.claimUrl ?? stored.claimUrl ?? `${origin}/wallet`, 'sign_in')
         signNote = SIGN_IN_WAITING
         signPoll = true
       }
+      if (a === 'done') close()
       if (a === 'timeout') {
         signNote = SIGN_IN_TIMEOUT
         signPoll = false
       }
       continue
     }
+    if (sheet === 'sign_in') close()
     let choice: Choice | null = USES_AI ? stored.choice : null
     let chosen = false
-    if (USES_AI && !choice) {
+    if (USES_AI && !choice && (await d.planAllowed().catch(() => false))) {
       if (w.plan.kind !== 'none' || w.balanceMicros > 0) {
         // The plan is there: Connect your plan.
+        if (sheet === 'plan') close()
         planNote = null
         planPoll = false
       }
@@ -812,23 +910,40 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
       planNote = null
       planPoll = false
       if (a === 'get_plan') {
-        ui.openUrl(w.topUpUrl ?? `${origin}/wallet`)
+        open(w.topUpUrl ?? `${origin}/wallet`, 'plan')
         planNote = PLAN_WAITING
         planPoll = true
       }
+      if (a === 'done') close()
       if (a === 'timeout') planNote = PLAN_TIMEOUT
       // "done": the plan is there; the next screen is Connect your plan.
       if (a !== 'connect' && a !== 'own_key') continue
       choice = a === 'connect' ? 'publik' : 'own_key'
-      await d.saveChoice(choice)
       chosen = true
+      // A store that refuses the choice: this run uses it, the next start asks again.
+      await d.saveChoice(choice).catch(() => undefined)
     }
-    startTelemetry(d)
-    return { key: stored.key, wallet: w, choice, chosen }
+    return pass(stored, w, choice, chosen, false)
   }
 }
 
-/** Builder check, run by the BUILT app: PUBLIK_SELF_TEST=1 makes ensureSignedIn() print this line and exit. */
+/**
+ * The gate at app start. required: ensureSignedIn() before any screen.
+ * optional: no wall and no screen (null); usage counting starts only when
+ * this phone signed in before. The self-test runs in both modes.
+ */
+export async function gateAtStart(ui: GateUI, d: GateDevice, mode: 'required' | 'optional'): Promise<GateResult | null> {
+  if (mode === 'required') return ensureSignedIn(ui, d)
+  if (d.value('PUBLIK_SELF_TEST')) {
+    d.printAndExit(await selfTest(d))
+    return new Promise<GateResult>(() => {})
+  }
+  const stored = await loadStored(d)
+  if (stored?.claimed) startTelemetry(d)
+  return null
+}
+
+/** Builder check, run by the BUILT app: PUBLIK_SELF_TEST=1 makes the gate print this line and exit. */
 export async function selfTest(d: GateDevice): Promise<string> {
   try {
     const p = await d.provision()
@@ -844,12 +959,18 @@ export async function selfTest(d: GateDevice): Promise<string> {
 // ---------- usage counting: publikhq.com/skills/telemetry.md sections 3-5 ----------
 
 let telemetryTimer: ReturnType<typeof setInterval> | null = null
+let telemetryDevice: GateDevice | null = null
 
-/** Off with DO_NOT_TRACK (anything but empty, 0 or false) or PUBLIK_TELEMETRY=0/false/off. */
-export function usageOff(value: (name: string) => string | null): boolean {
-  const dnt = (value('DO_NOT_TRACK') ?? '').trim().toLowerCase()
+/**
+ * Off when the person turned off Profile → publik account → Count app use
+ * (or the setting cannot be read), and in a test build with DO_NOT_TRACK
+ * (anything but empty, 0 or false) or PUBLIK_TELEMETRY=0/false/off.
+ */
+export async function usageOff(d: Pick<GateDevice, 'value' | 'countUse'>): Promise<boolean> {
+  const dnt = (d.value('DO_NOT_TRACK') ?? '').trim().toLowerCase()
   if (dnt !== '' && dnt !== '0' && dnt !== 'false') return true
-  return ['0', 'false', 'off'].includes((value('PUBLIK_TELEMETRY') ?? '').trim().toLowerCase())
+  if (['0', 'false', 'off'].includes((d.value('PUBLIK_TELEMETRY') ?? '').trim().toLowerCase())) return true
+  return !(await d.countUse().catch(() => false))
 }
 
 /**
@@ -863,8 +984,8 @@ export async function sendEvent(d: GateDevice, event: 'app_opened' | 'active_ses
     if (d.value('PUBLIK_TELEMETRY_DEBUG') === '1') d.log(`publik-telemetry: ${event} -> ${String(result)}`)
   }
   try {
-    if (usageOff((name) => d.value(name))) return say('off (opt-out)')
-    const key = (await d.load())?.key
+    if (await usageOff(d)) return say('off (opt-out)')
+    const key = (await loadStored(d))?.key
     const body = { v: 1, app: APP_SLUG, install_id: await d.telemetryInstallId(), event, app_version: APP_VERSION.replace(/^v/i, ''), os: d.os }
     const deadline = startDeadline(5_000)
     try {
@@ -885,16 +1006,33 @@ export async function sendEvent(d: GateDevice, event: 'app_opened' | 'active_ses
   }
 }
 
-/** Called by ensureSignedIn(). app_opened now, active_session every 30 minutes; never fails the app, never blocks. */
+function armTelemetry(d: GateDevice): void {
+  const s = Number(d.value('PUBLIK_TELEMETRY_INTERVAL_SECONDS')) // test builds only
+  telemetryTimer = setInterval(() => void sendEvent(d, 'active_session'), (s >= 1 && s <= 86_400 ? s : TELEMETRY_INTERVAL_SECONDS) * 1000)
+}
+
+/** Called by the gate after sign-in. app_opened now, active_session every 30 minutes; never fails the app, never blocks. */
 export function startTelemetry(d: GateDevice): void {
   if (telemetryTimer) return
-  const s = Number(d.value('PUBLIK_TELEMETRY_INTERVAL_SECONDS')) // tests only
-  telemetryTimer = setInterval(() => void sendEvent(d, 'active_session'), (s >= 1 && s <= 86_400 ? s : TELEMETRY_INTERVAL_SECONDS) * 1000)
+  telemetryDevice = d
+  armTelemetry(d)
   void sendEvent(d, 'app_opened')
 }
 
-/** Sign out (the gate runs again) and tests. */
-export function stopTelemetry(): void {
+/** The app went to the background: the timer stops (no event while the app is not in use). */
+export function pauseTelemetry(): void {
   if (telemetryTimer) clearInterval(telemetryTimer)
   telemetryTimer = null
+}
+
+/** Back in the foreground: the timer runs again (no second app_opened). Nothing when usage counting never started. */
+export function resumeTelemetry(): void {
+  if (!telemetryDevice || telemetryTimer) return
+  armTelemetry(telemetryDevice)
+}
+
+/** Sign out, account deletion and tests: the timer stops, and only a new sign-in starts it again. */
+export function stopTelemetry(): void {
+  pauseTelemetry()
+  telemetryDevice = null
 }

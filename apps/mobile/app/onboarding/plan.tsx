@@ -22,6 +22,7 @@ import {
   useAnswers,
 } from '../../src/onboarding/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { radius, space, type } from '../../src/theme/tokens'
 
 /**
@@ -229,7 +230,7 @@ export default function PlanScreen() {
         </View>
 
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.xl, lineHeight: 19 }]}>
-          These are estimates from population equations, not measurements of you. Nut AI is not a
+          These are estimates from population equations, not measurements of you. {APP_NAME} is not a
           medical device. Adjust anything that does not fit, and talk to a dietitian or doctor
           before making medical decisions.
         </Text>

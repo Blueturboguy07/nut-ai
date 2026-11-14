@@ -2,18 +2,23 @@ import * as Crypto from 'expo-crypto'
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import Storage from 'expo-sqlite/kv-store'
-import { AppState, Linking, Platform } from 'react-native'
+import * as WebBrowser from 'expo-web-browser'
+import { AppState, Platform } from 'react-native'
 import { launchValue, printLineAndExit } from '../../modules/publik-launch'
 import buildConfig from '../../publik-build.json'
+import { BUILD_ENV_OVERRIDES, PUBLIK_GATE_MODE } from '../build-flags'
 import { clearCredential, loadCredential, saveCredential } from './credentials'
 import {
   allowPublikOrigin,
   emptyWallet,
   ensureSignedIn,
   fetchWallet,
+  gateAtStart,
   isSafePublikLink,
   isUsableAppToken,
+  pauseTelemetry,
   provision,
+  resumeTelemetry,
   revokeInstall,
   stopTelemetry,
   type Choice,
@@ -25,6 +30,7 @@ import {
   type PublikInstall,
   type PublikWallet,
   type PublikWalletPatch,
+  type StoredGateKey,
 } from './publik-core'
 
 /**
@@ -51,17 +57,21 @@ import {
 const INSTALL_KEY = 'publik.install'
 const WALLET_KEY = 'publik.wallet'
 const TELEMETRY_ID_KEY = 'publik.telemetry_install_id'
+/** Profile → publik account → Count app use: '0' is off; anything else (or nothing) is on. */
+const COUNT_USE_KEY = 'publik.count_use'
+/** publik's account deletion page (Profile → publik account → Delete account). */
+export const PUBLIK_DELETE_ACCOUNT_URL = 'https://publikhq.com/settings/profile#delete-account-title'
 
 /** The gate's plan choice as it last read or wrote it; screens read it without a SecureStore round trip. */
 let choiceCache: Choice | null = null
 
 /**
- * The test hook of the publik module: PUBLIK_API_BASE_URL, an environment
- * variable or a launch argument of THIS launch (iOS: `SIMCTL_CHILD_` env or
+ * The test hook of the publik module, in a CI test build only (build-flags.ts
+ * PUBLIK_TEST_HOOKS): PUBLIK_API_BASE_URL, an environment variable or a
+ * launch argument of THIS launch (iOS: `SIMCTL_CHILD_` env or
  * `-PUBLIK_API_BASE_URL <url>`; Android: `am start -e PUBLIK_API_BASE_URL
- * <url>`, debuggable builds only), points the whole module at another publik,
- * for example the blind test's fake one. Read once per launch; nothing in the
- * app can set it.
+ * <url>`), points the whole module at another publik, for example the blind
+ * test's fake one. Read once per launch. A release build reads nothing.
  */
 const LAUNCH_BASE_URL = launchValue('PUBLIK_API_BASE_URL')
 
@@ -69,7 +79,9 @@ export function publikBuildConfig(): PublikBuildConfig {
   // Then the dev override for a preview gateway, inlined by Metro at bundle
   // time. No env override exists for the token: it is a file so an Xcode GUI
   // build (which does not inherit the shell) cannot silently differ.
-  const baseUrl = LAUNCH_BASE_URL || process.env.EXPO_PUBLIC_PUBLIK_API_BASE_URL || buildConfig.baseUrl
+  // A release build ignores both (BUILD_ENV_OVERRIDES is false there).
+  const devBase = BUILD_ENV_OVERRIDES ? process.env.EXPO_PUBLIC_PUBLIK_API_BASE_URL : undefined
+  const baseUrl = LAUNCH_BASE_URL || devBase || buildConfig.baseUrl
   return { ...buildConfig, baseUrl }
 }
 
@@ -185,14 +197,23 @@ async function forgetPublikLocally(): Promise<void> {
   choiceCache = null
 }
 
-/** Revoke on the server (best effort), then forget everything locally. */
+/**
+ * Sign out on this phone. In this order: the key into memory, the local
+ * copies deleted, usage counting stopped, and only then the revoke on the
+ * server (best effort, at most ACCOUNT_CALL_TIMEOUT_MS; publik's idle sweep
+ * revokes a key it never hears from). No answer from publik can keep the key
+ * on the phone.
+ */
 export async function disconnectPublik(fetchImpl: typeof fetch = fetch): Promise<void> {
-  const cred = await loadCredential('publik')
+  const cred = await loadCredential('publik').catch(() => null)
   const install = await loadPublikInstall()
-  // Best effort, at most ACCOUNT_CALL_TIMEOUT_MS: the idle sweep revokes a
-  // key server-side eventually, so the phone forgets it whatever the answer.
-  if (cred && install) await revokeInstall(install.baseUrl, cred.value, fetchImpl)
-  await forgetPublikLocally()
+  try {
+    await forgetPublikLocally()
+  } catch {
+    /* a store that cannot be cleared: the revoke below still ends the key */
+  }
+  stopTelemetry()
+  if (cred && install) await revokeInstall(install.baseUrl, cred.value, fetchImpl).catch(() => undefined)
 }
 
 /** GET /wallet → snapshot. Also notices a claim that happened on the site. */
@@ -259,15 +280,45 @@ export async function setPublikChoice(choice: Choice | null): Promise<void> {
   if (install && (install.choice ?? null) !== choice) await savePublikInstall({ ...install, choice })
 }
 
-async function loadGateCredential(): Promise<{ key: string; claimUrl: string | null; choice: Choice | null } | null> {
+/** The gate's view of the stored key. A store that cannot be read is "no key" (the gate mints a new one), never a lockout. */
+async function loadGateCredential(): Promise<StoredGateKey | null> {
   try {
     const [cred, install] = await Promise.all([loadCredential('publik'), loadPublikInstall()])
     if (!cred || !install || !cred.value.startsWith('pk_')) return null
     choiceCache = install.choice ?? null
-    return { key: cred.value, claimUrl: install.claimUrl, choice: install.choice ?? null }
+    return { key: cred.value, claimUrl: install.claimUrl, choice: install.choice ?? null, claimed: install.claimState === 'claimed' }
   } catch {
     return null
   }
+}
+
+/** True when this phone holds a key and signed in to publik with it (as last seen). */
+export async function publikSignedIn(): Promise<boolean> {
+  return Boolean((await loadGateCredential())?.claimed)
+}
+
+/** Profile → publik account → Count app use. On unless the person turned it off. */
+export async function countAppUse(): Promise<boolean> {
+  return (await Storage.getItem(COUNT_USE_KEY)) !== '0'
+}
+
+export async function setCountAppUse(on: boolean): Promise<void> {
+  await Storage.setItem(COUNT_USE_KEY, on ? '1' : '0')
+  if (!on) pauseTelemetry()
+  else resumeTelemetry()
+}
+
+/**
+ * Is the plan screen allowed on this phone? Never for a minor or an unknown
+ * age (src/onboarding/adult.ts). The UI layer registers the check, because
+ * the age lives in the app's database, which this file does not open.
+ */
+let planAllowedCheck: () => Promise<boolean> = async () => false
+export function setPublikPlanAllowedCheck(check: () => Promise<boolean>): void {
+  planAllowedCheck = check
+}
+export async function publikPlanAllowed(): Promise<boolean> {
+  return planAllowedCheck().catch(() => false)
 }
 
 /** The gate's GET /wallet, folded into the snapshot the settings card shows. */
@@ -329,10 +380,41 @@ function waitInForeground(ms: number | null, signal: AbortSignal): Promise<'time
   })
 }
 
-/** Opens a publik link (sign in, get a plan) in the system browser. */
-export function openPublikLink(url: string): void {
+/**
+ * Opens a publik page (sign in, get a plan, delete account) in an in-app
+ * browser sheet (SFSafariViewController on iOS, a Custom Tab on Android),
+ * never the Safari app. Resolves when the sheet closes.
+ */
+export async function openPublikLink(url: string): Promise<void> {
   if (!isSafePublikLink(url)) return
-  void Linking.openURL(url).catch(() => undefined)
+  try {
+    await WebBrowser.openBrowserAsync(url, { dismissButtonStyle: 'close', readerMode: false })
+  } catch {
+    /* a sheet is already open, or no browser: the gate screen stays, with Retry */
+  }
+}
+
+/** publik saw the sign-in or the plan: close the sheet (iOS; an Android Custom Tab closes when the person comes back). */
+export function closePublikLink(): void {
+  // A throw (no such call on this platform) and a rejection (nothing open) both end here.
+  void Promise.resolve()
+    .then(() => WebBrowser.dismissBrowser())
+    .catch(() => undefined)
+}
+
+/** Usage counting stops while the app is in the background, and runs again in the foreground. */
+let appStateWatched = false
+function watchAppState(): void {
+  if (appStateWatched) return
+  appStateWatched = true
+  try {
+    AppState.addEventListener('change', (state) => {
+      if (state === 'background') pauseTelemetry()
+      else if (state === 'active') resumeTelemetry()
+    })
+  } catch {
+    appStateWatched = false
+  }
 }
 
 function phoneDevice(): GateDevice {
@@ -347,6 +429,8 @@ function phoneDevice(): GateDevice {
     forget: forgetPublikLocally,
     saveChoice: (choice) => setPublikChoice(choice),
     noteWallet: noteGateWallet,
+    planAllowed: publikPlanAllowed,
+    countUse: countAppUse,
     wait: waitInForeground,
     value: launchValue,
     printAndExit: printLineAndExit,
@@ -355,8 +439,19 @@ function phoneDevice(): GateDevice {
   }
 }
 
-/** The gate, at app start, before any screen of the app (app/_layout.tsx, src/components/PublikGate.tsx). */
-export function runPublikGate(ui: GateUI): Promise<GateResult> {
+/**
+ * The gate at app start (app/_layout.tsx → src/components/PublikGate.tsx).
+ * required: Sign in with publik before any screen; optional: null at once
+ * (no wall, usage counting only for a phone that signed in before).
+ */
+export function runPublikGate(ui: GateUI): Promise<GateResult | null> {
+  watchAppState()
+  return gateAtStart(ui, phoneDevice(), PUBLIK_GATE_MODE)
+}
+
+/** Sign in with publik when the person asks (optional mode: the AI plan choice, Profile). */
+export function runPublikSignIn(ui: GateUI): Promise<GateResult> {
+  watchAppState()
   return ensureSignedIn(ui, phoneDevice())
 }
 
@@ -376,8 +471,22 @@ export function requestPublikSignIn(): void {
   signOutListeners.forEach((listener) => listener())
 }
 
-/** Profile → AI provider → Sign out of publik: revoke the key, forget it, and show the gate again. */
+/** Sign out of publik: delete the key on this phone, stop usage counting, revoke (best effort), then the gate again. */
 export async function signOutOfPublik(): Promise<void> {
+  stopTelemetry()
   await disconnectPublik()
+  requestPublikSignIn()
+}
+
+/**
+ * Profile → publik account → Delete account, after the person confirmed:
+ * sign this phone out (local first), then open publik's account deletion
+ * page in the in-app browser. The publik account itself is deleted there,
+ * by the person, for every publik app. Resolves when the sheet closes.
+ */
+export async function deletePublikAccount(): Promise<void> {
+  stopTelemetry()
+  await disconnectPublik()
+  await openPublikLink(PUBLIK_DELETE_ACCOUNT_URL)
   requestPublikSignIn()
 }

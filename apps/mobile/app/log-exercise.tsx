@@ -286,7 +286,9 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
       setError(
         r.error.kind === 'publik-disconnected'
           ? DISCONNECTED_MESSAGE
-          : r.error.kind === 'key-missing'
+          : r.error.kind === 'consent-declined'
+            ? 'Nothing was sent. Describing a workout needs your OK to send the text to your AI provider. Or use Run, Weight lifting or Manual instead.'
+            : r.error.kind === 'key-missing'
             ? 'Your saved key is missing. Re-enter it in Profile.'
             : `Describing a workout needs ${publikAvailable() ? 'publik API or ' : ''}an AI key — connect one in Profile, or use Run, Weight lifting or Manual instead.`,
       )

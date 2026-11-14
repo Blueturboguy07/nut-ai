@@ -1,15 +1,23 @@
-# Sign in with publik: the unit tests, then the two test builds of the phone app.
+# Sign in with publik: the unit tests, then the test builds of the phone app.
 #
-#   ios-sim-app        NutAI.app for the iOS SIMULATOR (arm64, Release: the JS
-#                      bundle is inside), zipped. No certificate and no team:
-#                      only Xcode's ad-hoc "Sign to Run Locally" signature,
-#                      because the simulator keychain (SecureStore, where the
-#                      app keeps its publik key) refuses an app with no
-#                      signature. The job also runs the publik self-test on a
-#                      simulator.
-#   android-debug-apk  a test APK: the release variant (the JS bundle is inside,
-#                      no Metro, no dev launcher), debuggable, signed with the
-#                      debug key, cleartext allowed for a local fake publik.
+#   ios-sim-app           NutAI.app for the iOS SIMULATOR (arm64, Release: the
+#                         JS bundle is inside), PUBLIK_GATE_MODE=required (the
+#                         default), zipped. No certificate and no team: only
+#                         Xcode's ad-hoc "Sign to Run Locally" signature,
+#                         because the simulator keychain (SecureStore, where
+#                         the app keeps its publik key) refuses an app with no
+#                         signature. The job also runs the publik self-test on
+#                         a simulator.
+#   ios-sim-app-optional  the same with PUBLIK_GATE_MODE=optional (no wall).
+#   android-debug-apk     a test APK: the release variant (the JS bundle is
+#                         inside, no Metro, no dev launcher), debuggable,
+#                         signed with the debug key, cleartext allowed for a
+#                         local fake publik.
+#
+# All three are CI TEST-HOOKS builds: PUBLIK_TEST_HOOKS=1 (native, at pod
+# install and in Gradle) and EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1 (JS, at bundle
+# time) compile in the launch values PUBLIK_SELF_TEST and PUBLIK_API_BASE_URL.
+# A store build sets neither, and then nothing reads them.
 #
 # The app token comes from the repo secret PUBLIK_APP_TOKEN and goes into
 # apps/mobile/publik-build.json for the build only. It is never printed.
@@ -50,8 +58,24 @@ jobs:
         run: npm --prefix apps/mobile run typecheck
 
   ios-sim:
+    name: ios-sim (${{ matrix.gate }})
     runs-on: macos-26
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gate: required
+            artifact: ios-sim-app
+            zip: NutAI-0.1.2-simulator-arm64.zip
+          - gate: optional
+            artifact: ios-sim-app-optional
+            zip: NutAI-0.1.2-optional-simulator-arm64.zip
+    env:
+      PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_PUBLIK_GATE_MODE: ${{ matrix.gate }}
+      APP_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,13 +106,34 @@ jobs:
           lipo -info "$APP/NutAI"
           codesign -dv "$APP" 2>&1 | grep -E '^(Identifier|Signature|TeamIdentifier)=' || true
           mkdir -p "$RUNNER_TEMP/out"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/out/NutAI-0.1.1-simulator-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/out/${{ matrix.zip }}"
           echo "APP=$APP" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-sim-app
-          path: ${{ runner.temp }}/out/NutAI-0.1.1-simulator-arm64.zip
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/out/${{ matrix.zip }}
           if-no-files-found: error
+      - name: App Store settings in the built app
+        run: |
+          P="$APP/Info.plist"
+          for k in CFBundleDisplayName CFBundleShortVersionString CFBundleVersion ITSAppUsesNonExemptEncryption; do
+            printf '%s = %s\n' "$k" "$(plutil -extract "$k" raw -o - "$P")"
+          done
+          plutil -extract UIDeviceFamily json -o - "$P" | node -e '
+            const f = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            console.log("UIDeviceFamily =", JSON.stringify(f))
+            if (JSON.stringify(f) !== "[1]") process.exit(1)'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.2
+          test "$(plutil -extract CFBundleVersion raw -o - "$P")" = "$APP_BUILD_NUMBER"
+          test -f "$APP/PrivacyInfo.xcprivacy"
+          plutil -convert json -o - "$APP/PrivacyInfo.xcprivacy" | node -e '
+            const m = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            console.log("NSPrivacyTracking =", m.NSPrivacyTracking)
+            for (const a of m.NSPrivacyAccessedAPITypes) console.log(a.NSPrivacyAccessedAPIType, a.NSPrivacyAccessedAPITypeReasons.join(","))
+            for (const c of m.NSPrivacyCollectedDataTypes) console.log(c.NSPrivacyCollectedDataType, "linked:", c.NSPrivacyCollectedDataTypeLinked, "tracking:", c.NSPrivacyCollectedDataTypeTracking)
+            if (m.NSPrivacyTracking !== false) process.exit(1)'
+          grep -q 'Check publik app token' NutAI.xcodeproj/project.pbxproj
+        working-directory: apps/mobile/ios
       - name: publik self-test on a simulator
         run: |
           UDID=$(xcrun simctl list devices available -j | node -e '
@@ -110,11 +155,15 @@ jobs:
           sleep 2
           kill "$PID" 2>/dev/null || true
           grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; exit 1; }
-          grep -q 'publik self-test: ok nut-ai 0.1.1' "$LOG"
+          grep -q 'publik self-test: ok nut-ai 0.1.2' "$LOG"
 
   android-apk:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
+      APP_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/.ghcup && df -h /
@@ -144,14 +193,36 @@ jobs:
             printf '\nandroid { buildTypes { getByName("release") { isDebuggable = true } } }\n' >> android/app/build.gradle.kts
           fi
           printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
+      - name: A release build with no app token fails (negative test)
+        working-directory: apps/mobile/android
+        run: |
+          cp ../publik-build.json "$RUNNER_TEMP/publik-build.keep.json"
+          node -e '
+            const f = "../publik-build.json", fs = require("fs")
+            const j = JSON.parse(fs.readFileSync(f, "utf8")); j.appToken = ""
+            fs.writeFileSync(f, JSON.stringify(j, null, 2))'
+          if ./gradlew :app:preReleaseBuild --no-daemon -q > "$RUNNER_TEMP/no-token.log" 2>&1; then
+            echo "preReleaseBuild passed with no app token"; exit 1
+          fi
+          grep -m1 'has no publik app token' "$RUNNER_TEMP/no-token.log" || { tail -40 "$RUNNER_TEMP/no-token.log"; exit 1; }
+          cp "$RUNNER_TEMP/publik-build.keep.json" ../publik-build.json
+          rm -f "$RUNNER_TEMP/publik-build.keep.json"
       - name: Build the test APK
         working-directory: apps/mobile/android
         run: |
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
           mkdir -p "$RUNNER_TEMP/out"
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.1-test.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.2-test.apk"
+      - name: Keys stay out of Android backups (merged manifest)
+        working-directory: apps/mobile/android
+        run: |
+          M=$(find app/build/intermediates -name AndroidManifest.xml -path '*elease*' | grep -i merged | head -1)
+          echo "$M"
+          grep -oE 'android:(allowBackup|fullBackupContent|dataExtractionRules|versionCode|versionName)="[^"]*"' "$M"
+          for f in app/src/main/res/xml/*.xml; do echo "== $f"; cat "$f"; done
+          grep -q 'android:fullBackupContent=' "$M"
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: ${{ runner.temp }}/out/nut-ai-0.1.1-test.apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.2-test.apk
           if-no-files-found: error

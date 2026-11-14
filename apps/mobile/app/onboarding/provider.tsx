@@ -7,6 +7,8 @@ import { OptionCard } from '../../src/components/onboarding/Controls'
 import type { IconName } from '../../src/components/Icon'
 import { putSetting } from '../../src/data/repo'
 import { publikAvailable, publikChoice } from '../../src/inference/publik'
+import { APP_NAME } from '../../src/inference/publik-copy'
+import { isAdult } from '../../src/onboarding/adult'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -29,6 +31,9 @@ import { radius, space, type } from '../../src/theme/tokens'
  * Neutrality among the vendors is also the cheapest available mitigation
  * against being treated as a joint controller of the data the user sends to a
  * provider we recommended.
+ *
+ * publik API (a paid plan) is offered only to an adult: the birth date step
+ * comes before this one, and an unknown age counts as a minor.
  */
 
 const LABELS: Record<ProviderId, { name: string; icon: IconName; note: string }> = {
@@ -42,8 +47,8 @@ export default function ProviderScreen() {
   const a = useAnswers()
   const order = providersByPrice()
   // After "Use my own key" on the sign-in gate, publik API is not offered
-  // here again (Profile → AI provider still has it).
-  const publik = publikAvailable() && publikChoice() !== 'own_key'
+  // here again (Profile → AI provider still has it). Never to a minor.
+  const publik = publikAvailable() && publikChoice() !== 'own_key' && isAdult(a, Date.now())
 
   // Preselection is an onboarding behaviour only: a fresh run with no answer
   // yet lands on publik; an existing install with a vendor key is never
@@ -56,11 +61,11 @@ export default function ProviderScreen() {
     <OnboardingScreen
       step={stepIndex('provider')}
       total={TOTAL_STEPS}
-      title="How should Nut AI recognize your food?"
+      title={`How should ${APP_NAME} recognize your food?`}
       subtitle={
         publik
-          ? 'Scans run on publik API by default: link your publik account for $0.05 of free use, once. Prefer your own key? Pick a provider — your photo goes only to the one you name; we run no server of our own.'
-          : 'Bring your own API key. Your photo goes to the provider you name and nowhere else — we run no server.'
+          ? 'Scans run on publik API by default: link your publik account for $0.05 of free use, once. Prefer your own key? Pick a provider. Then your photo goes only to the provider you name.'
+          : 'Bring your own API key. Your photo goes to the provider you name and to no other company.'
       }
       ctaDisabled={a.provider === undefined}
       onCta={() => {

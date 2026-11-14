@@ -2,6 +2,7 @@ import ExpoModulesCore
 import Foundation
 
 /// The native half of the publik module's launch switches (modules/publik-launch/index.ts).
+/// Compiled with PUBLIK_TEST_HOOKS only in a CI test build: a release build reads no launch value.
 public class PublikLaunchModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PublikLaunch")
@@ -10,6 +11,7 @@ public class PublikLaunchModule: Module {
     // else a launch argument (`-<NAME> <value>`, which iOS puts in the argument domain of UserDefaults).
     // Only Xcode, simctl or a debugger can set either one; no other app can, and saved defaults are not read.
     Function("value") { (name: String) -> String? in
+      #if PUBLIK_TEST_HOOKS
       if let env = ProcessInfo.processInfo.environment[name], !env.isEmpty {
         return env
       }
@@ -17,16 +19,21 @@ public class PublikLaunchModule: Module {
       if let arg = args[name] as? String, !arg.isEmpty {
         return arg
       }
+      #endif
       return nil
     }
 
     // The self-test line, on stdout (`xcrun simctl launch --console-pty` shows it).
     Function("printLine") { (line: String) in
+      #if PUBLIK_TEST_HOOKS
       FileHandle.standardOutput.write(Data((line + "\n").utf8))
+      #endif
     }
 
     Function("exit") { () -> Void in
+      #if PUBLIK_TEST_HOOKS
       Darwin.exit(0)
+      #endif
     }
   }
 }
