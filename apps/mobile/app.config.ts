@@ -67,7 +67,7 @@ const config: ExpoConfig = {
   slug: SLUG,
   // The publik module's APP_VERSION (src/inference/publik-core.ts) says the
   // same; a test checks it.
-  version: '0.1.8',
+  version: '0.1.9',
   // The mark: a white peanut silhouette inside four scan-frame corners on
   // near-black. Source of truth is assets/icon.svg; the PNGs are rendered
   // from it (rsvg-convert), never hand-edited.
@@ -222,6 +222,8 @@ const config: ExpoConfig = {
     // A release build with no PUBLIK_APP_TOKEN fails, and so does an App Store
     // build with the test hooks.
     './plugins/withPublikTokenCheck',
+    // The launch screen in the app's colours, not white (blind test round 2, N9).
+    './plugins/withLaunchScreen',
   ],
 
   experiments: { typedRoutes: true },

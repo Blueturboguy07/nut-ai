@@ -5,7 +5,7 @@ import Storage from 'expo-sqlite/kv-store'
 import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useState } from 'react'
 import { AppState, Platform } from 'react-native'
-import { launchValue, printLineAndExit, storefrontCountry } from '../../modules/publik-launch'
+import { isSimulator, launchValue, logLine, printLineAndExit, storefrontCountry } from '../../modules/publik-launch'
 import buildConfig from '../../publik-build.json'
 import { APP_STORE_BUILD, BUILD_ENV_OVERRIDES, DEV_BUILD, PUBLIK_GATE_MODE } from '../build-flags'
 import { clearCredential, loadCredential, saveCredential } from './credentials'
@@ -23,11 +23,13 @@ import {
   pauseTelemetry,
   provision,
   purchaseLinksFor,
+  purchaseLinksLogLine,
   purchaseLinksOn,
   resumeTelemetry,
   revokeInstall,
   setPurchaseLinks,
   stopTelemetry,
+  storefrontReading,
   type Choice,
   type GateDevice,
   type GateResult,
@@ -259,6 +261,30 @@ export async function disconnectPublik(fetchImpl: typeof fetch = fetch): Promise
   await revoke()
 }
 
+let walletRefresh: Promise<unknown> | null = null
+const walletListeners = new Set<(w: PublikWallet) => void>()
+
+/** GET /wallet once in the background (one at a time); the screens that listen get the new wallet. */
+export function refreshWalletSoon(): void {
+  if (walletRefresh) return
+  walletRefresh = refreshPublikWallet()
+    .then((w) => {
+      if (w) for (const l of walletListeners) l(w)
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      walletRefresh = null
+    })
+}
+
+/** A screen hears each wallet read from GET /wallet (Profile, AI provider). Returns the unsubscribe. */
+export function onPublikWallet(listener: (w: PublikWallet) => void): () => void {
+  walletListeners.add(listener)
+  return () => {
+    walletListeners.delete(listener)
+  }
+}
+
 /** GET /wallet → snapshot. Also notices a claim that happened on the site. */
 export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Promise<PublikWallet | null> {
   const cred = await loadCredential('publik')
@@ -343,6 +369,9 @@ export async function notePublikWallet(w: PublikWalletPatch): Promise<void> {
       await savePublikInstall({ ...install, claimState, claimUrl: claimState === 'claimed' ? null : install.claimUrl })
     }
   }
+  // The percent fields come only from GET /wallet: read it again after each
+  // AI call (blind test round 2, N2), in the background.
+  refreshWalletSoon()
 }
 
 // ---------------------------------------------------------------------------
@@ -611,26 +640,35 @@ export async function deletePublikAccount(fetchImpl: typeof fetch = fetch): Prom
 let purchaseLinksLoad: Promise<boolean> | null = null
 
 /**
- * May this phone show a link that sells a publik plan? Not an App Store build:
- * yes. An App Store build: only when StoreKit says the storefront is the USA,
- * read once per run; until then, and when it cannot be read, no.
+ * May this phone show a link that sells a publik plan? A simulator: never
+ * (blind test round 2, Nov 15 2026, N1: StoreKit on a simulator reports the
+ * USA). An App Store build: only on a real device whose StoreKit storefront
+ * is the USA, read once per run; until then, and when it cannot be read, no.
+ * Any other build on a real phone: yes. The answer goes to the system log at
+ * start, for CI (publik-core.ts purchaseLinksLogLine).
  */
 export function loadPurchaseLinks(): Promise<boolean> {
   if (!purchaseLinksLoad) {
     purchaseLinksLoad = (async () => {
-      const on = purchaseLinksFor(APP_STORE_BUILD, APP_STORE_BUILD ? await storefrontCountry() : null)
+      const sim = isSimulator()
+      const country = APP_STORE_BUILD && sim !== true ? await storefrontCountry() : null
+      const reading = storefrontReading(sim, country)
+      const on = purchaseLinksFor(APP_STORE_BUILD, reading.storefront, reading.device)
       setPurchaseLinks(on)
+      logLine(purchaseLinksLogLine(reading, on))
       return on
     })().catch(() => {
-      setPurchaseLinks(!APP_STORE_BUILD)
-      return !APP_STORE_BUILD
+      // A read error: no purchase link in an App Store build.
+      const on = !APP_STORE_BUILD && isSimulator() === false
+      setPurchaseLinks(on)
+      return on
     })
   }
   return purchaseLinksLoad
 }
 
-// Off at once in an App Store build; the storefront read may turn the links on.
-setPurchaseLinks(!APP_STORE_BUILD)
+// Off at once in an App Store build and on a simulator; the storefront read may turn the links on.
+setPurchaseLinks(!APP_STORE_BUILD && isSimulator() !== true)
 void loadPurchaseLinks()
 
 /** For a screen: the purchase links of this phone (false while the storefront is read in an App Store build). */

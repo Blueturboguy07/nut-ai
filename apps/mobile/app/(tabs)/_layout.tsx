@@ -67,7 +67,15 @@ export default function TabLayout() {
       <Tabs
         screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: theme.bg } }}
         tabBar={({ state, navigation }) => (
-          <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
+          // An opaque band with a hairline on top (blind test round 2, N10):
+          // content scrolled under the bar showed between the pill and the
+          // + button, as a stray dark mark, and "Sign out" sat behind it.
+          <View
+            style={[
+              styles.wrap,
+              { paddingBottom: Math.max(insets.bottom, space.md), backgroundColor: theme.bg, borderTopColor: theme.border },
+            ]}
+          >
             <View style={[styles.pill, { backgroundColor: theme.bgElevated, borderColor: theme.border }]}>
               {TABS.map((tab, i) => {
                 const focused = state.index === i
@@ -155,6 +163,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.md,
     paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   pill: {
     flex: 1,

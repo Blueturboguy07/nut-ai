@@ -24,7 +24,13 @@ vi.mock('react-native', () => ({
   Linking: { openURL: async () => undefined },
 }))
 // The native launch switches (PUBLIK_API_BASE_URL...): none in a unit test.
-vi.mock('../../modules/publik-launch', () => ({ launchValue: () => null, printLineAndExit: () => undefined, storefrontCountry: async () => null }))
+vi.mock('../../modules/publik-launch', () => ({
+  launchValue: () => null,
+  printLineAndExit: () => undefined,
+  storefrontCountry: async () => null,
+  isSimulator: () => null,
+  logLine: () => undefined,
+}))
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 0,
   getItemAsync: async (k: string) => secure.get(k) ?? null,

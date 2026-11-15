@@ -180,14 +180,15 @@ describe('totals reconciliation property', () => {
     )
   })
 
-  it('displayed calories are always reproducible from the displayed macros', () => {
-    // The distinct second failure mode: a shown calorie figure that does not equal
-    // shown-macros x 4/4/9. This must hold even when nothing was ever edited.
+  it('displayed calories are the energy the food log adds, rounded once (blind test round 2, N3)', () => {
+    // The day totals sum snapshot energy x grams / 100 x the portion eaten.
+    // The shown number is that sum, rounded once: one value shown and saved.
     fc.assert(
       fc.property(arbRows, (rows) => {
-        const d = toDisplayTotals(recomputeTotals(emptyMeal(rows)))
-        const handComputed = Math.round(4 * d.protein_g + 4 * d.carbs_g + 9 * d.fat_g)
-        expect(d.kcal).toBe(handComputed)
+        const meal = emptyMeal(rows)
+        const d = toDisplayTotals(recomputeTotals(meal))
+        const saved = meal.ingredients.reduce((s, r) => s + (r.nutrientSnapshot.kcal * r.grams) / 100, 0) * meal.portionEatenFraction
+        expect(Math.abs(d.kcal - saved)).toBeLessThanOrEqual(0.5 + 1e-6)
       }),
       { numRuns: 300 },
     )

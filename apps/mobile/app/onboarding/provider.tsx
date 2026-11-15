@@ -112,9 +112,9 @@ export default function ProviderScreen() {
       <View style={[styles.note, { backgroundColor: theme.bgSunken }]}>
         <Text style={[type.caption, { color: theme.textMuted, lineHeight: 19 }]}>
           {publik ? 'The own-key providers above are sorted' : 'The providers above are sorted'} by price, with no
-          recommendation. Frontier models are not measurably better at judging portion size — which
-          is where nearly all the error is — so the cheapest vision model is pre-selected on
-          purpose, not as a compromise.
+          recommendation. The most expensive AI models are not better at judging portion size, and
+          portion size causes most of the error. So we select the lowest-cost AI model that can
+          read photos.
         </Text>
       </View>
 

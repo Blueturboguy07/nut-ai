@@ -124,7 +124,7 @@ links):
 | Page | URL | Where |
 |---|---|---|
 | Sign in / claim | the server's `claim_url` + `in_app=1` (other query values kept) → `/in-app/claim/<CODE>` | the gate; the publik card and a 402 in optional mode (`inAppClaimUrl` in `src/inference/publik-core.ts`) |
-| Privacy | `https://publikhq.com/in-app/privacy` | the publik disclosure (`PRIVACY_URL` in `src/inference/publik-copy.ts`) |
+| Privacy | `https://publikhq.com/in-app/privacy?app=nut-ai` | the publik disclosure (`PRIVACY_URL` in `src/inference/publik-copy.ts`) |
 | Delete account | `https://publikhq.com/in-app/delete-account` | Profile → publik account (`PUBLIK_DELETE_ACCOUNT_URL`) |
 | Support | `https://publikhq.com/in-app/support?app=nut-ai&version=<v>&source=<result\|exercise\|profile>[&reason=<id>]` | Profile → Help and support; Report a wrong result (`PUBLIK_SUPPORT_URL`, `supportUrl` in `src/support.ts`) |
 
@@ -147,8 +147,12 @@ Profile under the AI provider row. The state is the TRUE one
 | `plan.kind: "plan"`, `used_percent` (or `remaining_percent`), `resets_at` | plan | `62% of your plan used · resets Monday` and a bar of the percent used |
 | until publik sends them: `week.used_micros` of `week.budget_micros`, `week.resets_at` | plan | the same line, computed |
 | a plan with no percent | plan | `Plan active` (or `Plan limit reached`) |
-| `plan.kind: "pack"`, or no plan with a balance left | prepaid | `40% of your prepaid balance left` and a bar of the percent left (`Prepaid balance active` with no percent, `Prepaid balance used up` at 0) |
+| `plan.kind: "pack"`, or no plan with a balance left | prepaid | `40% left of your prepaid balance` and a bar of the percent left, from `prepaid_remaining_percent` (0–100 or null; a value between 0 and 1 shows as 1%); `Prepaid balance active` with no percent, `Prepaid balance used up` at 0 |
 | `plan.kind: "none"` and no balance | none | `No publik plan yet` |
+
+The app reads the wallet again after each AI call (`notePublikWallet` →
+`refreshWalletSoon` in `src/inference/publik.ts`), and Profile and the publik
+card redraw the line (`onPublikWallet`).
 
 The card's words follow the same state: `Your plan: <label>.`, `Your
 prepaid pack: <label>.`, `You have a prepaid publik balance.`; never "Your
@@ -174,15 +178,22 @@ storefront). The phone still keeps each scan's cost in its local scan log
 
 On by default in an iOS release build. In an App Store build:
 
-- **Purchase links only in the US storefront.** "Get a plan", the top-up
-  link, "Link this phone & pick a plan" and the link of a 402 show only when StoreKit says the App Store storefront is the USA
-  (`Storefront.current.countryCode`, read once per run by
-  `modules/publik-launch`; `purchaseLinksFor` in
-  `src/inference/publik-core.ts`). In every other storefront, and when the
-  storefront cannot be read, there is no link, no button and no price: one
-  plain sentence instead, `To get a plan, search for "publik" on Google.`
-  "Connect your plan" and "Use my own key" show everywhere. A build that is
-  not an App Store build (Android, dev, CI test builds) shows the links.
+- **Purchase links only on a real device in the US storefront.** "Get a
+  plan", the top-up link, "Link this phone & pick a plan" and the link of a
+  402 show only when the app runs on a real device and StoreKit says the App
+  Store storefront is the USA (`Storefront.current.countryCode`, read once
+  per run by `modules/publik-launch`; `storefrontReading` and
+  `purchaseLinksFor` in `src/inference/publik-core.ts`). A simulator is
+  "storefront unknown" in every build, because StoreKit on a simulator
+  reports the USA (blind test round 2, Nov 15 2026, N1). On a simulator, in
+  every other storefront, and when the storefront cannot be read, there is
+  no link, no button and no price: one plain sentence instead, `To get a
+  plan, search for "publik" on Google.` "Connect your plan" and "Use my own
+  key" show everywhere. A build that is not an App Store build (Android,
+  dev, CI test builds) shows the links on a real device. At start the app
+  writes one line to the system log, for example `publik storefront: unknown
+  (simulator) · purchase links: off · To get a plan, search for "publik" on
+  Google.`; CI checks it on the `ios-sim-app-store` build.
 - **The gate is always required.** `EXPO_PUBLIC_PUBLIK_GATE_MODE=optional`
   is a CI test artifact only; an App Store build that asks for it fails.
 - **No test hooks.** A build with `EXPO_PUBLIC_APP_STORE_BUILD` on and
@@ -221,7 +232,7 @@ build. No URL scheme or web page reaches them.
 | Name | Effect |
 |---|---|
 | `PUBLIK_API_BASE_URL` | the whole module uses this publik (for example a local fake); its links open like publikhq.com's |
-| `PUBLIK_SELF_TEST=1` | mint a key, `GET /wallet`, print `publik self-test: ok nut-ai <version>` on stdout, then the food database line `food-db self-test: ok <N> foods, <M> matches for egg (first: …)` (or `food-db self-test: failed: <why>`), exit |
+| `PUBLIK_SELF_TEST=1` | mint a key, `GET /wallet`, print `publik self-test: ok nut-ai <version>` on stdout; for a linked phone also `publik plan line: <the line Profile shows>` (for example `62% left of your prepaid balance`); then the food database line `food-db self-test: ok <N> foods, <M> matches for egg (first: …)` (or `food-db self-test: failed: <why>`), exit |
 | `DO_NOT_TRACK`, `PUBLIK_TELEMETRY=0` | no usage counting |
 | `PUBLIK_TELEMETRY_DEBUG=1` | log each event and publik's answer |
 
@@ -269,8 +280,18 @@ test round 1, Nov 14 2026: the tester used `ios-sim-app` and saw "Get a
 plan"). In a store build, purchase links stay off until StoreKit reports
 the US storefront; on an unknown or non-US storefront the only words are
 `To get a plan, search for "publik" on Google.` It has no self-test (no
-hooks); CI installs it on a simulator and checks that it still runs 25
-seconds after launch.
+hooks); CI installs it on a simulator, checks that it still runs 25
+seconds after launch, and reads its start line from the system log: the
+storefront is unknown (simulator), purchase links are off, and the Google
+sentence is there.
+
+The test-hooks self-test also runs once against a fake publik on the CI
+runner (`apps/mobile/scripts/fake-publik.mjs`, `PUBLIK_API_BASE_URL`), with
+the demo-like prepaid wallet of
+`apps/mobile/src/inference/fixtures/demo-wallets.json`
+(`prepaid_remaining_percent: 62`). CI checks the line `publik plan line:
+62% left of your prepaid balance`. The fake prints paths only, never a
+body or a header (the body of `/installs` holds the app token).
 
 A further job, `android-release-check`, makes a release build with the test
 hooks off and uploads nothing.

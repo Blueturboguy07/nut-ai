@@ -1,10 +1,11 @@
 import { router } from 'expo-router'
 import { useState } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MAX_MEAL_DESCRIPTION_CHARS } from '@nutai/prompt'
 import { Icon } from '../src/components/Icon'
 import { StatusBarScrim } from '../src/components/StatusBarScrim'
+import { useKeyboardInset } from '../src/components/useKeyboardInset'
 import { startDescribedMeal } from '../src/scan/orchestrator'
 import { setPhase } from '../src/scan/store'
 import { useTheme } from '../src/theme/ThemeProvider'
@@ -25,6 +26,9 @@ import { MIN_TAP_TARGET, radius, space, tap, type } from '../src/theme/tokens'
 export default function DescribeMeal() {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
+  // KeyboardAvoidingView measured the wrong offset in this modal sheet, and
+  // the keyboard covered "Estimate" (blind test round 2, N8).
+  const keyboard = useKeyboardInset()
   const [text, setText] = useState('')
   const ready = text.trim().length > 0
 
@@ -37,10 +41,7 @@ export default function DescribeMeal() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: theme.bg, paddingBottom: keyboard }}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: space.xl }}
@@ -91,7 +92,7 @@ export default function DescribeMeal() {
         </Pressable>
       </ScrollView>
 
-      <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, space.lg), borderTopColor: theme.border }]}>
+      <View style={[styles.dock, { paddingBottom: keyboard > 0 ? space.md : Math.max(insets.bottom, space.lg), borderTopColor: theme.border }]}>
         <Pressable
           accessibilityRole="button"
           disabled={!ready}
@@ -102,7 +103,7 @@ export default function DescribeMeal() {
         </Pressable>
       </View>
       <StatusBarScrim />
-    </KeyboardAvoidingView>
+    </View>
   )
 }
 

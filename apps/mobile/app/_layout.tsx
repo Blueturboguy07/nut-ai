@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { Alert } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { LaunchCover } from '../src/components/LaunchScreen'
 import { PublikGate } from '../src/components/PublikGate'
 import { foodDbSelfTest } from '../src/data/food-search'
 import { openNutritionDb } from '../src/db/expo-adapter'
@@ -122,6 +123,8 @@ export default function RootLayout() {
           <PublikGate>
             <Root />
           </PublikGate>
+          {/* The launch screen until the first screen is ready (blind test round 2, N9). */}
+          <LaunchCover />
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

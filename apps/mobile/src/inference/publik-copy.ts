@@ -25,6 +25,16 @@ import type { PlanStatus, PlanUse, ProvisionResult } from './publik-core'
 export const APP_NAME: string = identity.displayName
 
 /**
+ * Profile → About (blind test round 2, Nov 15 2026, N12): "publik Nut AI
+ * 0.1.9 (42)", the version and the build number of this build.
+ */
+export function appVersionLine(version: string | null | undefined, build: string | number | null | undefined): string {
+  const v = typeof version === 'string' && version.trim() ? version.trim() : 'unknown version'
+  const b = build == null || String(build).trim() === '' ? '' : ` (${String(build).trim()})`
+  return `${APP_NAME} ${v}${b}`
+}
+
+/**
  * Where a purchase link would be, in an App Store build outside the US
  * storefront (publik-core.ts purchaseLinksFor): this one plain sentence, with
  * no link, no button and no price.
@@ -88,7 +98,7 @@ export function planUseLine(u: PlanUse, now: Date = new Date()): string {
  *
  *   plan     "62% of your plan used · resets Monday", "Plan limit reached ·
  *            resets Monday", or "Plan active" (no number from publik)
- *   prepaid  "40% of your prepaid balance left", "Prepaid balance used up",
+ *   prepaid  "40% left of your prepaid balance", "Prepaid balance used up",
  *            or "Prepaid balance active"
  *   none     "No publik plan yet"
  */
@@ -96,7 +106,7 @@ export function planStatusLine(s: PlanStatus, now: Date = new Date()): string {
   if (s.kind === 'none') return 'No publik plan yet'
   if (s.kind === 'prepaid') {
     if (s.limitReached) return 'Prepaid balance used up'
-    return s.percent != null ? `${s.percent}% of your prepaid balance left` : 'Prepaid balance active'
+    return s.percent != null ? `${s.percent}% left of your prepaid balance` : 'Prepaid balance active'
   }
   return planUseLine({ usedPercent: s.percent, resetsAt: s.resetsAt, limitReached: s.limitReached }, now)
 }
@@ -110,7 +120,9 @@ export const DISCLOSURE_DATA_PATH =
  * deletion: publik's bare in-app pages, with no site navigation, no prices
  * and no plan links. (The claim link: publik-core.ts inAppClaimUrl.)
  */
-export const PRIVACY_URL = 'https://publikhq.com/in-app/privacy'
+// `?app=nut-ai`: the page shows the Nut AI summary, not the desktop app's
+// (blind test round 2, Nov 15 2026, N11). The slug is publik-core.ts APP_SLUG.
+export const PRIVACY_URL = 'https://publikhq.com/in-app/privacy?app=nut-ai'
 /** publik's account deletion page (Profile → publik account → Delete account). */
 export const PUBLIK_DELETE_ACCOUNT_URL = 'https://publikhq.com/in-app/delete-account'
 /** publik's support page (Profile → Help and support, Report a wrong result). src/support.ts adds the query. */

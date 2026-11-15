@@ -183,9 +183,10 @@ export default function PlanScreen() {
             No black box. Check our arithmetic.
           </Text>
           <View style={[styles.mathCard, { backgroundColor: theme.bgElevated }]}>
-            <MathRow label="BMR (Mifflin-St Jeor)" value={`${Math.round(plan.target.bmr)} kcal`} />
+            {/* Plain words, not "BMR (Mifflin-St Jeor)" (blind test round 2, N7). */}
+            <MathRow label="Calories your body uses at rest" value={`${Math.round(plan.target.bmr)} kcal`} />
             <MathRow
-              label={`× activity (${activityFor(a.workoutsPerWeek)})`}
+              label={`With your activity (${activityFor(a.workoutsPerWeek)})`}
               value={`${Math.round(plan.target.tdee)} kcal`}
             />
             {derivedGoal !== 'maintain' ? (

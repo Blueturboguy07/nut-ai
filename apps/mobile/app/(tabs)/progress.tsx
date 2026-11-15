@@ -64,10 +64,14 @@ export default function Progress() {
   const currentKg = points[points.length - 1]?.weightKg ?? null
   const startKg = points[0]?.weightKg ?? null
 
+  // A goal to keep the weight (the goal weight is the start weight) has no
+  // "percent of goal" (blind test round 2, N7: "0% of goal" on Maintain).
+  const maintaining = goalKg != null && startKg != null && Math.abs(goalKg - startKg) <= 0.01
   const pctOfGoal =
-    startKg != null && currentKg != null && goalKg != null && Math.abs(goalKg - startKg) > 0.01
+    startKg != null && currentKg != null && goalKg != null && !maintaining
       ? Math.max(0, Math.min(1, (currentKg - startKg) / (goalKg - startKg)))
       : 0
+  const goalBadge = goalBadgeText(maintaining, pctOfGoal, currentKg, goalKg)
 
   const visible = useMemo(() => {
     const w = WINDOWS.find((x) => x.key === window)
@@ -113,9 +117,11 @@ export default function Progress() {
             {currentKg != null ? `${(currentKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
           </Text>
 
-          <View style={[styles.bar, { backgroundColor: theme.ringTrack }]}>
-            <View style={{ width: `${pctOfGoal * 100}%`, height: 6, borderRadius: 3, backgroundColor: theme.text }} />
-          </View>
+          {maintaining ? null : (
+            <View style={[styles.bar, { backgroundColor: theme.ringTrack }]}>
+              <View style={{ width: `${pctOfGoal * 100}%`, height: 6, borderRadius: 3, backgroundColor: theme.text }} />
+            </View>
+          )}
           <View style={styles.spread}>
             <Text style={[type.caption, { color: theme.textMuted }]}>
               Start: {startKg != null ? `${(startKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
@@ -129,9 +135,11 @@ export default function Progress() {
         <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
           <View style={styles.spread}>
             <Text style={[type.heading, { color: theme.text }]}>Weight progress</Text>
-            <View style={[styles.badge, { backgroundColor: theme.bgElevated }]}>
-              <Text style={[type.caption, { color: theme.text }]}>{Math.round(pctOfGoal * 100)}% of goal</Text>
-            </View>
+            {goalBadge ? (
+              <View style={[styles.badge, { backgroundColor: theme.bgElevated }]}>
+                <Text style={[type.caption, { color: theme.text }]}>{goalBadge}</Text>
+              </View>
+            ) : null}
           </View>
 
           {raw.length === 0 ? (
@@ -355,3 +363,17 @@ const styles = StyleSheet.create({
   line: { width: 18, height: 3, borderRadius: 2 },
   changeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
 })
+
+/**
+ * The badge by "Weight progress": how far along a lose or gain goal is, or,
+ * for a goal to keep the weight, how near the weight is to it. null: no goal
+ * weight or no weigh-in yet.
+ */
+function goalBadgeText(maintaining: boolean, pct: number, currentKg: number | null, goalKg: number | null): string | null {
+  if (goalKg == null || currentKg == null) return null
+  if (maintaining) {
+    const offLb = Math.abs(currentKg - goalKg) * LB_PER_KG
+    return offLb < 0.5 ? 'At your goal weight' : `${offLb.toFixed(1)} lbs from your goal weight`
+  }
+  return `${Math.round(pct * 100)}% of the way to your goal`
+}

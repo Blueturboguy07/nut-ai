@@ -28,6 +28,7 @@ import {
  */
 
 const MOBILE = join(__dirname, '..', '..')
+const demoWallets = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'demo-wallets.json'), 'utf8')) as Record<'prepaid' | 'plan', Record<string, unknown>>
 // Built, not literal: the publik scan looks for the endpoint paths, and the
 // file it should name is the module (publik-core.ts), not this test.
 const V1 = '/api/v1'
@@ -470,6 +471,19 @@ describe('PUBLIK_SELF_TEST', () => {
     expect(await selfTestLine()).toEqual([`publik self-test: ok nut-ai ${APP_VERSION}`])
     expect(requests.map((r) => r.path)).toEqual([`${V1}/installs`, `${V1}/wallet`])
     expect(JSON.parse(requests[0]!.body)).toMatchObject({ app_slug: 'nut-ai', app_version: APP_VERSION, app_token: CFG.appToken })
+  })
+
+  it('a linked phone also prints the plan line of the demo wallet fixture (blind test round 2, N2)', async () => {
+    // The same fixture the CI fake publik serves (scripts/fake-publik.mjs).
+    wallets = [demoWallets.prepaid as unknown as WalletBody]
+    expect(await selfTestLine()).toEqual([
+      `publik self-test: ok nut-ai ${APP_VERSION}\npublik plan line: 62% left of your prepaid balance`,
+    ])
+    requests = []
+    wallets = [demoWallets.plan as unknown as WalletBody]
+    const [line] = await selfTestLine()
+    expect(line).toMatch(/^publik self-test: ok nut-ai [0-9.]+\npublik plan line: 35% of your plan used · resets \w+/)
+    expect(line).not.toMatch(/\$|USD|micros/)
   })
 
   it('prints why it failed', async () => {

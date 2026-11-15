@@ -138,26 +138,25 @@ export interface DisplayTotals {
 }
 
 /**
- * Calories for display are computed from the ALREADY-ROUNDED macro grams.
+ * The calories on display are the stored energy, rounded ONCE: the same
+ * number the food log adds when the meal is saved (the day totals sum the
+ * per-100 g energy x grams / 100 x the portion eaten).
  *
- * This guarantees a user can hand-multiply the macros they can see and get the
- * calorie figure they can see. A displayed calorie number that does not match
- * displayed-macros x 4/4/9 is its own distinct failure - separate from the edit
- * bug - and this rule kills it even when nothing was ever edited.
+ * Blind test round 2 (Nov 15 2026, N3): the result showed 229 kcal (then
+ * computed as 4/4/9 from the rounded macros) and saving took 227 kcal off the
+ * day (the database energy). One value is now shown and saved. The database
+ * energy is also the better number: 4/4/9 counts fiber at 4 kcal/g and
+ * alcohol at 0.
  *
  * Worked example from the spec: three items summing to 480.9 kcal / 52.69 P /
- * 6.19 F / 50.0 C. Macros display as 53 / 6 / 50, so calories display as
- * round(4*53 + 4*50 + 9*6) = 466. We STORE and EXPORT 480.9; we SHOW 466, and 466
- * is exactly reproducible from the visible macros. Every nutrition label makes
- * this same trade. Internal consistency is the property a user can actually check;
- * exact agreement with an unrounded truth they cannot see is not.
+ * 6.19 F / 50.0 C show 481 kcal, with macros 53 / 6.2 / 50.
  */
 export function toDisplayTotals(t: MacroTotals): DisplayTotals {
   const protein_g = roundDisplayGrams(t.protein_g)
   const fat_g = roundDisplayGrams(t.fat_g)
   const carbs_g = roundDisplayGrams(t.carbs_g)
   return {
-    kcal: Math.round(reconcileFromMacros(protein_g, carbs_g, fat_g)),
+    kcal: Math.round(t.kcal),
     protein_g,
     fat_g,
     carbs_g,

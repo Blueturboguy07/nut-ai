@@ -13,9 +13,11 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { WebLookupResult } from '@nutai/core-schema'
-import { healthScore } from '@nutai/totals'
+import type { DisplayTotals } from '@nutai/totals'
 import { AiResultLinks } from '../src/components/AiResultLinks'
 import { StatusBarScrim } from '../src/components/StatusBarScrim'
+import { useKeyboardInset } from '../src/components/useKeyboardInset'
+import { estimateRangeSentence } from '../src/scan/estimate-copy'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
@@ -50,6 +52,7 @@ import { MIN_TAP_TARGET, radius, space, tap, tapIcon, type } from '../src/theme/
 export default function Result() {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
+  const keyboard = useKeyboardInset()
   const phase = useScan()
   const purchaseLinks = usePurchaseLinks()
   const [expandedBand, setExpandedBand] = useState(false)
@@ -163,7 +166,7 @@ export default function Result() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 120 }}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 120 + keyboard }}>
         <Text style={[type.title, { color: theme.text }]}>
           {result.items[0]?.row.displayName ?? 'Your meal'}
         </Text>
@@ -172,6 +175,13 @@ export default function Result() {
         <View style={{ marginTop: space.lg }}>
           <Text style={[type.hero, { color: theme.text }]}>{result.totals.kcal}</Text>
           <Text style={[type.caption, { color: theme.textMuted, marginTop: -space.xs }]}>kcal</Text>
+          {/* The same rounded number is saved (blind test round 2, N3), and
+              it says plainly that it is an estimate with a range. */}
+          {estimateRangeSentence(result.totals.kcal, result.mealBand) ? (
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
+              {estimateRangeSentence(result.totals.kcal, result.mealBand)}
+            </Text>
+          ) : null}
 
           <View style={{ marginTop: space.md }}>
             <ConfidenceChip
@@ -184,10 +194,7 @@ export default function Result() {
           </View>
         </View>
 
-        <StatsPager
-          totals={result.totals}
-          grams={result.meal.ingredients.reduce((a, r) => a + r.grams, 0)}
-        />
+        <StatsPager totals={result.totals} />
 
         {/* Highlighted questions: at most two, ever. */}
         {highlighted.map((q) => (
@@ -270,7 +277,18 @@ export default function Result() {
       <StatusBarScrim />
       <KeyboardDoneBar />
 
-      <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg, borderColor: theme.border }]}>
+      {/* Above the keyboard while it is open (blind test round 2, N8). */}
+      <View
+        style={[
+          styles.actions,
+          {
+            bottom: keyboard,
+            paddingBottom: keyboard > 0 ? space.md : Math.max(insets.bottom, space.lg),
+            backgroundColor: theme.bg,
+            borderColor: theme.border,
+          },
+        ]}
+      >
         <View style={{ flexDirection: 'row', gap: space.md }}>
           <Pressable
             accessibilityRole="button"
@@ -485,17 +503,17 @@ function Macro({
 }
 
 /**
- * Two swipeable stat pages: macros, then
- * fiber/sugar/sodium with the health score. The score is arithmetic from
- * @nutai/totals — tap it and every point shows its named rule.
+ * Two swipeable stat pages: macros, then fiber/sugar/sodium. No health score
+ * (blind test round 2, Nov 15 2026, N5: "Health score, 5/10" was an
+ * unexplained score and a health claim).
  */
-function StatsPager({ totals, grams }: { totals: Parameters<typeof healthScore>[0]; grams: number }) {
+type StatsTotals = Pick<DisplayTotals, 'protein_g' | 'carbs_g' | 'fat_g' | 'fiber_g' | 'sugar_g' | 'sodium_mg'>
+
+function StatsPager({ totals }: { totals: StatsTotals }) {
   const theme = useTheme()
   const { width } = useWindowDimensions()
   const pageW = width - space.lg * 2
   const [page, setPage] = useState(0)
-  const [showWhy, setShowWhy] = useState(false)
-  const hs = healthScore(totals, grams > 0 ? grams : undefined)
 
   return (
     <View style={{ marginTop: space.xl }}>
@@ -518,37 +536,6 @@ function StatsPager({ totals, grams }: { totals: Parameters<typeof healthScore>[
             <Macro label="Sodium" value={totals.sodium_mg} unit="mg" color={theme.fat} icon="sodium" />
           </View>
 
-          {hs ? (
-            <Pressable
-              onPress={() => setShowWhy((v) => !v)}
-              style={[styles.healthCard, { backgroundColor: theme.bgSunken }]}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                <Icon name="heart" size={18} color={theme.protein} />
-                <Text style={[type.bodyStrong, { color: theme.text, flex: 1 }]}>Health score</Text>
-                <Text style={[type.bodyStrong, { color: theme.text }]}>{hs.score}/10</Text>
-              </View>
-              <View style={[styles.healthTrack, { backgroundColor: theme.bgElevated }]}>
-                <View
-                  style={[
-                    styles.healthFill,
-                    { width: `${hs.score * 10}%` as const, backgroundColor: theme.affirm },
-                  ]}
-                />
-              </View>
-              {showWhy &&
-                hs.reasons.map((r) => (
-                  <Text key={r} style={[type.caption, { color: theme.textMuted, marginTop: space.xs }]}>
-                    · {r}
-                  </Text>
-                ))}
-              {showWhy && (
-                <Text style={[type.micro, { color: theme.textFaint, marginTop: space.sm }]}>
-                  Computed by fixed rules from these totals — never by the AI.
-                </Text>
-              )}
-            </Pressable>
-          ) : null}
         </View>
       </ScrollView>
 
@@ -569,9 +556,6 @@ const styles = StyleSheet.create({
   statsPage: { flexDirection: 'row', gap: space.md },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: space.md },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  healthCard: { marginTop: space.lg, padding: space.lg, borderRadius: radius.lg },
-  healthTrack: { height: 6, borderRadius: 3, marginTop: space.md, overflow: 'hidden' },
-  healthFill: { height: 6, borderRadius: 3 },
   secondary: {
     flexDirection: 'row',
     alignItems: 'center',

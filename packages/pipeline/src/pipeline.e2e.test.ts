@@ -103,10 +103,10 @@ describe('the happy path', () => {
     expect(only.row.sourceFoodId).toBe('1')
   })
 
-  it('shows displayed calories that are reproducible from the displayed macros', async () => {
+  it('shows the calories the food log will add, rounded once (blind test round 2, N3)', async () => {
     const r = await runPipeline(payload([item()]), deps(), foodDb)
-    const t = r!.totals
-    expect(t.kcal).toBe(Math.round(4 * t.protein_g + 4 * t.carbs_g + 9 * t.fat_g))
+    const saved = r!.meal.ingredients.reduce((s, row) => s + (row.nutrientSnapshot.kcal * row.grams) / 100, 0) * r!.meal.portionEatenFraction
+    expect(r!.totals.kcal).toBe(Math.round(saved))
   })
 
   it('attaches an honest band, never a bare number', async () => {

@@ -1,7 +1,8 @@
+import Constants from 'expo-constants'
 import { router, useFocusEffect } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Linking } from 'react-native'
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { ProviderId } from '@nutai/prompt'
 import { HEALTHKIT_IN_BUILD } from '../../src/health/build'
@@ -16,15 +17,17 @@ import {
   ensurePublikWallet,
   loadPublikInstall,
   loadPublikWallet,
+  onPublikWallet,
   openPublikLink,
   publikConnected,
   publikSignedIn,
+  refreshPublikWallet,
   requestPublikSignIn,
   setCountAppUse,
   signOutOfPublik,
 } from '../../src/inference/publik'
 import { planStatus, publikClaimState, type PlanStatus } from '../../src/inference/publik-core'
-import { APP_NAME, planStatusLine, PRIVACY_URL } from '../../src/inference/publik-copy'
+import { APP_NAME, appVersionLine, planStatusLine, PRIVACY_URL } from '../../src/inference/publik-copy'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { PlanUseBar } from '../../src/components/PublikDisclosure'
 import { StatusBarScrim } from '../../src/components/StatusBarScrim'
@@ -118,6 +121,12 @@ export default function Profile() {
               line: status ? planStatusLine(status) : 'Your plan shows when this phone is online.',
               status,
             })
+            // Then the plan as publik has it now (blind test round 2, N2).
+            const fresh = await refreshPublikWallet().catch(() => null)
+            if (alive && fresh && fresh.claimState === 'claimed') {
+              const now = planStatus(fresh)
+              setPlan({ line: planStatusLine(now), status: now })
+            }
           }
         } else {
           const cred = await loadCredential(p as ProviderId)
@@ -133,6 +142,17 @@ export default function Profile() {
         alive = false
       }
     }, [round]),
+  )
+
+  // A wallet read after an AI call updates the plan line at once.
+  useEffect(
+    () =>
+      onPublikWallet((w) => {
+        if (w.claimState !== 'claimed') return
+        const now = planStatus(w)
+        setPlan((prev) => (prev ? { line: planStatusLine(now), status: now } : prev))
+      }),
+    [],
   )
 
   const optional = PUBLIK_GATE_MODE === 'optional'
@@ -385,8 +405,9 @@ export default function Profile() {
         <Section title="How your numbers work">
           {goal ? (
             <View style={{ padding: space.lg, gap: space.sm }}>
-              <Line label="BMR (Mifflin-St Jeor)" value={`${Math.round(goal.bmr)} kcal`} />
-              <Line label="TDEE (BMR × activity)" value={`${Math.round(goal.tdee)} kcal`} />
+              {/* Plain words, not "BMR" and "TDEE" (blind test round 2, N7). */}
+              <Line label="Calories your body uses at rest" value={`${Math.round(goal.bmr)} kcal`} />
+              <Line label="Calories you use in a normal day" value={`${Math.round(goal.tdee)} kcal`} />
               <Line label="Your target" value={`${Math.round(goal.targetKcal)} kcal`} />
               {goal.floorApplied ? (
                 <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
@@ -437,6 +458,13 @@ export default function Profile() {
           <Row label="Privacy policy" value="" onPress={() => void openPublikLink(PRIVACY_URL)} />
           <Row label="License" value="AGPL-3.0" />
           <Row label="Nutrition data" value="USDA, CC0" />
+          {/* The version and build of this app (blind test round 2, N12). */}
+          <Text testID="profile-version" style={[type.caption, { color: theme.textMuted, padding: space.lg }]}>
+            {appVersionLine(
+              Constants.expoConfig?.version,
+              Platform.OS === 'ios' ? Constants.expoConfig?.ios?.buildNumber : Constants.expoConfig?.android?.versionCode,
+            )}
+          </Text>
         </Section>
 
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.xl, lineHeight: 19 }]}>

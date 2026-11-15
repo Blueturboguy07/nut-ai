@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { PROVIDER_MODELS, providersByPrice, type ProviderId } from '@nutai/prompt'
@@ -13,6 +13,7 @@ import {
   connectPublik,
   loadPublikInstall,
   loadPublikWallet,
+  onPublikWallet,
   publikAvailable,
   publikBuildConfig,
   publikChoice,
@@ -130,6 +131,8 @@ export default function ProviderSettings() {
     })()
   }, [loadPublik])
   useFocusEffect(refresh)
+  // A wallet read after an AI call updates the plan card at once (blind test round 2, N2).
+  useEffect(() => onPublikWallet((w) => setPublikWallet(w)), [])
 
   function connect() {
     if (publikBusy) return
@@ -200,7 +203,11 @@ export default function ProviderSettings() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 120 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: space.lg, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
         <View style={styles.chipRow}>
           {chips.map((p) => (
             <Pressable
@@ -391,8 +398,8 @@ export default function ProviderSettings() {
               })}
             </View>
             <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
-              The cheapest vision model is the honest default: frontier models are not measurably
-              better at portion size, which is where nearly all the error lives.
+              We select the lowest-cost AI model that can read photos. The most expensive models
+              are not better at judging portion size, and portion size causes most of the error.
             </Text>
           </>
         ) : null}

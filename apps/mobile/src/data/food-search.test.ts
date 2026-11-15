@@ -57,6 +57,42 @@ describe('Food Database search', () => {
   })
 })
 
+describe('plain foods first, each food once (blind test round 2, Nov 15 2026, N6)', () => {
+  it('"rice" lists plain rice before foods that only contain the word', async () => {
+    const db = await nutritionDb([
+      [10, 'Rice noodles, cooked', 108],
+      [11, 'Rice bran, crude', 316],
+      [12, 'Babyfood, cereal, rice, dry', 391],
+      [13, 'Rice, white, long-grain, regular, cooked, enriched, with salt', 130],
+      [14, 'Rice, brown, long-grain, cooked', 123],
+      [15, 'Crackers, rice', 416],
+    ])
+    const r = await searchFoods(db, 'rice')
+    expect(r.results.slice(0, 2).map((x) => x.name)).toEqual(['Rice, brown, long-grain, cooked', 'Rice, white, long-grain, regular, cooked, enriched, with salt'])
+    expect(r.results.at(-1)?.name).toBe('Babyfood, cereal, rice, dry')
+  })
+
+  it('"banana" lists "Bananas, raw" first, and a name that is in the corpus twice once', async () => {
+    const db = await nutritionDb([
+      [20, 'Babyfood, fruit, bananas with tapioca', 56],
+      [21, 'Bananas, raw', 89],
+      [22, 'Bananas, raw', 89],
+      [23, 'Banana chips', 519],
+      [24, 'Bananas, dehydrated, or banana powder', 346],
+    ])
+    const r = await searchFoods(db, 'banana')
+    expect(r.results[0]?.name).toBe('Bananas, raw')
+    expect(r.results.filter((x) => x.name === 'Bananas, raw')).toHaveLength(1)
+    expect(r.results).toHaveLength(4)
+  })
+
+  it('a query with no letters or digits finds nothing (and never reaches FTS syntax)', async () => {
+    const db = await nutritionDb([[1, 'Egg, whole, raw, fresh', 143]])
+    expect(await searchFoods(db, '"*()')).toEqual({ results: [], outcome: 'none' })
+    expect((await searchFoods(db, 'egg"*')).results).toHaveLength(1)
+  })
+})
+
 describe('the self-test fails loudly', () => {
   it('on an empty database (the build without the bundled asset)', async () => {
     const db = await nutritionDb([])

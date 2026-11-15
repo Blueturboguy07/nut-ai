@@ -130,17 +130,15 @@ maybe('the pipeline against the real USDA corpus', () => {
     }
   })
 
-  it('keeps displayed calories reproducible from displayed macros across many real foods', async () => {
+  it('shows the calories the food log will add, across many real foods (blind test round 2, N3)', async () => {
     const keys = [
       'chicken breast, grilled', 'rice, white, cooked', 'broccoli, raw', 'egg, whole, raw',
       'almonds', 'cheddar cheese', 'salmon, atlantic', 'sweet potato', 'spinach, raw', 'oats',
     ]
     for (const key of keys) {
       const r = await runPipeline(payload([item({ canonical_food_key: key })]), deps(), foodDb)
-      const t = r!.totals
-      expect(t.kcal, `mismatch for ${key}`).toBe(
-        Math.round(4 * t.protein_g + 4 * t.carbs_g + 9 * t.fat_g),
-      )
+      const saved = r!.meal.ingredients.reduce((s, row) => s + (row.nutrientSnapshot.kcal * row.grams) / 100, 0) * r!.meal.portionEatenFraction
+      expect(r!.totals.kcal, `mismatch for ${key}`).toBe(Math.round(saved))
     }
   })
 

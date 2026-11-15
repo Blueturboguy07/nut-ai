@@ -24,14 +24,16 @@ account once, the first time you open it.
 - **No camera needed**: **Describe a meal** (write what you ate, get an AI estimate) and **Choose a
   photo** (a meal photo from your photo library) sit next to the camera, for a phone whose camera
   cannot be used. Both go through the same review screen as a camera photo.
-- **Food Database search** on the bundled USDA database: on the phone, no network, no key.
+- **Food Database search** on the bundled USDA database: on the phone, no network, no key. Plain
+  foods come first ("rice" finds plain rice, a name shows once). Pick the amount before you log it:
+  the food's servings with a realistic default (a medium banana, a large egg), a number of servings
+  or grams, and the live kcal and macros. Home lists each entry of the day with its amount and
+  kcal; tap one to change the grams or delete it.
 - **Web lookup for branded and restaurant food**: when the local database misses — or a logo in
   frame names a brand — one search against the provider's own tool transcribes the published
   nutrition facts, source URL attached. Menu ambiguity comes back as options that each carry their
   own macros, so answering "which sandwich?" is instant and free.
 - **Fix Result**: describe what's wrong in a sentence; only what you mention changes.
-- **A health score with a published formula** — fixed arithmetic over what you logged, reasons shown
-  on tap, never an "AI" number.
 - **Exercise logging** where Run and Weight lifting use MET × your body weight × minutes (no model),
   Describe is the one AI-estimated path and says so, and Manual is your number verbatim. Home lists
   the workouts of the day; they do not change your calorie target.

@@ -25,8 +25,12 @@ interface PublikLaunchNative {
   value(name: string): string | null
   printLine(line: string): void
   exit(): void
-  /** iOS: StoreKit's storefront country (ISO 3166-1 alpha-3, "USA"), or null. Android: "". */
+  /** iOS: StoreKit's storefront country (ISO 3166-1 alpha-3, "USA"), or null (always null on a simulator). Android: "". */
   storefrontCountry?(): Promise<string | null> | string | null
+  /** iOS: true on a simulator. Android: false. */
+  isSimulator?(): boolean
+  /** One line in the system log (NSLog, logcat), in every build. */
+  logLine?(line: string): void
 }
 
 // Loaded in every build for the storefront; the launch values stay test-build only (guards below).
@@ -53,6 +57,30 @@ export async function storefrontCountry(): Promise<string | null> {
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+/**
+ * true on an iOS simulator, false on a real phone (and on Android), null when
+ * it cannot be read (no module: Expo Go, unit tests). The purchase rule treats
+ * a simulator as "storefront unknown" (publik-core.ts storefrontReading).
+ */
+export function isSimulator(): boolean | null {
+  try {
+    const v = native?.isSimulator?.()
+    return typeof v === 'boolean' ? v : null
+  } catch {
+    return null
+  }
+}
+
+/** One line in the system log, in every build (a release build drops console.log). Never a secret. */
+export function logLine(line: string): void {
+  try {
+    native?.logLine?.(line)
+  } catch {
+    /* the console line below still says it */
+  }
+  console.log(line)
 }
 
 export function launchValue(name: string): string | null {

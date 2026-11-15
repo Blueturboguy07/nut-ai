@@ -109,6 +109,8 @@ export function OnboardingScreen({
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: 180 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
         >
           {body}
         </ScrollView>

@@ -75,6 +75,18 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The real food database, so food-amount.corpus.test.ts checks the
+      # default servings and the search order on the real USDA data
+      # (blind test round 2, N4 and N6).
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
       - name: Unit tests (apps/mobile)
         run: npx vitest run apps/mobile
       - name: Typecheck (apps/mobile)
@@ -93,20 +105,20 @@ jobs:
             store: '0'
             hooks: '1'
             artifact: ios-sim-app
-            zip: NutAI-0.1.8-simulator-arm64.zip
+            zip: NutAI-0.1.9-simulator-arm64.zip
           - name: optional
             gate: optional
             store: '0'
             hooks: '1'
             artifact: ios-sim-app-optional
-            zip: NutAI-0.1.8-optional-simulator-arm64.zip
+            zip: NutAI-0.1.9-optional-simulator-arm64.zip
           # The App Store build, for the simulator. Blind tests use this one.
           - name: store
             gate: required
             store: '1'
             hooks: '0'
             artifact: ios-sim-app-store
-            zip: NutAI-0.1.8-store-simulator-arm64.zip
+            zip: NutAI-0.1.9-store-simulator-arm64.zip
     env:
       PUBLIK_TEST_HOOKS: ${{ matrix.hooks }}
       EXPO_PUBLIC_PUBLIK_TEST_HOOKS: ${{ matrix.hooks }}
@@ -142,6 +154,11 @@ jobs:
         working-directory: apps/mobile
         run: |
           npx expo prebuild --platform ios --clean --no-install
+          # The launch screen in the app's colours, not white (blind test
+          # round 2, N9; plugins/withLaunchScreen.js).
+          grep -q 'image="LaunchMark"' ios/NutAI/SplashScreen.storyboard
+          grep -q 'red="0.043" green="0.043" blue="0.059"' ios/NutAI/SplashScreen.storyboard
+          test -s ios/NutAI/Images.xcassets/LaunchMark.imageset/LaunchMark.png
           command -v pod >/dev/null || brew install cocoapods
           cd ios && pod install
       - name: Build NutAI.app for the simulator (arm64, ad-hoc, no certificate)
@@ -176,10 +193,13 @@ jobs:
             const f = JSON.parse(require("fs").readFileSync(0, "utf8"))
             console.log("UIDeviceFamily =", JSON.stringify(f))
             if (JSON.stringify(f) !== "[1]") process.exit(1)'
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.8
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.9
           test "$(plutil -extract CFBundleVersion raw -o - "$P")" = "$APP_BUILD_NUMBER"
           # The label under the icon is the short name; the App Store and in-app name is "publik Nut AI".
           test "$(plutil -extract CFBundleDisplayName raw -o - "$P")" = "Nut AI"
+          # The launch screen (N9): the compiled storyboard is in the app.
+          test "$(plutil -extract UILaunchStoryboardName raw -o - "$P")" = SplashScreen
+          test -d "$APP/SplashScreen.storyboardc"
           # The app does not use Face ID, so it asks for no Face ID permission.
           if plutil -extract NSFaceIDUsageDescription raw -o - "$P" >/dev/null 2>&1; then
             echo "NSFaceIDUsageDescription is in Info.plist"; exit 1
@@ -241,7 +261,7 @@ jobs:
             kill "$PID" 2>/dev/null || true
             echo "attempt $attempt:"
             grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; }
-            if grep -q 'publik self-test: ok nut-ai 0.1.8' "$LOG"; then ok=1; break; fi
+            if grep -q 'publik self-test: ok nut-ai 0.1.9' "$LOG"; then ok=1; break; fi
             grep -q 'not reachable' "$LOG" || break
             sleep 15
           done
@@ -250,6 +270,32 @@ jobs:
           # (blind test round 1, B2: it never loaded and "egg" found nothing).
           grep 'food-db self-test:' "$LOG" || { echo "No food-db self-test line. Log:"; cat "$LOG"; exit 1; }
           grep -q 'food-db self-test: ok' "$LOG"
+          # The plan line that Profile and AI provider show, for a demo-like
+          # prepaid wallet (blind test round 2, N2): the same self-test against
+          # a fake publik on this runner (apps/mobile/scripts/fake-publik.mjs;
+          # its wallet is apps/mobile/src/inference/fixtures/demo-wallets.json).
+          # It prints paths only, never a body or a header.
+          node apps/mobile/scripts/fake-publik.mjs 8787 prepaid > "$RUNNER_TEMP/fake-publik.log" 2>&1 &
+          FAKE=$!
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8787/api/v1/wallet && break
+            sleep 1
+          done
+          LOG="$RUNNER_TEMP/selftest-plan.log"
+          SIMCTL_CHILD_PUBLIK_SELF_TEST=1 SIMCTL_CHILD_PUBLIK_API_BASE_URL=http://127.0.0.1:8787/api/v1 \
+            xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+          PID=$!
+          for i in $(seq 1 300); do
+            grep -q 'food-db self-test:' "$LOG" && break
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+          done
+          sleep 2
+          kill "$PID" 2>/dev/null || true
+          kill "$FAKE" 2>/dev/null || true
+          cat "$RUNNER_TEMP/fake-publik.log"
+          grep 'publik self-test:\|publik plan line:' "$LOG" || { echo "No self-test line with the fake publik. Log:"; cat "$LOG"; exit 1; }
+          grep -q 'publik plan line: 62% left of your prepaid balance' "$LOG"
       - name: Launch smoke on a simulator (store build, no test hooks)
         if: matrix.hooks != '1'
         run: |
@@ -261,19 +307,31 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
-          OUT=$(xcrun simctl launch "$UDID" com.nutai.app)
-          echo "$OUT"
-          PID=${OUT##*: }
-          test -n "$PID"
+          # OS_ACTIVITY_DT_MODE: the app's system log lines also go to the
+          # console, as under Xcode.
+          LOG="$RUNNER_TEMP/store-launch.log"
+          SIMCTL_CHILD_OS_ACTIVITY_DT_MODE=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+          PID=$!
           # A crash at start ends the process; 25 seconds covers the start and
           # the first import of the bundled food database.
           sleep 25
-          if ps -p "$PID" >/dev/null; then
-            echo "The store build is running after 25 s (pid $PID)."
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "The store build is running after 25 s."
           else
-            echo "The store build is not running after 25 s."; exit 1
+            echo "The store build is not running after 25 s. Log:"; cat "$LOG"; exit 1
           fi
+          # The purchase rule on a simulator (blind test round 2, N1): the
+          # storefront is unknown, so no "Get a plan" button anywhere, and the
+          # Google sentence instead. The app writes its start line to the
+          # system log (publik-core.ts purchaseLinksLogLine).
+          xcrun simctl spawn "$UDID" log show --last 3m --style compact \
+            --predicate 'eventMessage CONTAINS "publik storefront:"' >> "$LOG" 2>&1 || true
+          kill "$PID" 2>/dev/null || true
           xcrun simctl terminate "$UDID" com.nutai.app || true
+          grep 'publik storefront:' "$LOG" | head -3 || true
+          grep -q 'publik storefront: unknown (simulator) · purchase links: off' "$LOG" || { echo "No purchase-rule line. Log:"; tail -50 "$LOG"; exit 1; }
+          grep -qF 'To get a plan, search for "publik" on Google.' "$LOG"
+          if grep -q 'purchase links: on' "$LOG"; then echo "Purchase links are on in the App Store build on a simulator"; exit 1; fi
 
   android-apk:
     runs-on: ubuntu-latest
@@ -346,13 +404,13 @@ jobs:
         run: |
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
           mkdir -p "$RUNNER_TEMP/out"
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.8-test.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk"
           # The food database is inside the APK (blind test round 1, B2).
-          unzip -l "$RUNNER_TEMP/out/nut-ai-0.1.8-test.apk" | awk '$4 ~ /nutrition|\.db$/ && $1 > 1000000 { print; ok = 1 } END { exit !ok }'
+          unzip -l "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk" | awk '$4 ~ /nutrition|\.db$/ && $1 > 1000000 { print; ok = 1 } END { exit !ok }'
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: ${{ runner.temp }}/out/nut-ai-0.1.8-test.apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.9-test.apk
           if-no-files-found: error
       - name: Keys stay out of Android backups (merged manifest)
         working-directory: apps/mobile/android
@@ -364,10 +422,10 @@ jobs:
           R=$(find app/build/intermediates -name 'secure_store_backup_rules.xml' -print -quit)
           if [ -n "$R" ]; then echo "== $R"; cat "$R"; fi
           grep -q 'android:fullBackupContent=' "$M"
-          grep -q 'android:versionName="0.1.8"' "$M"
+          grep -q 'android:versionName="0.1.9"' "$M"
       - name: The app token in the APK came from the build input (never printed)
         run: |
-          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.8-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
           node -e '
             const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
             const t = c.extra && c.extra.publikAppToken

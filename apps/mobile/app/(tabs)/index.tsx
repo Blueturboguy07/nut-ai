@@ -1,22 +1,29 @@
 import { router, useFocusEffect } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle } from 'react-native-svg'
 import { Icon, type IconName } from '../../src/components/Icon'
+import { KEYBOARD_DONE_ID, KeyboardDoneBar } from '../../src/components/KeyboardDone'
+import { parseGrams } from '../../src/data/food-amount'
 import {
+  changeEntryGrams,
   currentGoal,
+  dayEntries,
   dayTotals,
   deleteExercise,
   exerciseOn,
   localDate,
+  removeEntry,
   runAdaptive,
   type AdaptiveOutcome,
   type CurrentGoal,
+  type DayEntry,
   type DayTotals,
   type ExerciseEntry,
 } from '../../src/data/repo'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { markFirstScreenReady } from '../../src/components/LaunchScreen'
 import { StatusBarScrim } from '../../src/components/StatusBarScrim'
 import { APP_NAME } from '../../src/inference/publik-copy'
 import { radius, space, tap, tapIcon, type } from '../../src/theme/tokens'
@@ -40,8 +47,10 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
  * Every number on Home comes from the food log (App Store 2.1, Nov 14 2026):
  * the fixed streak pill, the fixed fiber/sugar/sodium cards, the "N/A" health
  * score, the steps card and the water card (its button did nothing) were
- * removed. The real streak is on Progress; the real health score is on each
- * scan result.
+ * removed. The real streak is on Progress. (The health score on a scan
+ * result was removed too, blind test round 2, N5: an unexplained score and a
+ * health claim.) Each food log entry of the day is listed with its amount and
+ * kcal, and can be changed or deleted (N4).
  */
 export default function Home() {
   const theme = useTheme()
@@ -51,6 +60,7 @@ export default function Home() {
   const [totals, setTotals] = useState<DayTotals | null>(null)
   const [adaptive, setAdaptive] = useState<AdaptiveOutcome | null>(null)
   const [workouts, setWorkouts] = useState<ExerciseEntry[]>([])
+  const [entries, setEntries] = useState<DayEntry[]>([])
   const [round, setRound] = useState(0)
   const [offset, setOffset] = useState(0)
 
@@ -60,19 +70,27 @@ export default function Home() {
     useCallback(() => {
       let alive = true
       void (async () => {
-        // The adaptive loop runs BEFORE reading the goal, so a target it just
-        // changed is the one rendered. Its own gates decide whether it may act.
-        const outcome = await runAdaptive(Date.now())
-        const [g, t, w] = await Promise.all([
+        // The day first, so the first screen is not held up (blind test round
+        // 2, N9: a cold start waited on all of this behind a white screen).
+        const [g, t, w, e] = await Promise.all([
           currentGoal(),
           dayTotals(localDate(selected)),
           exerciseOn(localDate(selected)).catch(() => [] as ExerciseEntry[]),
+          dayEntries(localDate(selected)).catch(() => [] as DayEntry[]),
         ])
         if (!alive) return
-        setAdaptive(outcome)
         setGoal(g)
         setTotals(t)
         setWorkouts(w)
+        setEntries(e)
+        markFirstScreenReady()
+        // Then the adaptive loop. Its own gates decide whether it may act; a
+        // target it changes shows at once, with its explanation.
+        const outcome = await runAdaptive(Date.now()).catch(() => null)
+        if (!alive || !outcome) return
+        setAdaptive(outcome)
+        const after = await currentGoal()
+        if (alive) setGoal(after)
       })()
       return () => {
         alive = false
@@ -109,6 +127,8 @@ export default function Home() {
         style={{ backgroundColor: theme.bg }}
         contentContainerStyle={{ paddingTop: insets.top + space.sm, paddingBottom: 150 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
       >
         {/* Header */}
         <View style={styles.header}>
@@ -223,10 +243,13 @@ export default function Home() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent' }]}>
-              <Text style={[type.bodyStrong, { color: theme.text }]}>
-                {totals.mealCount} {totals.mealCount === 1 ? 'meal' : 'meals'} logged
+            <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent', marginTop: space.md }]}>
+              <Text style={[type.caption, { color: theme.textMuted }]}>
+                {totals.mealCount} {totals.mealCount === 1 ? 'meal' : 'meals'} logged · tap an entry to change the amount
               </Text>
+              {entries.map((e) => (
+                <EntryRow key={e.itemId} entry={e} onChanged={() => setRound((n) => n + 1)} />
+              ))}
               {totals.pendingCount > 0 ? (
                 <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
                   +{totals.pendingCount} still analyzing — not counted yet
@@ -237,6 +260,88 @@ export default function Home() {
         </View>
       </ScrollView>
       <StatusBarScrim />
+      <KeyboardDoneBar />
+    </View>
+  )
+}
+
+/**
+ * One food log entry on Home: name, amount and kcal (blind test round 2,
+ * N4). Tap it to change the grams or delete it.
+ */
+function EntryRow({ entry, onChanged }: { entry: DayEntry; onChanged: () => void }) {
+  const theme = useTheme()
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState(String(Math.round(entry.grams * 10) / 10))
+  const [busy, setBusy] = useState(false)
+  const grams = parseGrams(text)
+  const time = new Date(entry.loggedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+
+  function save() {
+    if (grams == null || busy) return
+    setBusy(true)
+    void changeEntryGrams(entry.itemId, grams)
+      .then(() => { setOpen(false); onChanged() })
+      .finally(() => setBusy(false))
+  }
+
+  function remove() {
+    Alert.alert('Delete this entry?', entry.name, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => void removeEntry(entry.itemId).finally(onChanged),
+      },
+    ])
+  }
+
+  return (
+    <View style={[styles.entry, { borderColor: theme.border }]}>
+      <Pressable
+        testID={`home-entry-${entry.itemId}`}
+        accessibilityRole="button"
+        accessibilityLabel={`${entry.name}, ${Math.round(entry.grams)} grams, ${entry.kcal} kcal`}
+        onPress={() => setOpen((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 44 }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={[type.body, { color: theme.text }]} numberOfLines={2}>{entry.name}</Text>
+          <Text style={[type.caption, { color: theme.textMuted }]}>
+            {Math.round(entry.grams * 10) / 10} g · {time}{entry.isEstimate ? ' · estimate' : ''}
+          </Text>
+        </View>
+        <Text style={[type.bodyStrong, { color: theme.text }]}>{entry.kcal} kcal</Text>
+      </Pressable>
+      {open ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm }}>
+          <TextInput
+            accessibilityLabel={`Grams of ${entry.name}`}
+            value={text}
+            onChangeText={setText}
+            keyboardType="decimal-pad"
+            inputAccessoryViewID={KEYBOARD_DONE_ID}
+            style={[styles.gramsInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.bgElevated }]}
+          />
+          <Text style={[type.body, { color: theme.textMuted }]}>g</Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={grams == null || busy}
+            onPress={save}
+            style={[styles.entryButton, { backgroundColor: theme.text }, (grams == null || busy) && { opacity: 0.5 }]}
+          >
+            <Text style={[type.label, { color: theme.bg }]}>Save</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${entry.name}`}
+            onPress={remove}
+            style={[styles.entryButton, { borderColor: theme.border, borderWidth: 1 }]}
+          >
+            <Text style={[type.label, { color: theme.text }]}>Delete</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -413,4 +518,22 @@ const styles = StyleSheet.create({
     padding: space.lg, borderRadius: radius.lg,
   },
   skeleton: { height: 8, borderRadius: 4 },
+  entry: { paddingVertical: space.sm, borderTopWidth: StyleSheet.hairlineWidth, marginTop: space.sm },
+  gramsInput: {
+    width: 96,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    fontSize: 16,
+    minHeight: 44,
+    textAlign: 'right',
+  },
+  entryButton: {
+    paddingHorizontal: space.lg,
+    minHeight: 44,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 })

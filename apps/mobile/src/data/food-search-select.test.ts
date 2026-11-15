@@ -92,16 +92,40 @@ describe('resolveSelection + logManualFood — what a tap on a Food Database row
     expect(selection.grams).toBe(50) // the seeded is_fndds_default row, not the 100 g fallback
   })
 
-  it('scales the per-100g snapshot to the logged grams — 50 g of a 143 kcal/100g egg is ~71.5 kcal', async () => {
+  // Blind test round 2 (Nov 15 2026, N4): this test used to expect the
+  // snapshot SCALED to the grams (71.5 kcal), which the day totals then scaled
+  // a second time (one egg counted as 36 kcal; a banana as 450). The snapshot
+  // is per 100 g, like every other log path; the day total is 71.5 kcal.
+  it('stores the per-100 g snapshot, and the day total for 50 g of a 143 kcal/100 g egg is 71.5 kcal', async () => {
     const selection = await resolveSelection(nutritionDb, candidateFor('1', 'Egg, whole, raw, fresh', 143))
     const mealId = await logManualFood(userDb, selection, NOW)
 
-    const item = await userDb.get<{ snap_energy_kcal: number; snap_protein_g: number }>(
-      'SELECT snap_energy_kcal, snap_protein_g FROM log_items WHERE meal_id = ?',
+    const item = await userDb.get<{ snap_energy_kcal: number; snap_protein_g: number; grams: number }>(
+      'SELECT snap_energy_kcal, snap_protein_g, grams FROM log_items WHERE meal_id = ?',
       [mealId],
     )
-    expect(item?.snap_energy_kcal).toBeCloseTo(71.5, 1)
-    expect(item?.snap_protein_g).toBeCloseTo(6.3, 1)
+    expect(item?.snap_energy_kcal).toBeCloseTo(143, 5)
+    expect(item?.snap_protein_g).toBeCloseTo(12.6, 5)
+    const total = await userDb.get<{ kcal: number }>(
+      `SELECT SUM(li.snap_energy_kcal * li.grams / 100.0 * m.portion_eaten_fraction) AS kcal
+         FROM meals m JOIN log_items li ON li.meal_id = m.id WHERE m.id = ?`,
+      [mealId],
+    )
+    expect(total?.kcal).toBeCloseTo(71.5, 5)
+  })
+
+  it('repairs the rows older versions scaled twice, once', async () => {
+    const { fixScaledSearchSnapshots, SEARCH_SNAPSHOT_FIX_KEY } = await import('./manual-food')
+    const selection = await resolveSelection(nutritionDb, candidateFor('1', 'Egg, whole, raw, fresh', 143))
+    const mealId = await logManualFood(userDb, selection, NOW)
+    // What 0.1.8 stored: the snapshot already scaled to 50 g.
+    await userDb.run('UPDATE log_items SET snap_energy_kcal = 71.5, snap_protein_g = 6.3 WHERE meal_id = ?', [mealId])
+    expect(await fixScaledSearchSnapshots(userDb)).toBe(1)
+    const fixed = await userDb.get<{ snap_energy_kcal: number }>('SELECT snap_energy_kcal FROM log_items WHERE meal_id = ?', [mealId])
+    expect(fixed?.snap_energy_kcal).toBeCloseTo(143, 5)
+    // Done once: a second run changes nothing.
+    expect(await fixScaledSearchSnapshots(userDb)).toBe(0)
+    expect(await userDb.get('SELECT value FROM settings WHERE key = ?', [SEARCH_SNAPSHOT_FIX_KEY])).not.toBeNull()
   })
 
   it('falls back to 100 g when the corpus row has no portion data at all', async () => {

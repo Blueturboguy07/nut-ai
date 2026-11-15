@@ -1,14 +1,17 @@
 import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
-import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, InputAccessoryView, Keyboard, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { cheapestModel, type ProviderId } from '@nutai/prompt'
 import { CLAUDE_SUBSCRIPTION_TOKENS } from '../build-flags'
 import { putSetting } from '../data/repo'
 import { looksPlausible, saveCredential, type CredentialKind } from '../inference/credentials'
 import { validateCredential } from '../inference/pathA/validate'
 import { useTheme } from '../theme/ThemeProvider'
-import { radius, space, type } from '../theme/tokens'
+import { radius, space, tap, type } from '../theme/tokens'
 import { Icon } from './Icon'
+
+/** The keyboard bar of the key field (iOS). */
+const VERIFY_BAR_ID = 'credential-verify'
 
 /**
  * The credential entry + validation form, shared VERBATIM between onboarding
@@ -170,8 +173,35 @@ export function CredentialForm({
         autoCorrect={false}
         secureTextEntry={!ok}
         editable={!busy}
+        returnKeyType="done"
+        onSubmitEditing={() => void verify()}
+        // iOS: "Verify and save" rides on the keyboard (blind test round 2, N8).
+        inputAccessoryViewID={Platform.OS === 'ios' ? VERIFY_BAR_ID : undefined}
         style={[styles.input, { color: theme.text, backgroundColor: theme.bgSunken, borderColor: error ? theme.safety : theme.border }]}
       />
+
+      {Platform.OS === 'ios' ? (
+        <InputAccessoryView nativeID={VERIFY_BAR_ID}>
+          <View style={[styles.bar, { backgroundColor: theme.bgSunken, borderTopColor: theme.border }]}>
+            <Pressable accessibilityRole="button" onPress={() => Keyboard.dismiss()} style={[tap, { paddingHorizontal: space.md }]}>
+              <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
+            </Pressable>
+            {ok ? null : (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy || !plausible}
+                onPress={() => {
+                  Keyboard.dismiss()
+                  void verify()
+                }}
+                style={[styles.barVerify, { backgroundColor: theme.text }, (busy || !plausible) && { opacity: 0.4 }]}
+              >
+                <Text style={[type.bodyStrong, { color: theme.bg }]}>{busy ? 'Checking…' : 'Verify and save'}</Text>
+              </Pressable>
+            )}
+          </View>
+        </InputAccessoryView>
+      ) : null}
 
       {busy ? (
         <View style={{ marginTop: space.lg, alignItems: 'center' }}>
@@ -268,6 +298,21 @@ const styles = StyleSheet.create({
     minHeight: 54,
   },
   result: { marginTop: space.lg, padding: space.lg, borderRadius: radius.lg },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  barVerify: {
+    paddingHorizontal: space.lg,
+    minHeight: 44,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   verify: {
     marginTop: space.lg,
     paddingVertical: space.md,

@@ -9,6 +9,7 @@ import { closePublikLink, onPublikSignOut, openPublikLink, runPublikGate, setPub
 import type { Choice, GateAction, GateScreen, GateUI } from '../inference/publik-core'
 import { isAdult } from '../onboarding/adult'
 import { useTheme } from '../theme/ThemeProvider'
+import { markFirstScreenReady } from './LaunchScreen'
 import { StatusBarScrim } from './StatusBarScrim'
 import { radius, space, tap, type } from '../theme/tokens'
 
@@ -51,6 +52,8 @@ export function gateUI(setShown: (f: (s: Shown | null) => Shown | null) => void)
       new Promise<GateAction>((resolve, reject) => {
         if (!alive) return reject(new Error('closed'))
         void SplashScreen.hideAsync().catch(() => undefined)
+        // A sign-in screen is the first screen: the launch cover goes (N9).
+        markFirstScreenReady()
         cancel = () => reject(new Error('closed'))
         signal.addEventListener('abort', () => settle(screen))
         setShown(() => ({

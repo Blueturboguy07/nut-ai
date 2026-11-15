@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  APP_SLUG,
   APP_TOKEN_PLACEHOLDER,
   aiProvidersOf,
   appTokenOf,
   chargeUsdFromHeaders,
   classifyGatewayError,
   purchaseLinksFor,
+  purchaseLinksLogLine,
   purchaseLinksOn,
+  storefrontReading,
   setPurchaseLinks,
   gateWalletFromJson,
   notePlanResetsAt,
@@ -25,7 +28,7 @@ import {
   publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
-import { planLimitMessage, planStatusLine, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
+import { appVersionLine, planLimitMessage, planStatusLine, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -239,6 +242,15 @@ describe('the app token of a build', () => {
   })
 })
 
+describe('the version line in Profile (blind test round 2, N12)', () => {
+  it('names the app, the version and the build', () => {
+    expect(appVersionLine('0.1.9', '42')).toBe('publik Nut AI 0.1.9 (42)')
+    expect(appVersionLine('0.1.9', 42)).toBe('publik Nut AI 0.1.9 (42)')
+    expect(appVersionLine('0.1.9', undefined)).toBe('publik Nut AI 0.1.9')
+    expect(appVersionLine(undefined, null)).toBe('publik Nut AI unknown version')
+  })
+})
+
 describe('purchase links (the App Store rule)', () => {
   it('an App Store build shows them only in the US storefront; unknown = hidden', () => {
     expect(purchaseLinksFor(true, 'USA')).toBe(true)
@@ -246,8 +258,44 @@ describe('purchase links (the App Store rule)', () => {
     expect(purchaseLinksFor(true, 'US')).toBe(true)
     for (const c of ['GBR', 'CAN', 'DEU', 'IND', 'JPN', '', null, undefined]) expect(purchaseLinksFor(true, c)).toBe(false)
   })
-  it('a build that is not an App Store build shows them everywhere', () => {
+  it('a build that is not an App Store build shows them on a real phone', () => {
     for (const c of ['USA', 'GBR', null]) expect(purchaseLinksFor(false, c)).toBe(true)
+    for (const c of ['USA', 'GBR', null]) expect(purchaseLinksFor(false, c, 'device')).toBe(true)
+  })
+
+  // Blind test round 2 (Nov 15 2026, N1): StoreKit on a simulator reports the
+  // US storefront, so the App Store build on a simulator showed "Get a plan".
+  it('a simulator = storefront unknown, whatever StoreKit says', () => {
+    expect(storefrontReading(true, 'USA')).toEqual({ device: 'simulator', storefront: null, why: 'simulator' })
+    expect(storefrontReading(true, null)).toEqual({ device: 'simulator', storefront: null, why: 'simulator' })
+    const sim = storefrontReading(true, 'USA')
+    expect(purchaseLinksFor(true, sim.storefront, sim.device)).toBe(false)
+    // No purchase link on a simulator in any build.
+    expect(purchaseLinksFor(false, 'USA', 'simulator')).toBe(false)
+  })
+
+  it('only a real device that reports the USA shows them in an App Store build', () => {
+    const usa = storefrontReading(false, 'usa')
+    expect(usa).toEqual({ device: 'device', storefront: 'USA', why: 'read' })
+    expect(purchaseLinksFor(true, usa.storefront, usa.device)).toBe(true)
+    for (const c of ['GBR', 'CAN', '', null, undefined, 42, 'U.S.']) {
+      const r = storefrontReading(false, c)
+      expect(purchaseLinksFor(true, r.storefront, r.device)).toBe(false)
+    }
+    // No native module (or a read error): the device is unknown, so no link even for "USA".
+    const unknown = storefrontReading(null, 'USA')
+    expect(unknown.device).toBe('unknown')
+    expect(purchaseLinksFor(true, unknown.storefront, unknown.device)).toBe(false)
+  })
+
+  it('the start log line names the storefront, the rule and the Google sentence', () => {
+    expect(purchaseLinksLogLine(storefrontReading(true, 'USA'), false)).toBe(
+      'publik storefront: unknown (simulator) · purchase links: off · To get a plan, search for "publik" on Google.',
+    )
+    expect(purchaseLinksLogLine(storefrontReading(false, 'USA'), true)).toBe('publik storefront: USA (device) · purchase links: on')
+    expect(purchaseLinksLogLine(storefrontReading(false, null), false)).toBe(
+      'publik storefront: unknown (no answer) · purchase links: off · To get a plan, search for "publik" on Google.',
+    )
   })
   it('the module setting is what classifyGatewayError and gateScreen use by default', () => {
     const before = purchaseLinksOn()
@@ -361,7 +409,8 @@ describe('the publik pages the app opens', () => {
   })
 
   it('privacy and account deletion open publik\'s bare in-app pages', () => {
-    expect(PRIVACY_URL).toBe('https://publikhq.com/in-app/privacy')
+    // ?app=nut-ai: the page shows this app's summary (blind test round 2, N11).
+    expect(PRIVACY_URL).toBe(`https://publikhq.com/in-app/privacy?app=${APP_SLUG}`)
     expect(PUBLIK_DELETE_ACCOUNT_URL).toBe('https://publikhq.com/in-app/delete-account')
     expect(isSafePublikLink(PRIVACY_URL)).toBe(true)
     expect(isSafePublikLink(PUBLIK_DELETE_ACCOUNT_URL)).toBe(true)
@@ -612,10 +661,25 @@ describe('the plan state is true, and its use shows as a percent with a bar (bli
     expect(full.limitReached).toBe(true)
   })
 
+  it('prepaid: GET /wallet prepaid_remaining_percent is the percent left (blind test round 2, N2)', () => {
+    const w = walletFromJson({ plan: { kind: 'pack' }, balance_micros: 3_100_000, prepaid_remaining_percent: 62 }, 'claimed')
+    expect(w.prepaidRemainingPercent).toBe(62)
+    const s = planStatus(w)
+    expect(s).toEqual({ kind: 'prepaid', percent: 62, resetsAt: null, limitReached: false })
+    expect(planStatusLine(s, now)).toBe('62% left of your prepaid balance')
+    // A part of 1% left is 1%, not "used up"; 0 is used up; null falls back.
+    expect(planStatus({ ...w, prepaidRemainingPercent: 0.4 }).percent).toBe(1)
+    expect(planStatusLine(planStatus({ ...w, prepaidRemainingPercent: 0 }), now)).toBe('Prepaid balance used up')
+    expect(walletFromJson({ prepaid_remaining_percent: 140 }, 'claimed').prepaidRemainingPercent).toBe(100)
+    expect(walletFromJson({ prepaid_remaining_percent: '62' }, 'claimed').prepaidRemainingPercent).toBeNull()
+    expect(walletFromJson({ prepaid_remaining_percent: null }, 'claimed').prepaidRemainingPercent).toBeNull()
+    expect(emptyWallet('claimed').prepaidRemainingPercent).toBeNull()
+  })
+
   it('prepaid (a pack, or a balance with no plan): the percent LEFT', () => {
     const pack = planStatus(walletFromJson({ plan: { kind: 'pack' }, remaining_percent: 40, balance_micros: 1_000 }, 'claimed'))
     expect(pack).toEqual({ kind: 'prepaid', percent: 40, resetsAt: null, limitReached: false })
-    expect(planStatusLine(pack, now)).toBe('40% of your prepaid balance left')
+    expect(planStatusLine(pack, now)).toBe('40% left of your prepaid balance')
     const balance = planStatus(walletFromJson({ plan: { kind: 'none' }, balance_micros: 1_250_000 }, 'claimed'))
     expect(balance.kind).toBe('prepaid')
     expect(planStatusLine(balance, now)).toBe('Prepaid balance active')

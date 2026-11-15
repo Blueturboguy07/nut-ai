@@ -38,9 +38,30 @@ public class PublikLaunchModule: Module {
     }
 
     // Every build: the App Store storefront country (ISO 3166-1 alpha-3, "USA"), or nil.
-    // An App Store build shows links that sell a publik plan only in the US storefront.
+    // An App Store build shows links that sell a publik plan only on a real
+    // device in the US storefront. A simulator reports the US storefront too
+    // (blind test round 2, Nov 15 2026, N1), so a simulator answers nil: unknown.
     AsyncFunction("storefrontCountry") { () async -> String? in
+      #if targetEnvironment(simulator)
+      return nil
+      #else
       return await Storefront.current?.countryCode
+      #endif
+    }
+
+    // Every build: true on a simulator.
+    Function("isSimulator") { () -> Bool in
+      #if targetEnvironment(simulator)
+      return true
+      #else
+      return false
+      #endif
+    }
+
+    // Every build: one line in the system log (the purchase-link rule at start;
+    // CI reads it from the App Store build on a simulator). Never a secret.
+    Function("logLine") { (line: String) in
+      NSLog("%@", line)
     }
   }
 }

@@ -149,9 +149,9 @@ describe('display rounding — Regime B', () => {
     expect(d.protein_g).toBe(53)
     expect(d.fat_g).toBe(6.2)
     expect(d.carbs_g).toBe(50)
-    expect(d.kcal).toBe(468)
-    // The invariant the example was really demonstrating still holds exactly.
-    expect(d.kcal).toBe(Math.round(4 * d.protein_g + 4 * d.carbs_g + 9 * d.fat_g))
+    // Blind test round 2 (N3): the shown calories are the stored energy,
+    // rounded once (the number the food log adds), not 4/4/9 of the macros.
+    expect(d.kcal).toBe(481)
   })
 
   it('keeps one decimal below 10 g and whole grams at or above 10 g', () => {

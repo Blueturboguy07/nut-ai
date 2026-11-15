@@ -40,5 +40,16 @@ class PublikLaunchModule : Module() {
     Function("storefrontCountry") {
       ""
     }
+
+    // Android: no iOS simulator (the purchase-link rule, publik-core.ts purchaseLinksFor).
+    Function("isSimulator") {
+      false
+    }
+
+    // Every build: one line in logcat (tag "publik"). Never a secret.
+    Function("logLine") { line: String ->
+      Log.i("publik", line)
+      Unit
+    }
   }
 }

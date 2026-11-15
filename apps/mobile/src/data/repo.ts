@@ -12,6 +12,8 @@ import {
 import Storage from 'expo-sqlite/kv-store'
 import { ONBOARDING_DONE_KEY } from '../onboarding/done-key'
 import { EXPORT_TABLES, WIPE_ONLY_TABLES } from './backup-core'
+import { dayEntries as entriesOf, deleteEntry, setEntryGrams, type DayEntry } from './day-entries'
+import { fixScaledSearchSnapshots } from './manual-food'
 import { localDate, slotFor } from './date-utils'
 import { clearCredential } from '../inference/credentials'
 import { forgetPublikNow } from '../inference/publik'
@@ -34,6 +36,8 @@ export async function db(): Promise<DbAdapter> {
   if (cached) return cached
   const handle = await openUserDb()
   await migrate(handle, Date.now())
+  // Once per phone: the Food Database rows of versions up to 0.1.8 (manual-food.ts).
+  await fixScaledSearchSnapshots(handle).catch(() => 0)
   cached = handle
   return handle
 }
@@ -261,6 +265,24 @@ export async function dayTotals(date: string): Promise<DayTotals> {
     // is worse than a number that is visibly incomplete.
     pendingCount: pending?.c ?? 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// The day's entries (Home list: name, amount, kcal; change the amount, delete)
+// ---------------------------------------------------------------------------
+
+export type { DayEntry }
+
+export async function dayEntries(date: string): Promise<DayEntry[]> {
+  return entriesOf(await db(), date)
+}
+
+export async function changeEntryGrams(itemId: number, grams: number): Promise<void> {
+  await setEntryGrams(await db(), itemId, grams)
+}
+
+export async function removeEntry(itemId: number): Promise<void> {
+  await deleteEntry(await db(), itemId)
 }
 
 // ---------------------------------------------------------------------------

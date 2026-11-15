@@ -1,6 +1,6 @@
 import type { ScanFailure } from './pathA/client'
 import { startDeadline } from './deadline'
-import { APP_NAME, GET_A_PLAN_ELSEWHERE, linkButtonLabel, planLimitMessage, waitPhrase } from './publik-copy'
+import { APP_NAME, GET_A_PLAN_ELSEWHERE, linkButtonLabel, planLimitMessage, planStatusLine, waitPhrase } from './publik-copy'
 
 /**
  * publik API and Sign in with publik — the pure half of the publik module.
@@ -116,10 +116,56 @@ export function appTokenOf(buildInput: unknown, committed: unknown, devBuild: bo
  * not an App Store build (Android, a dev build, a CI test build) shows the
  * links as before.
  */
-export function purchaseLinksFor(appStoreBuild: boolean, storefront: string | null | undefined): boolean {
+export function purchaseLinksFor(
+  appStoreBuild: boolean,
+  storefront: string | null | undefined,
+  device: DeviceKind = 'device',
+): boolean {
+  // A simulator never shows one, in any build (blind test round 2, N1).
+  if (device === 'simulator') return false
   if (!appStoreBuild) return true
+  // An App Store build: only a real device that reports the US storefront.
+  if (device !== 'device') return false
   const country = typeof storefront === 'string' ? storefront.trim().toUpperCase() : ''
   return country === 'USA' || country === 'US'
+}
+
+/** Where the app runs: a real phone, an iOS simulator, or not known (no native module). */
+export type DeviceKind = 'device' | 'simulator' | 'unknown'
+
+export interface StorefrontReading {
+  device: DeviceKind
+  /** The storefront country ("USA"), or null: unknown. */
+  storefront: string | null
+  /** Why the storefront is unknown, for the start log line. */
+  why: 'read' | 'simulator' | 'no answer'
+}
+
+/**
+ * The storefront as the purchase rule reads it. Blind test round 2 (Nov 15
+ * 2026, N1): the App Store build on a simulator showed "Get a plan", because
+ * StoreKit on a simulator reports the US storefront. A simulator is
+ * "storefront unknown", whatever StoreKit says (the sister app Lunara does
+ * the same). Pure, for the unit tests.
+ */
+export function storefrontReading(isSimulator: boolean | null, country: unknown): StorefrontReading {
+  if (isSimulator === true) return { device: 'simulator', storefront: null, why: 'simulator' }
+  const device: DeviceKind = isSimulator === false ? 'device' : 'unknown'
+  const c = typeof country === 'string' ? country.trim().toUpperCase() : ''
+  return /^[A-Z]{2,3}$/.test(c) ? { device, storefront: c, why: 'read' } : { device, storefront: null, why: 'no answer' }
+}
+
+/**
+ * The start log line of the purchase rule; CI reads it from the App Store
+ * build on a simulator (mobile-build.yml): "publik storefront: unknown
+ * (simulator) · purchase links: off · To get a plan, search for "publik" on
+ * Google."
+ */
+export function purchaseLinksLogLine(r: StorefrontReading, on: boolean): string {
+  const where = r.storefront ? `${r.storefront} (${r.device})` : `unknown (${r.why === 'simulator' ? 'simulator' : r.why})`
+  return on
+    ? `publik storefront: ${where} · purchase links: on`
+    : `publik storefront: ${where} · purchase links: off · ${GET_A_PLAN_ELSEWHERE}`
 }
 
 /** This phone's answer. publik.ts sets it at start (off in an App Store build until the storefront says USA). */
@@ -178,6 +224,11 @@ export interface PublikWallet {
    * snapshot an older version stored). planStatus() reads it.
    */
   planKind: 'plan' | 'pack' | 'none' | null
+  /**
+   * GET /wallet `prepaid_remaining_percent`: the percent of a prepaid balance
+   * left, 0-100; null when publik did not send it (blind test round 2, N2).
+   */
+  prepaidRemainingPercent: number | null
 }
 
 /** One truth for "is this phone linked": the wallet publik sent last, else the install (Keychain). */
@@ -416,6 +467,7 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
     addCreditUrl: isSafePublikLink(w.add_credit_url) ? w.add_credit_url : null,
     aiProviders: aiProvidersOf(w.ai_providers),
     planKind: w.plan?.kind === 'plan' || w.plan?.kind === 'pack' || w.plan?.kind === 'none' ? w.plan.kind : null,
+    prepaidRemainingPercent: percentOf(w.prepaid_remaining_percent),
   }
 }
 
@@ -510,6 +562,7 @@ export function emptyWallet(claimState: PublikWallet['claimState'] = 'anonymous'
     addCreditUrl: null,
     aiProviders: null,
     planKind: null,
+    prepaidRemainingPercent: null,
   }
 }
 
@@ -566,7 +619,7 @@ export interface PlanStatus {
 type PlanStatusWallet = Pick<
   PublikWallet,
   'usedPercent' | 'resetsAt' | 'weekUsedMicros' | 'weekBudgetMicros' | 'weekResetsAt' | 'balanceMicros'
-> & { planKind?: PublikWallet['planKind'] }
+> & { planKind?: PublikWallet['planKind']; prepaidRemainingPercent?: PublikWallet['prepaidRemainingPercent'] }
 
 export function planStatus(w: PlanStatusWallet): PlanStatus {
   const use = planUse(w)
@@ -589,7 +642,16 @@ export function planStatus(w: PlanStatusWallet): PlanStatus {
               : 'none'
   if (kind === 'none') return { kind, percent: null, resetsAt: null, limitReached: false }
   if (kind === 'prepaid') {
-    const left = use.usedPercent == null ? null : 100 - use.usedPercent
+    // publik's prepaid_remaining_percent first (N2); a part of 1% shows as 1%.
+    const fromPublik = w.prepaidRemainingPercent ?? null
+    const left =
+      fromPublik != null
+        ? fromPublik > 0 && fromPublik < 1
+          ? 1
+          : Math.floor(fromPublik)
+        : use.usedPercent == null
+          ? null
+          : 100 - use.usedPercent
     return { kind, percent: left, resetsAt: null, limitReached: left === 0 || (left == null && w.balanceMicros != null && balance <= 0) }
   }
   return { kind, percent: use.usedPercent, resetsAt: use.resetsAt, limitReached: use.limitReached }
@@ -767,7 +829,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.8'
+export const APP_VERSION = '0.1.9'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -1251,7 +1313,13 @@ export async function selfTest(d: GateDevice): Promise<string> {
     if (!p.ok) return `publik self-test: failed: ${provisionGateMessage(p, d.cfg) ?? UNREACHABLE_MESSAGE}`
     const r = await readWallet(d, p.key)
     if (!r.wallet) return `publik self-test: failed: ${r.message ?? `GET /wallet answered ${r.status}`}`
-    return `publik self-test: ok ${APP_SLUG} ${APP_VERSION}`
+    const ok = `publik self-test: ok ${APP_SLUG} ${APP_VERSION}`
+    // A linked phone: the plan line that Profile and AI provider show, from
+    // this wallet (blind test round 2, N2; CI reads it with a fake publik).
+    if (r.snapshot && r.wallet.claimState === 'claimed') {
+      return `${ok}\npublik plan line: ${planStatusLine(planStatus(r.snapshot))}`
+    }
+    return ok
   } catch (e) {
     return `publik self-test: failed: ${e instanceof PublikUnreachable ? UNREACHABLE_MESSAGE : e instanceof Error ? e.message : String(e)}`
   }
