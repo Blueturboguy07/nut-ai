@@ -197,7 +197,8 @@ const config: ExpoConfig = {
     ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
     'expo-sqlite',
     ...(SKIP_HEALTHKIT
-      ? []
+      ? // HealthKit off: the library stays out of the iOS build (ITMS-90683).
+        ['./plugins/withoutHealthKitPod']
       : ([
           [
             '@kingstinct/react-native-healthkit',

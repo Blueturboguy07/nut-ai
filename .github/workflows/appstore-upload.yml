@@ -288,7 +288,7 @@ jobs:
             console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
             if (!ok) process.exit(1)' "$CONF"
           # HealthKit is off (SKIP_HEALTHKIT is not 0), so no binary in the app may link HealthKit
-          # (react-native.config.js): App Store Connect refuses that without the Health purpose strings.
+          # (plugins/withoutHealthKitPod.js): App Store Connect refuses that without the Health purpose strings.
           if [ "${SKIP_HEALTHKIT:-}" != 0 ]; then
             HK=$(find "$APP" -type f -perm +111 -exec sh -c 'otool -L "$1" 2>/dev/null | grep -q HealthKit.framework && echo "$1"' _ {} \; || true)
             [ -z "$HK" ] || { echo "::error::HealthKit is off, but these binaries link HealthKit.framework: $HK"; exit 1; }
