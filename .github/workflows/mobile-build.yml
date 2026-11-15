@@ -1,0 +1,511 @@
+# Sign in with publik: the unit tests, then the test builds of the phone app.
+#
+#   ios-sim-app           NutAI.app for the iOS SIMULATOR (arm64, Release: the
+#                         JS bundle is inside), PUBLIK_GATE_MODE=required (the
+#                         default), zipped. No certificate and no team: only
+#                         Xcode's ad-hoc "Sign to Run Locally" signature,
+#                         because the simulator keychain (SecureStore, where
+#                         the app keeps its publik key) refuses an app with no
+#                         signature. The job also runs the publik self-test on
+#                         a simulator.
+#   ios-sim-app-optional  the same with PUBLIK_GATE_MODE=optional (no wall). A
+#                         test artifact only: an App Store build is always
+#                         required (the native build fails otherwise).
+#   ios-sim-app-store     the same app built as the App Store build is built:
+#                         EXPO_PUBLIC_APP_STORE_BUILD=1, the required gate, the
+#                         test hooks OFF, the app token from the secret;
+#                         simulator arm64, ad-hoc signed. BLIND TESTS USE THIS
+#                         ONE (blind test round 1, Nov 14 2026: the tester used
+#                         ios-sim-app, a test build, and saw its purchase
+#                         button). No self-test (no hooks): a launch smoke.
+#   android-debug-apk     a test APK: the release variant (the JS bundle is
+#                         inside, no Metro, no dev launcher), debuggable,
+#                         signed with the debug key, cleartext allowed for a
+#                         local fake publik.
+#   android-release-check no artifact: a release build with the test hooks
+#                         OFF, as a store build is made, to prove it builds,
+#                         and that the build rules hold.
+#
+# ios-sim-app, ios-sim-app-optional and android-debug-apk are CI TEST-HOOKS
+# builds: PUBLIK_TEST_HOOKS=1 (native, at pod install and in Gradle) and
+# EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1 (JS, at bundle time) compile in the launch
+# values PUBLIK_SELF_TEST and PUBLIK_API_BASE_URL. A test-hooks build is never
+# an App Store build: EXPO_PUBLIC_APP_STORE_BUILD=0 there, and a build with
+# both fails (plugins/withPublikTokenCheck.js).
+#
+# Every app build bundles the food database (apps/mobile/assets/nutrition.db,
+# built by `npm run data:build`, cached by the hash of its sources). It is not
+# in git. Blind test round 1 (Nov 14 2026, B2): CI never built it, so the
+# Food Database was empty; the app now fails to bundle without it, the iOS
+# jobs check that it is inside the app, and the self-test searches it for
+# "egg" in the built app ("food-db self-test: ok").
+#
+# The app token comes ONLY from the repo secret PUBLIK_APP_TOKEN, passed as
+# the build input PUBLIK_APP_TOKEN to the native build steps (expo-constants
+# writes it into the app from app.config.ts). The committed
+# apps/mobile/publik-build.json holds the placeholder. The token is never
+# printed. Nothing here signs for a store, tags or releases.
+
+name: mobile build
+
+on:
+  push:
+    branches: [signin-gate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: '1'
+  EXPO_NO_TELEMETRY: '1'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The real food database, so food-amount.corpus.test.ts checks the
+      # default servings and the search order on the real USDA data
+      # (blind test round 2, N4 and N6).
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
+      - name: Unit tests (apps/mobile)
+        run: npx vitest run apps/mobile
+      - name: Typecheck (apps/mobile)
+        run: npm --prefix apps/mobile run typecheck
+
+  ios-sim:
+    name: ios-sim (${{ matrix.name }})
+    runs-on: macos-26
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: required
+            gate: required
+            store: '0'
+            hooks: '1'
+            artifact: ios-sim-app
+            zip: NutAI-0.1.9-simulator-arm64.zip
+          - name: optional
+            gate: optional
+            store: '0'
+            hooks: '1'
+            artifact: ios-sim-app-optional
+            zip: NutAI-0.1.9-optional-simulator-arm64.zip
+          # The App Store build, for the simulator. Blind tests use this one.
+          - name: store
+            gate: required
+            store: '1'
+            hooks: '0'
+            artifact: ios-sim-app-store
+            zip: NutAI-0.1.9-store-simulator-arm64.zip
+    env:
+      PUBLIK_TEST_HOOKS: ${{ matrix.hooks }}
+      EXPO_PUBLIC_PUBLIK_TEST_HOOKS: ${{ matrix.hooks }}
+      EXPO_PUBLIC_APP_STORE_BUILD: ${{ matrix.store }}
+      EXPO_PUBLIC_PUBLIK_GATE_MODE: ${{ matrix.gate }}
+      APP_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
+      - name: The food database is there and finds egg
+        run: |
+          node --disable-warning=ExperimentalWarning -e '
+            const { DatabaseSync } = require("node:sqlite")
+            const db = new DatabaseSync("apps/mobile/assets/nutrition.db", { readOnly: true })
+            const foods = db.prepare("SELECT COUNT(*) AS c FROM foods").get().c
+            const egg = db.prepare("SELECT COUNT(*) AS c FROM food_fts WHERE food_fts MATCH ?").get("egg").c
+            console.log("nutrition.db:", foods, "foods,", egg, "full-text matches for egg")
+            if (foods < 1000 || egg < 1) process.exit(1)'
+      - name: Prebuild ios/
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform ios --clean --no-install
+          # The launch screen in the app's colours, not white (blind test
+          # round 2, N9; plugins/withLaunchScreen.js).
+          grep -q 'image="LaunchMark"' ios/NutAI/SplashScreen.storyboard
+          grep -q 'red="0.043" green="0.043" blue="0.059"' ios/NutAI/SplashScreen.storyboard
+          test -s ios/NutAI/Images.xcassets/LaunchMark.imageset/LaunchMark.png
+          command -v pod >/dev/null || brew install cocoapods
+          cd ios && pod install
+      - name: Build NutAI.app for the simulator (arm64, ad-hoc, no certificate)
+        working-directory: apps/mobile/ios
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: |
+          set -o pipefail
+          xcodebuild -workspace NutAI.xcworkspace -scheme NutAI -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            -quiet build
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/NutAI.app"
+          test -d "$APP"
+          lipo -info "$APP/NutAI"
+          codesign -dv "$APP" 2>&1 | grep -E '^(Identifier|Signature|TeamIdentifier)=' || true
+          mkdir -p "$RUNNER_TEMP/out"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/out/${{ matrix.zip }}"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/out/${{ matrix.zip }}
+          if-no-files-found: error
+      - name: App Store settings in the built app
+        run: |
+          P="$APP/Info.plist"
+          for k in CFBundleDisplayName CFBundleShortVersionString CFBundleVersion ITSAppUsesNonExemptEncryption; do
+            printf '%s = %s\n' "$k" "$(plutil -extract "$k" raw -o - "$P")"
+          done
+          plutil -extract UIDeviceFamily json -o - "$P" | node -e '
+            const f = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            console.log("UIDeviceFamily =", JSON.stringify(f))
+            if (JSON.stringify(f) !== "[1]") process.exit(1)'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.9
+          test "$(plutil -extract CFBundleVersion raw -o - "$P")" = "$APP_BUILD_NUMBER"
+          # The label under the icon is the short name; the App Store and in-app name is "publik Nut AI".
+          test "$(plutil -extract CFBundleDisplayName raw -o - "$P")" = "Nut AI"
+          # The launch screen (N9): the compiled storyboard is in the app.
+          test "$(plutil -extract UILaunchStoryboardName raw -o - "$P")" = SplashScreen
+          test -d "$APP/SplashScreen.storyboardc"
+          # The app does not use Face ID, so it asks for no Face ID permission.
+          if plutil -extract NSFaceIDUsageDescription raw -o - "$P" >/dev/null 2>&1; then
+            echo "NSFaceIDUsageDescription is in Info.plist"; exit 1
+          fi
+          echo "NSFaceIDUsageDescription: absent"
+          test -f "$APP/PrivacyInfo.xcprivacy"
+          plutil -convert json -o - "$APP/PrivacyInfo.xcprivacy" | node -e '
+            const m = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            console.log("NSPrivacyTracking =", m.NSPrivacyTracking)
+            for (const a of m.NSPrivacyAccessedAPITypes) console.log(a.NSPrivacyAccessedAPIType, a.NSPrivacyAccessedAPITypeReasons.join(","))
+            for (const c of m.NSPrivacyCollectedDataTypes) console.log(c.NSPrivacyCollectedDataType, "linked:", c.NSPrivacyCollectedDataTypeLinked, "tracking:", c.NSPrivacyCollectedDataTypeTracking)
+            const o = m.NSPrivacyCollectedDataTypes.find((c) => c.NSPrivacyCollectedDataType === "NSPrivacyCollectedDataTypeOtherUserContent")
+            if (m.NSPrivacyTracking !== false || !o || o.NSPrivacyCollectedDataTypeLinked !== false || o.NSPrivacyCollectedDataTypeTracking !== false) process.exit(1)
+            if (o.NSPrivacyCollectedDataTypePurposes.join() !== "NSPrivacyCollectedDataTypePurposeAppFunctionality") process.exit(1)'
+          grep -q 'Check publik build settings' NutAI.xcodeproj/project.pbxproj
+          # The food database is inside the app (blind test round 1, B2).
+          DB=$(find "$APP" -name '*.db' -size +1000k -print -quit)
+          test -n "$DB" || { echo "No bundled food database in the app"; exit 1; }
+          ls -l "$DB"
+          # The app token came from the build input: a token-shaped value, not
+          # the placeholder, in the app config inside the app. Never printed.
+          CONF=$(find "$APP" -name app.config -print -quit)
+          test -n "$CONF"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$CONF"
+        working-directory: apps/mobile/ios
+      - name: publik self-test on a simulator (test-hooks builds)
+        if: matrix.hooks == '1'
+        run: |
+          UDID=$(xcrun simctl list devices available -j | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices
+            const all = Object.entries(d).filter(([rt]) => /iOS/.test(rt)).sort(([a], [b]) => b.localeCompare(a, undefined, { numeric: true }))
+            for (const [, list] of all) { const p = list.find((x) => /^iPhone/.test(x.name)); if (p) { console.log(p.udid); break } }')
+          test -n "$UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          # A simulator that just booted can be without network for a short
+          # time, so a "not reachable" answer gets up to 3 launches. Any other
+          # answer is final.
+          ok=0
+          for attempt in 1 2 3; do
+            LOG="$RUNNER_TEMP/selftest-$attempt.log"
+            SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+            PID=$!
+            # Up to 300 s: the lines come only after the bundled food
+            # database is imported and searched, on a simulator that has just
+            # booted (run 43687730207: 97 s in one job, over 120 s in the other).
+            for i in $(seq 1 300); do
+              grep -q 'publik self-test:' "$LOG" && break
+              kill -0 "$PID" 2>/dev/null || break
+              sleep 1
+            done
+            sleep 2
+            kill "$PID" 2>/dev/null || true
+            echo "attempt $attempt:"
+            grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; }
+            if grep -q 'publik self-test: ok nut-ai 0.1.9' "$LOG"; then ok=1; break; fi
+            grep -q 'not reachable' "$LOG" || break
+            sleep 15
+          done
+          test "$ok" = 1
+          # The bundled food database, searched for "egg" in the built app
+          # (blind test round 1, B2: it never loaded and "egg" found nothing).
+          grep 'food-db self-test:' "$LOG" || { echo "No food-db self-test line. Log:"; cat "$LOG"; exit 1; }
+          grep -q 'food-db self-test: ok' "$LOG"
+          # The plan line that Profile and AI provider show, for a demo-like
+          # prepaid wallet (blind test round 2, N2): the same self-test against
+          # a fake publik on this runner (apps/mobile/scripts/fake-publik.mjs;
+          # its wallet is apps/mobile/src/inference/fixtures/demo-wallets.json).
+          # It prints paths only, never a body or a header.
+          node apps/mobile/scripts/fake-publik.mjs 8787 prepaid > "$RUNNER_TEMP/fake-publik.log" 2>&1 &
+          FAKE=$!
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8787/api/v1/wallet && break
+            sleep 1
+          done
+          LOG="$RUNNER_TEMP/selftest-plan.log"
+          SIMCTL_CHILD_PUBLIK_SELF_TEST=1 SIMCTL_CHILD_PUBLIK_API_BASE_URL=http://127.0.0.1:8787/api/v1 \
+            xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+          PID=$!
+          for i in $(seq 1 300); do
+            grep -q 'food-db self-test:' "$LOG" && break
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+          done
+          sleep 2
+          kill "$PID" 2>/dev/null || true
+          kill "$FAKE" 2>/dev/null || true
+          cat "$RUNNER_TEMP/fake-publik.log"
+          grep 'publik self-test:\|publik plan line:' "$LOG" || { echo "No self-test line with the fake publik. Log:"; cat "$LOG"; exit 1; }
+          grep -q 'publik plan line: 62% left of your prepaid balance' "$LOG"
+      - name: Launch smoke on a simulator (store build, no test hooks)
+        if: matrix.hooks != '1'
+        run: |
+          UDID=$(xcrun simctl list devices available -j | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices
+            const all = Object.entries(d).filter(([rt]) => /iOS/.test(rt)).sort(([a], [b]) => b.localeCompare(a, undefined, { numeric: true }))
+            for (const [, list] of all) { const p = list.find((x) => /^iPhone/.test(x.name)); if (p) { console.log(p.udid); break } }')
+          test -n "$UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          # OS_ACTIVITY_DT_MODE: the app's system log lines also go to the
+          # console, as under Xcode.
+          LOG="$RUNNER_TEMP/store-launch.log"
+          SIMCTL_CHILD_OS_ACTIVITY_DT_MODE=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+          PID=$!
+          # A crash at start ends the process; 25 seconds covers the start and
+          # the first import of the bundled food database.
+          sleep 25
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "The store build is running after 25 s."
+          else
+            echo "The store build is not running after 25 s. Log:"; cat "$LOG"; exit 1
+          fi
+          # The purchase rule on a simulator (blind test round 2, N1): the
+          # storefront is unknown, so no "Get a plan" button anywhere, and the
+          # Google sentence instead. The app writes its start line to the
+          # system log (publik-core.ts purchaseLinksLogLine).
+          xcrun simctl spawn "$UDID" log show --last 3m --style compact \
+            --predicate 'eventMessage CONTAINS "publik storefront:"' >> "$LOG" 2>&1 || true
+          kill "$PID" 2>/dev/null || true
+          xcrun simctl terminate "$UDID" com.nutai.app || true
+          grep 'publik storefront:' "$LOG" | head -3 || true
+          grep -q 'publik storefront: unknown (simulator) · purchase links: off' "$LOG" || { echo "No purchase-rule line. Log:"; tail -50 "$LOG"; exit 1; }
+          grep -qF 'To get a plan, search for "publik" on Google.' "$LOG"
+          if grep -q 'purchase links: on' "$LOG"; then echo "Purchase links are on in the App Store build on a simulator"; exit 1; fi
+
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_APP_STORE_BUILD: '0'
+      APP_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/.ghcup && df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
+      - name: The food database is there and finds egg
+        run: |
+          node --disable-warning=ExperimentalWarning -e '
+            const { DatabaseSync } = require("node:sqlite")
+            const db = new DatabaseSync("apps/mobile/assets/nutrition.db", { readOnly: true })
+            const foods = db.prepare("SELECT COUNT(*) AS c FROM foods").get().c
+            const egg = db.prepare("SELECT COUNT(*) AS c FROM food_fts WHERE food_fts MATCH ?").get("egg").c
+            console.log("nutrition.db:", foods, "foods,", egg, "full-text matches for egg")
+            if (foods < 1000 || egg < 1) process.exit(1)'
+      - name: Prebuild android/ (test settings)
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q 'usesCleartextTraffic' "$M" || sed -i 's/<application /<application android:usesCleartextTraffic="true" /' "$M"
+          if [ -f android/app/build.gradle ]; then
+            printf '\nandroid { buildTypes { release { debuggable true } } }\n' >> android/app/build.gradle
+          else
+            printf '\nandroid { buildTypes { getByName("release") { isDebuggable = true } } }\n' >> android/app/build.gradle.kts
+          fi
+          printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
+      - name: Build rules hold (negative tests)
+        working-directory: apps/mobile/android
+        run: |
+          # 1. A release build with no PUBLIK_APP_TOKEN fails (this step has none).
+          if ./gradlew :app:preReleaseBuild --no-daemon -q > "$RUNNER_TEMP/no-token.log" 2>&1; then
+            echo "preReleaseBuild passed with no app token"; exit 1
+          fi
+          grep -m1 'has no publik app token' "$RUNNER_TEMP/no-token.log" || { tail -40 "$RUNNER_TEMP/no-token.log"; exit 1; }
+          # 2. An App Store build with the test hooks fails.
+          if EXPO_PUBLIC_APP_STORE_BUILD=1 ./gradlew :app:preBuild --no-daemon -q > "$RUNNER_TEMP/store-hooks.log" 2>&1; then
+            echo "preBuild passed for an App Store build with the test hooks"; exit 1
+          fi
+          grep -m1 'must not have the test hooks' "$RUNNER_TEMP/store-hooks.log" || { tail -40 "$RUNNER_TEMP/store-hooks.log"; exit 1; }
+      - name: Build the test APK
+        working-directory: apps/mobile/android
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: |
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
+          mkdir -p "$RUNNER_TEMP/out"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk"
+          # The food database is inside the APK (blind test round 1, B2).
+          unzip -l "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk" | awk '$4 ~ /nutrition|\.db$/ && $1 > 1000000 { print; ok = 1 } END { exit !ok }'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.9-test.apk
+          if-no-files-found: error
+      - name: Keys stay out of Android backups (merged manifest)
+        working-directory: apps/mobile/android
+        run: |
+          M=$(find app/build/intermediates -path '*merged_manifest*' -path '*elease*' -name AndroidManifest.xml -print -quit)
+          test -n "$M"
+          echo "$M"
+          grep -oE 'android:(allowBackup|fullBackupContent|dataExtractionRules|versionCode|versionName)="[^"]*"' "$M"
+          R=$(find app/build/intermediates -name 'secure_store_backup_rules.xml' -print -quit)
+          if [ -n "$R" ]; then echo "== $R"; cat "$R"; fi
+          grep -q 'android:fullBackupContent=' "$M"
+          grep -q 'android:versionName="0.1.9"' "$M"
+      - name: The app token in the APK came from the build input (never printed)
+        run: |
+          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.9-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$RUNNER_TEMP/app.config.json"
+          rm -f "$RUNNER_TEMP/app.config.json"
+
+  android-release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # No test hooks: built as a store build is built. No artifact.
+    env:
+      APP_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/.ghcup && df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
+      - name: The food database is there and finds egg
+        run: |
+          node --disable-warning=ExperimentalWarning -e '
+            const { DatabaseSync } = require("node:sqlite")
+            const db = new DatabaseSync("apps/mobile/assets/nutrition.db", { readOnly: true })
+            const foods = db.prepare("SELECT COUNT(*) AS c FROM foods").get().c
+            const egg = db.prepare("SELECT COUNT(*) AS c FROM food_fts WHERE food_fts MATCH ?").get("egg").c
+            console.log("nutrition.db:", foods, "foods,", egg, "full-text matches for egg")
+            if (foods < 1000 || egg < 1) process.exit(1)'
+      - name: Prebuild android/ (no test settings)
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
+      - name: An App Store build with the optional gate fails (negative test)
+        working-directory: apps/mobile/android
+        run: |
+          if EXPO_PUBLIC_APP_STORE_BUILD=1 EXPO_PUBLIC_PUBLIK_GATE_MODE=optional ./gradlew :app:preBuild --no-daemon -q > "$RUNNER_TEMP/store-optional.log" 2>&1; then
+            echo "preBuild passed for an App Store build with the optional gate"; exit 1
+          fi
+          grep -m1 'always has the required gate' "$RUNNER_TEMP/store-optional.log" || { tail -40 "$RUNNER_TEMP/store-optional.log"; exit 1; }
+      - name: Release build, test hooks off
+        working-directory: apps/mobile/android
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: |
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --stacktrace
+          A=app/build/outputs/apk/release/app-release.apk
+          test -f "$A"
+          ls -l "$A"
+          unzip -l "$A" | awk '$4 ~ /nutrition|\.db$/ && $1 > 1000000 { print; ok = 1 } END { exit !ok }'
+          # The native test hooks are compiled out (BuildConfig.PUBLIK_TEST_HOOKS = false).
+          B=$(find ../modules/publik-launch -name BuildConfig.java -path '*elease*' -print -quit 2>/dev/null || true)
+          if [ -n "$B" ]; then
+            grep 'PUBLIK_TEST_HOOKS' "$B"
+            grep -q 'PUBLIK_TEST_HOOKS = false' "$B"
+          else
+            echo "note: the BuildConfig of modules/publik-launch is not under modules/publik-launch"
+          fi
+          unzip -p "$A" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$RUNNER_TEMP/app.config.json"
+          rm -f "$RUNNER_TEMP/app.config.json"

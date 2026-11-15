@@ -141,7 +141,7 @@ export const radius = {
 } as const
 
 /**
- * Type scale. The rhythm the incumbent gets right and is worth copying: a big
+ * Type scale. The rhythm: a big
  * bold number next to a small grey unit.
  */
 export const type = {
@@ -172,3 +172,22 @@ export const motion = {
 
 /** Minimum tap target. Anything smaller MUST set hitSlop — an ESLint rule checks. */
 export const MIN_TAP_TARGET = 44
+
+/**
+ * A text link or a small button with a tap area of at least 44 × 44 pt of
+ * its own (Apple HIG). A hitSlop alone is not enough: the accessibility
+ * frame (and an inspector's measure) is the view's own size. Blind test
+ * round 1, Nov 14 2026 (B9): Close, Not now, Done and the text links were
+ * under 44 pt.
+ */
+export const tap = {
+  minHeight: MIN_TAP_TARGET,
+  minWidth: MIN_TAP_TARGET,
+  justifyContent: 'center',
+} as const
+
+/** An icon button: 44 × 44 pt with the icon in the middle. */
+export const tapIcon = {
+  ...tap,
+  alignItems: 'center',
+} as const

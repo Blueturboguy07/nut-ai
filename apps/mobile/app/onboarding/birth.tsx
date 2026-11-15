@@ -19,9 +19,9 @@ function daysIn(month: number, year: number): number {
 export default function BirthScreen() {
   const a = useAnswers()
 
-  // A fixed reference year keeps this deterministic and avoids reading the clock
-  // during render. Defaults land on a plausible adult rather than the reference
-  // app's odd 2024 default, which produces a zero-year-old.
+  // A fixed current year keeps this deterministic and avoids reading the clock
+  // during render. Defaults land on a plausible adult, never on this year
+  // (which would be a zero-year-old).
   const thisYear = 2026
   const year = a.birthYear ?? 2000
   const month = a.birthMonth ?? 1

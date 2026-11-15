@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { disclosureCostSentence, insufficientCreditMessage } from './inference/publik-copy'
+import { disclosureCostSentence, planLimitMessage } from './inference/publik-copy'
 
 /**
  * The publik copy rule, enforced: the provider is "publik API"; money is
@@ -40,8 +40,8 @@ describe('publik copy rule', () => {
     expect(body).toContain('publik API')
   })
 
-  // publik migration 0059 (2026-09-28): a new install starts at $0.00, and the
-  // one free thing is $0.05 of use, once per account, at the first link.
+  // publik migration 0059 (2026-09-28): the one free thing is some use, once
+  // per account, at the first link.
   it('no screen or module promises free use before the phone is linked', () => {
     const banned = /free starter|starts with free|free usage|small free balance|first \$0\.25|\$0\.25 free/i
     const offenders: string[] = []
@@ -52,11 +52,13 @@ describe('publik copy rule', () => {
     expect(offenders).toEqual([])
   })
 
-  it('the disclosure and the 402 fallback say $0.00 to start and $0.05 once at the link', () => {
+  it('the disclosure names the free use at the link and the plan limit, with no amount of money (founder rule, Nov 14 2026)', () => {
     const disclosure = disclosureCostSentence('Nut AI')
-    expect(disclosure).toContain('A new phone starts at $0.00')
-    expect(disclosure).toContain('linking this phone to your publik account gives $0.05 of free use, once')
-    expect(insufficientCreditMessage('anonymous')).toContain('$0.05 of free use')
-    expect(insufficientCreditMessage('claimed')).not.toMatch(/free/i)
+    expect(disclosure).toContain('linking this phone to your publik account gives some free use, once')
+    expect(disclosure).toContain('when your plan limit is reached Nut AI tells you')
+    for (const text of [disclosure, disclosureCostSentence('Nut AI', false), planLimitMessage(null, true), planLimitMessage(null, false)]) {
+      expect(text).not.toMatch(/\$|\d+%|list price|per scan/)
+    }
+    expect(planLimitMessage(null, true)).not.toMatch(/free/i)
   })
 })

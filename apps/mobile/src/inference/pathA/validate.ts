@@ -112,6 +112,8 @@ export async function validateCredential(
   credential: Credential,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = 15_000,
+  /** App Store build: an Anthropic credential is checked as an API key only; a Claude subscription token is never sent. */
+  opts: { apiKeyOnly?: boolean } = {},
 ): Promise<ValidationResult> {
   // ---- Anthropic: two shapes, each probing the endpoint it would really use --
   if (provider === 'anthropic') {
@@ -143,8 +145,11 @@ export async function validateCredential(
 
     // A credential pasted into the wrong tab is the single most common mistake
     // here, so the other shape is always tried before blaming the user.
-    const order: Array<'x-api-key' | 'bearer'> =
-      credential.kind === 'oauth' ? ['bearer', 'x-api-key'] : ['x-api-key', 'bearer']
+    const order: Array<'x-api-key' | 'bearer'> = opts.apiKeyOnly
+      ? ['x-api-key']
+      : credential.kind === 'oauth'
+        ? ['bearer', 'x-api-key']
+        : ['x-api-key', 'bearer']
 
     const details: string[] = []
     for (const shape of order) {

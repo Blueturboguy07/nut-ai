@@ -1,17 +1,23 @@
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Line as SvgLine } from 'react-native-svg'
 import { StyleSheet, Text, View } from 'react-native'
 import { useTheme } from '../../theme/ThemeProvider'
+import { ESTIMATE_NOT_PROMISE } from '../../onboarding/goal-copy'
 import { radius, space, type } from '../../theme/tokens'
 
 /**
- * The three onboarding charts, hand-rolled in react-native-svg.
+ * The two onboarding charts, hand-rolled in react-native-svg.
  *
- * No chart library: these are three fixed shapes with no axes, legends or
+ * No chart library: these are fixed shapes with no axes, legends or
  * interaction, and a library would import an opinionated axis/legend system to
  * fight. A cubic path plus a gradient fill is about forty lines.
+ *
+ * Blind test round 1, Nov 14 2026 (B6): both are projections of weight LOSS,
+ * so the screens show them only when the goal is to lose weight, and each
+ * carries the label "Estimate, not a promise" (EstimateLabel). The chart of
+ * this app against "Without a plan" is removed: it was an ad.
  */
 
-/** Smooth cubic through points, used by all three charts. */
+/** Smooth cubic through points, used by both charts. */
 function smoothPath(pts: ReadonlyArray<{ x: number; y: number }>): string {
   if (pts.length < 2) return ''
   let d = `M ${pts[0]!.x} ${pts[0]!.y}`
@@ -27,88 +33,26 @@ function smoothPath(pts: ReadonlyArray<{ x: number; y: number }>): string {
 const W = 300
 const H = 170
 
-/**
- * "Designed to help you stay on track" — us versus no plan.
- *
- * The reference chart is pure marketing, but the shape it draws is a real,
- * well-documented phenomenon: unstructured dieting tends to produce early loss
- * followed by regain. We keep the comparison and label the y-axis honestly as a
- * trend rather than implying guaranteed numbers.
- */
-export function TrendComparisonChart({ gaining }: { gaining: boolean }) {
+/** The label on every projection: a shape from arithmetic, not a forecast of this person. */
+function EstimateLabel() {
   const theme = useTheme()
-
-  // SVG y grows downward, so a GAINING plan line must travel to a smaller y.
-  // The "without a plan" line always ends back near the start: the documented
-  // pattern is regression to baseline, in either direction.
-  const withPlan = gaining
-    ? smoothPath([
-        { x: 10, y: 138 }, { x: 90, y: 126 }, { x: 170, y: 63 }, { x: 250, y: 33 }, { x: 290, y: 30 },
-      ])
-    : smoothPath([
-        { x: 10, y: 30 }, { x: 90, y: 42 }, { x: 170, y: 105 }, { x: 250, y: 135 }, { x: 290, y: 138 },
-      ])
-  const without = gaining
-    ? smoothPath([
-        { x: 10, y: 138 }, { x: 80, y: 76 }, { x: 140, y: 68 }, { x: 220, y: 120 }, { x: 290, y: 144 },
-      ])
-    : smoothPath([
-        { x: 10, y: 30 }, { x: 80, y: 92 }, { x: 140, y: 100 }, { x: 220, y: 45 }, { x: 290, y: 22 },
-      ])
-
   return (
-    <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-      <Text style={[type.heading, { color: theme.text }]}>Weight trend</Text>
-
-      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ marginTop: space.md }}>
-        <Defs>
-          <LinearGradient id="planFill" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={theme.text} stopOpacity="0.10" />
-            <Stop offset="1" stopColor={theme.text} stopOpacity="0" />
-          </LinearGradient>
-        </Defs>
-
-        <SvgLine x1="10" y1="30" x2="290" y2="30" stroke={theme.border} strokeDasharray="3 5" strokeWidth="1" />
-        <SvgLine x1="10" y1="95" x2="290" y2="95" stroke={theme.border} strokeDasharray="3 5" strokeWidth="1" />
-
-        <Path d={`${withPlan} L 290 150 L 10 150 Z`} fill="url(#planFill)" />
-        <Path d={without} stroke="#E8615A" strokeWidth="3" fill="none" strokeLinecap="round" />
-        <Path d={withPlan} stroke={theme.text} strokeWidth="3.5" fill="none" strokeLinecap="round" />
-
-        <Circle cx="10" cy={gaining ? 138 : 30} r="6" fill={theme.bg} stroke={theme.text} strokeWidth="3" />
-        <Circle cx="290" cy={gaining ? 30 : 138} r="6" fill={theme.bg} stroke={theme.text} strokeWidth="3" />
-      </Svg>
-
-      <View style={styles.legendRow}>
-        <View style={[styles.pill, { backgroundColor: theme.text }]}>
-          <Text style={[type.micro, { color: theme.bg }]}>Nut AI</Text>
-        </View>
-        <Text style={[type.caption, { color: '#E8615A' }]}>Without a plan</Text>
-      </View>
-
-      <View style={styles.axisRow}>
-        <Text style={[type.caption, { color: theme.textMuted }]}>Month 1</Text>
-        <Text style={[type.caption, { color: theme.textMuted }]}>Month 6</Text>
-      </View>
-
-      <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.md }]}>
-        Track your habits and stay consistent over time.
-      </Text>
+    <View style={[styles.pill, { alignSelf: 'flex-start', marginTop: space.xs, backgroundColor: theme.uncertainBg }]}>
+      <Text style={[type.micro, { color: theme.uncertain }]}>{ESTIMATE_NOT_PROMISE}</Text>
     </View>
   )
 }
 
-/** "You have great potential" — the 3 / 7 / 30 day consistency curve. */
-export function TransitionChart({ gaining }: { gaining: boolean }) {
+/** How weight loss often goes: slow at first, then steadier. Only for a goal to lose weight. */
+export function TransitionChart() {
   const theme = useTheme()
-  const pts = gaining
-    ? [{ x: 12, y: 130 }, { x: 90, y: 118 }, { x: 175, y: 62 }, { x: 285, y: 28 }]
-    : [{ x: 12, y: 30 }, { x: 90, y: 44 }, { x: 175, y: 100 }, { x: 285, y: 132 }]
+  const pts = [{ x: 12, y: 30 }, { x: 90, y: 44 }, { x: 175, y: 100 }, { x: 285, y: 132 }]
   const d = smoothPath(pts)
 
   return (
     <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-      <Text style={[type.heading, { color: theme.text }]}>Your weight transition</Text>
+      <Text style={[type.heading, { color: theme.text }]}>How weight loss often goes</Text>
+      <EstimateLabel />
 
       <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ marginTop: space.md }}>
         <Defs>
@@ -137,32 +81,23 @@ export function TransitionChart({ gaining }: { gaining: boolean }) {
       </View>
 
       <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.md }]}>
-        Weight change takes time. Consistency in the early weeks matters most.
+        A general shape, not a forecast for you. Your own trend shows in Progress.
       </Text>
     </View>
   )
 }
 
-/** The plan screen's estimated-progress curve, with the target callout. */
-export function ProgressChart({
-  targetLabel,
-  dateLabel,
-  gaining,
-}: {
-  targetLabel: string
-  dateLabel: string
-  gaining: boolean
-}) {
+/** The plan screen's estimated curve to the goal weight. Only for a goal to lose weight. */
+export function ProgressChart({ targetLabel, dateLabel }: { targetLabel: string; dateLabel: string }) {
   const theme = useTheme()
-  const pts = gaining
-    ? [{ x: 12, y: 130 }, { x: 110, y: 118 }, { x: 200, y: 48 }, { x: 270, y: 30 }]
-    : [{ x: 12, y: 30 }, { x: 110, y: 42 }, { x: 200, y: 112 }, { x: 270, y: 130 }]
+  const pts = [{ x: 12, y: 30 }, { x: 110, y: 42 }, { x: 200, y: 112 }, { x: 270, y: 130 }]
   const d = smoothPath(pts)
   const end = pts[3]!
 
   return (
     <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
       <Text style={[type.heading, { color: theme.text }]}>Estimated progress</Text>
+      <EstimateLabel />
 
       <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ marginTop: space.md }}>
         <Defs>
@@ -190,7 +125,7 @@ export function ProgressChart({
 
       <View style={styles.axisRow}>
         <Text style={[type.caption, { color: theme.text, fontWeight: '700' }]}>Now</Text>
-        <Text style={[type.caption, { color: theme.text, fontWeight: '700' }]}>{dateLabel}</Text>
+        <Text style={[type.caption, { color: theme.text, fontWeight: '700' }]}>About {dateLabel}</Text>
       </View>
     </View>
   )
@@ -199,7 +134,6 @@ export function ProgressChart({
 const styles = StyleSheet.create({
   card: { padding: space.lg, borderRadius: radius.xl },
   axisRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space.sm },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.xs },
   pill: { paddingHorizontal: space.md, paddingVertical: 4, borderRadius: radius.pill },
   callout: {
     alignSelf: 'flex-end',

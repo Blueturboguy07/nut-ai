@@ -1,12 +1,14 @@
 import { router } from 'expo-router'
 import { useEffect } from 'react'
 import { ScrollView, StyleSheet, Text, View } from 'react-native'
-import { cheapestModel, PROVIDER_MODELS, providersByPrice, type ProviderId } from '@nutai/prompt'
+import { PROVIDER_MODELS, providersByPrice, type ProviderId } from '@nutai/prompt'
 import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { OptionCard } from '../../src/components/onboarding/Controls'
 import type { IconName } from '../../src/components/Icon'
 import { putSetting } from '../../src/data/repo'
-import { publikAvailable } from '../../src/inference/publik'
+import { publikAvailable, publikChoice } from '../../src/inference/publik'
+import { APP_NAME } from '../../src/inference/publik-copy'
+import { isAdult } from '../../src/onboarding/adult'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -29,6 +31,9 @@ import { radius, space, type } from '../../src/theme/tokens'
  * Neutrality among the vendors is also the cheapest available mitigation
  * against being treated as a joint controller of the data the user sends to a
  * provider we recommended.
+ *
+ * publik API (a paid plan) is offered only to an adult: the birth date step
+ * comes before this one, and an unknown age counts as a minor.
  */
 
 const LABELS: Record<ProviderId, { name: string; icon: IconName; note: string }> = {
@@ -41,7 +46,9 @@ export default function ProviderScreen() {
   const theme = useTheme()
   const a = useAnswers()
   const order = providersByPrice()
-  const publik = publikAvailable()
+  // After "Use my own key" on the sign-in gate, publik API is not offered
+  // here again (Profile → AI provider still has it). Never to a minor.
+  const publik = publikAvailable() && publikChoice() !== 'own_key' && isAdult(a, Date.now())
 
   // Preselection is an onboarding behaviour only: a fresh run with no answer
   // yet lands on publik; an existing install with a vendor key is never
@@ -54,16 +61,17 @@ export default function ProviderScreen() {
     <OnboardingScreen
       step={stepIndex('provider')}
       total={TOTAL_STEPS}
-      title="How should Nut AI recognize your food?"
+      title={`How should ${APP_NAME} recognize your food?`}
       subtitle={
         publik
-          ? 'Scans run on publik API by default: link your publik account for $0.05 of free use, once. Prefer your own key? Pick a provider — your photo goes only to the one you name; we run no server of our own.'
-          : 'Bring your own API key. Your photo goes to the provider you name and nowhere else — we run no server.'
+          ? 'Scans run on publik API by default: link your publik account for some free use, once. Prefer your own key? Pick a provider. Then your photo goes only to the provider you name.'
+          : 'Bring your own API key. Your photo goes to the provider you name and to no other company.'
       }
       ctaDisabled={a.provider === undefined}
       onCta={() => {
         if (a.provider === 'none') void putSetting('provider', 'none')
-        router.push((a.provider === 'none' ? '/onboarding/health' : nextRoute('provider')) as never)
+        // No key: the key step is skipped (and Apple Health only shows when it is in the build).
+        router.push(nextRoute(a.provider === 'none' ? 'apikey' : 'provider') as never)
       }}
       scroll
     >
@@ -71,7 +79,7 @@ export default function ProviderScreen() {
         {publik ? (
           <OptionCard
             label="publik API"
-            sublabel="No key to paste. Starts at $0.00; link your publik account for $0.05 of free use, once. Priced per scan at 50% of the model's list price."
+            sublabel="No key to paste. Link your publik account for some free use, once. AI use counts toward your publik plan."
             glyph="scan"
             selected={a.provider === 'publik'}
             onPress={() => setAnswer('provider', 'publik')}
@@ -79,12 +87,12 @@ export default function ProviderScreen() {
         ) : null}
 
         {order.map((p) => {
-          const cheap = cheapestModel(p)
+          // No price per scan (founder rule, Nov 14 2026: no amount of money anywhere).
           return (
             <OptionCard
               key={p}
               label={LABELS[p].name}
-              sublabel={`${LABELS[p].note} · ~$${cheap.approxScanCostUsd.toFixed(4)}/scan`}
+              sublabel={LABELS[p].note}
               glyph={LABELS[p].icon}
               selected={a.provider === p}
               onPress={() => setAnswer('provider', p)}
@@ -94,7 +102,7 @@ export default function ProviderScreen() {
 
         <OptionCard
           label="No key for now"
-          sublabel="Barcode, label scan, text search and manual entry all still work"
+          sublabel="Barcode scans and food search still work. Photo scans, label scans and Describe a meal need an AI provider."
           glyph="minus"
           selected={a.provider === 'none'}
           onPress={() => setAnswer('provider', 'none')}
@@ -103,9 +111,10 @@ export default function ProviderScreen() {
 
       <View style={[styles.note, { backgroundColor: theme.bgSunken }]}>
         <Text style={[type.caption, { color: theme.textMuted, lineHeight: 19 }]}>
-          {publik ? 'The three providers below are sorted' : 'Sorted'} by price, with no recommendation. Frontier models are not measurably better at
-          judging portion size — which is where nearly all the error is — so the cheapest vision
-          model is pre-selected on purpose, not as a compromise.
+          {publik ? 'The own-key providers above are sorted' : 'The providers above are sorted'} by price, with no
+          recommendation. The most expensive AI models are not better at judging portion size, and
+          portion size causes most of the error. So we select the lowest-cost AI model that can
+          read photos.
         </Text>
       </View>
 
@@ -121,8 +130,8 @@ export default function ProviderScreen() {
 
       {a.provider && a.provider !== 'none' && a.provider !== 'publik' ? (
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.lg, lineHeight: 19 }]}>
-          {PROVIDER_MODELS[a.provider].length} models available. You can change model and set a
-          monthly spend cap after entering your key.
+          {PROVIDER_MODELS[a.provider].length} models available. You can change the model after you
+          enter your key.
         </Text>
       ) : null}
     </OnboardingScreen>

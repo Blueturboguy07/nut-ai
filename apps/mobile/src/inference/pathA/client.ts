@@ -23,7 +23,6 @@ import {
   MAYBE_CHARGED_DROPPED_MESSAGE,
   TRUNCATED_CHARGED_MESSAGE,
   TRUNCATED_MESSAGE,
-  USAGE_ACTION,
   maybeChargedTimeoutMessage,
 } from '../publik-copy'
 import { startDeadline } from '../deadline'
@@ -157,7 +156,7 @@ function isPublikUrl(url: string): boolean {
 
 function truncatedFailure(res: Response): ScanFailure {
   return isPublikResponse(res.headers)
-    ? { kind: 'output-truncated', message: TRUNCATED_CHARGED_MESSAGE, retryable: false, action: USAGE_ACTION }
+    ? { kind: 'output-truncated', message: TRUNCATED_CHARGED_MESSAGE, retryable: false }
     : { kind: 'output-truncated', message: TRUNCATED_MESSAGE, retryable: false }
 }
 
@@ -167,9 +166,9 @@ function failOrTruncated(capped: boolean, res: Response): (e: ScanFailure) => We
 }
 
 /**
- * The two ways a call dies on this side. On publik mode both name the charge
- * and link the usage page: the gateway settles the charge whether or not the
- * phone was still listening. `timedOut` is the call's own deadline state
+ * The two ways a call dies on this side. On publik mode both say the scan
+ * may still count toward the plan (no charges page, no amount): the gateway
+ * settles the call whether or not the phone was still listening. `timedOut` is the call's own deadline state
  * (see ../deadline): on a phone an aborted fetch does not throw an
  * AbortError, so the error cannot tell a timeout from a dropped connection.
  * A timeout is never retryable: the gateway most likely ran the call to the
@@ -178,11 +177,11 @@ function failOrTruncated(capped: boolean, res: Response): (e: ScanFailure) => We
 function transportFailure(timedOut: boolean, publik: boolean, timeoutMs: number, what: string): ScanFailure {
   if (timedOut) {
     return publik
-      ? { kind: 'timeout-ambiguous', message: maybeChargedTimeoutMessage(Math.round(timeoutMs / 1000)), retryable: false, action: USAGE_ACTION }
-      : { kind: 'timeout-ambiguous', message: `${what} timed out. It may still have been charged, so we will not retry automatically.`, retryable: false }
+      ? { kind: 'timeout-ambiguous', message: maybeChargedTimeoutMessage(Math.round(timeoutMs / 1000)), retryable: false }
+      : { kind: 'timeout-ambiguous', message: `${what} timed out. The provider may still have run it, so we will not retry automatically.`, retryable: false }
   }
   return publik
-    ? { kind: 'offline', message: MAYBE_CHARGED_DROPPED_MESSAGE, retryable: true, action: USAGE_ACTION }
+    ? { kind: 'offline', message: MAYBE_CHARGED_DROPPED_MESSAGE, retryable: true }
     : { kind: 'offline', message: 'No connection to the provider.', retryable: true }
 }
 

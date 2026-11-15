@@ -1,33 +1,64 @@
+import Constants from 'expo-constants'
 import { router, useFocusEffect } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Linking } from 'react-native'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { ProviderId } from '@nutai/prompt'
+import { HEALTHKIT_IN_BUILD } from '../../src/health/build'
 import { availability, requestPermissions } from '../../src/health/healthkit'
 import { exportAndShareBackup, finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { currentGoal, resetEverything, setting, type CurrentGoal } from '../../src/data/repo'
 import { loadCredential, maskCredential } from '../../src/inference/credentials'
-import { loadPublikWallet, publikConnected } from '../../src/inference/publik'
-import { formatMicros } from '../../src/inference/publik-core'
+import { PUBLIK_GATE_MODE } from '../../src/build-flags'
+import {
+  countAppUse,
+  deletePublikAccount,
+  ensurePublikWallet,
+  loadPublikInstall,
+  loadPublikWallet,
+  onPublikWallet,
+  openPublikLink,
+  publikConnected,
+  publikSignedIn,
+  refreshPublikWallet,
+  requestPublikSignIn,
+  setCountAppUse,
+  signOutOfPublik,
+} from '../../src/inference/publik'
+import { planStatus, publikClaimState, type PlanStatus } from '../../src/inference/publik-core'
+import { APP_NAME, appVersionLine, planStatusLine, PRIVACY_URL } from '../../src/inference/publik-copy'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
+import { PlanUseBar } from '../../src/components/PublikDisclosure'
+import { StatusBarScrim } from '../../src/components/StatusBarScrim'
+import { supportUrl } from '../../src/support'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
-import { radius, space, type } from '../../src/theme/tokens'
+import { radius, space, tap, type } from '../../src/theme/tokens'
 
 /**
  * Profile.
  *
- * Structurally the reference's settings list, minus everything that only exists
- * to extract money or attention:
+ * A plain settings list, without anything that only exists to extract money
+ * or attention:
  *
  *   NO "Refer a friend and earn $10" — a referral bounty is a growth mechanic,
  *   and there is no money here to pay it with.
  *   NO "Upgrade to Family Plan", no Premium crown. There is no paid tier.
- *   NO Logout / Delete Account. There is no account and no server; a delete
- *     button that only clears local data should say exactly that, which is what
- *     "Erase all data" below does.
+ *   publik account: Sign in with publik (optional builds), Sign out, Delete
+ *     account (the publik account is deleted on publikhq.com, in the in-app
+ *     browser; the food log on this phone is kept or deleted, as the person
+ *     says) and Count app use. The food log itself has no account: it is only
+ *     on this phone, and "Start over" deletes it.
  *   NO Follow Us. A settings screen is not a marketing surface.
+ *   Apple Health: only when HealthKit is in the build (src/health/build.ts).
+ *   Help and support: publik's in-app support page, in the in-app sheet.
+ *   Privacy policy: publik's in-app privacy page, in the in-app sheet.
+ *   AI provider: with publik, the TRUE plan state under the row (a plan, a
+ *     prepaid balance, or none) and its use as a percent with a bar, never
+ *     money (blind test round 1, Nov 14 2026, B3/B5). "Linked" is read
+ *     once, the same way as the AI provider screen (publikClaimState), so
+ *     the two screens cannot disagree after a reinstall (B11).
  */
 export default function Profile() {
   const theme = useTheme()
@@ -38,7 +69,13 @@ export default function Profile() {
   const [healthBusy, setHealthBusy] = useState(false)
   const [diet, setDiet] = useState('')
   const [providerLabel, setProviderLabel] = useState('—')
+  // The publik plan under the AI provider row; null: not publik, or not linked.
+  const [plan, setPlan] = useState<{ line: string; status: PlanStatus | null } | null>(null)
   const [dataBusy, setDataBusy] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
+  const [countUse, setCountUse] = useState(true)
+  const [accountBusy, setAccountBusy] = useState(false)
+  const [round, setRound] = useState(0)
 
   useFocusEffect(
     useCallback(() => {
@@ -46,29 +83,51 @@ export default function Profile() {
       void (async () => {
         const [g, avail, d, p] = await Promise.all([
           currentGoal(),
-          availability(),
+          HEALTHKIT_IN_BUILD ? availability() : Promise.resolve('unavailable' as const),
           setting('diet.style', 'balanced'),
           setting('provider'),
         ])
         if (!alive) return
         setGoal(g)
         setDiet(d)
+        const [inNow, counting] = await Promise.all([
+          publikSignedIn().catch(() => false),
+          countAppUse().catch(() => true),
+        ])
+        if (!alive) return
+        setSignedIn(inNow)
+        setCountUse(counting)
         setHealthAvail(avail === 'available' ? 'available' : avail === 'not-ios' ? 'not-ios' : 'unavailable')
+        setPlan(null)
         if (!p || p === 'none') {
           setProviderLabel('Not connected')
         } else if (p === 'publik') {
-          const [connected, wallet] = await Promise.all([publikConnected(), loadPublikWallet()])
+          const [connected, install, stored] = await Promise.all([
+            publikConnected().catch(() => false),
+            loadPublikInstall(),
+            loadPublikWallet(),
+          ])
           if (!alive) return
-          // publik 0059: an unlinked phone sits at $0.00 until it is linked, so
-          // that row says so instead of "$0.00 left".
-          const unlinkedAtZero = wallet?.claimState === 'anonymous' && wallet.balanceMicros != null && wallet.balanceMicros <= 0
-          setProviderLabel(
-            !connected
-              ? 'publik API · disconnected'
-              : unlinkedAtZero
-                ? `publik API · ${formatMicros(0)} · not linked`
-                : `publik API · ${formatMicros(wallet?.balanceMicros)} left`,
-          )
+          // After a reinstall the sign-in survives (Keychain) but the stored
+          // plan does not: keep the sign-in and read the plan again.
+          const wallet = stored ?? (connected ? await ensurePublikWallet().catch(() => null) : null)
+          if (!alive) return
+          const linked = connected && publikClaimState(install, wallet) === 'claimed'
+          setProviderLabel(!connected ? 'publik API · disconnected' : linked ? 'publik API' : 'publik API · not linked')
+          if (linked) {
+            // A percent of the plan, never money (founder rule, Nov 14 2026).
+            const status = wallet ? planStatus(wallet) : null
+            setPlan({
+              line: status ? planStatusLine(status) : 'Your plan shows when this phone is online.',
+              status,
+            })
+            // Then the plan as publik has it now (blind test round 2, N2).
+            const fresh = await refreshPublikWallet().catch(() => null)
+            if (alive && fresh && fresh.claimState === 'claimed') {
+              const now = planStatus(fresh)
+              setPlan({ line: planStatusLine(now), status: now })
+            }
+          }
         } else {
           const cred = await loadCredential(p as ProviderId)
           if (!alive) return
@@ -82,8 +141,89 @@ export default function Profile() {
       return () => {
         alive = false
       }
-    }, []),
+    }, [round]),
   )
+
+  // A wallet read after an AI call updates the plan line at once.
+  useEffect(
+    () =>
+      onPublikWallet((w) => {
+        if (w.claimState !== 'claimed') return
+        const now = planStatus(w)
+        setPlan((prev) => (prev ? { line: planStatusLine(now), status: now } : prev))
+      }),
+    [],
+  )
+
+  const optional = PUBLIK_GATE_MODE === 'optional'
+
+  function signOut() {
+    Alert.alert(
+      'Sign out of publik?',
+      optional
+        ? 'This phone forgets its publik key. Your food log stays on this phone.'
+        : `This phone forgets its publik key. Sign in again to use ${APP_NAME}. Your food log stays on this phone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          style: 'destructive',
+          onPress: () => {
+            setAccountBusy(true)
+            void signOutOfPublik()
+              .catch(() => undefined)
+              .finally(() => {
+                setAccountBusy(false)
+                setRound((n) => n + 1)
+              })
+          },
+        },
+      ],
+    )
+  }
+
+  function deleteAccount() {
+    if (accountBusy) return
+    Alert.alert(
+      'Delete your publik account?',
+      `Your publik account is one account for all publik apps, not only ${APP_NAME}. You delete it on publikhq.com, on the page that opens next. First, this phone signs out of publik.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', style: 'destructive', onPress: askFoodLog },
+      ],
+    )
+  }
+
+  function askFoodLog() {
+    Alert.alert(
+      'Also delete your food log?',
+      'Your meals, weights, goals and saved API keys are only on this phone. publik does not have them. You can keep them or delete them.',
+      [
+        { text: 'Keep food log', onPress: () => void finishDelete(false) },
+        { text: 'Delete food log', style: 'destructive', onPress: () => void finishDelete(true) },
+      ],
+    )
+  }
+
+  async function finishDelete(wipe: boolean) {
+    setAccountBusy(true)
+    try {
+      // The food log first: the publik sign-in can show again when the
+      // account page closes (deletePublikAccount), and nothing may delete a
+      // key that a new sign-in made.
+      if (wipe) await resetEverything().catch(() => undefined)
+      await deletePublikAccount().catch(() => undefined)
+    } finally {
+      setAccountBusy(false)
+    }
+    if (wipe && optional) router.replace('/onboarding')
+    else setRound((n) => n + 1)
+  }
+
+  function changeCountUse(on: boolean) {
+    setCountUse(on)
+    void setCountAppUse(on).catch(() => setCountUse(!on))
+  }
 
   function connectHealth() {
     if (healthBusy) return
@@ -125,7 +265,7 @@ export default function Profile() {
       const picked = await pickBackupFile()
       if (!picked.ok) {
         if (picked.reason !== 'cancelled') {
-          Alert.alert('Not a backup', "That doesn't look like a Nut AI backup file.")
+          Alert.alert('Not a backup', `That doesn't look like a ${APP_NAME} backup file.`)
         }
         return
       }
@@ -143,7 +283,7 @@ export default function Profile() {
                 try {
                   const outcome = await importBackup(picked.payload)
                   if (!outcome.ok) {
-                    Alert.alert('Cannot restore', 'This backup is from a newer version of Nut AI — update the app first.')
+                    Alert.alert('Cannot restore', `This backup is from a newer version of ${APP_NAME} — update the app first.`)
                     return
                   }
                   await finishRestore()
@@ -165,120 +305,176 @@ export default function Profile() {
   }
 
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.bg }}
-      contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 150 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={[type.title, { color: theme.text }]}>Profile</Text>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        style={{ backgroundColor: theme.bg }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 150 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[type.title, { color: theme.text }]}>Profile</Text>
 
-      <View style={[styles.hero, { backgroundColor: theme.bgSunken }]}>
-        <Text style={[type.bodyStrong, { color: theme.text }]}>No account needed</Text>
-        <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
-          Everything lives on this device. There is no sign-in, no server, and nothing to breach.
-        </Text>
-      </View>
+        <View style={[styles.hero, { backgroundColor: theme.bgSunken }]}>
+          <Text style={[type.bodyStrong, { color: theme.text }]}>Your food log stays on this phone</Text>
+          <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
+            Meals, weights and goals are stored only on this device, and we keep no copy. A meal photo
+            or a meal description goes to the AI provider you choose, so that it can estimate the food.
+          </Text>
+        </View>
 
-      <Section title="Goals & tracking">
-        <Row
-          label="Daily target"
-          value={goal ? `${Math.round(goal.targetKcal)} kcal` : '—'}
-          onPress={() => router.push('/edit-goals' as never)}
-        />
-        <Row
-          label="Protein / Carbs / Fat"
-          value={goal ? `${Math.round(goal.protein_g)} / ${Math.round(goal.carbs_g)} / ${Math.round(goal.fat_g)} g` : '—'}
-          onPress={() => router.push('/edit-goals' as never)}
-        />
-        <Row label="Log weight" value="" onPress={() => router.push('/log-weight' as never)} />
-        <Row label="Diet style" value={diet} />
-        <Row
-          label="Adaptive target"
-          value={goal ? (goal.adaptive ? 'On' : 'Off — set by hand') : '—'}
-        />
-      </Section>
+        <Section title="Goals & tracking">
+          <Row
+            label="Daily target"
+            value={goal ? `${Math.round(goal.targetKcal)} kcal` : '—'}
+            onPress={() => router.push('/edit-goals' as never)}
+          />
+          <Row
+            label="Protein / Carbs / Fat"
+            value={goal ? `${Math.round(goal.protein_g)} / ${Math.round(goal.carbs_g)} / ${Math.round(goal.fat_g)} g` : '—'}
+            onPress={() => router.push('/edit-goals' as never)}
+          />
+          <Row label="Log weight" value="" onPress={() => router.push('/log-weight' as never)} />
+          <Row label="Diet style" value={diet} />
+          <Row
+            label="Adaptive target"
+            value={goal ? (goal.adaptive ? 'On' : 'Off — set by hand') : '—'}
+          />
+        </Section>
 
-      <Section title="AI provider">
-        <Row label="Provider & key" value={providerLabel} onPress={() => router.push('/provider-settings' as never)} />
-      </Section>
+        <Section title="AI provider">
+          <Row label="Provider & key" value={providerLabel} onPress={() => router.push('/provider-settings' as never)} />
+          {plan ? (
+            <View style={{ padding: space.lg, paddingTop: space.md }}>
+              <Text style={[type.bodyStrong, { color: theme.text }]}>{plan.line}</Text>
+              <PlanUseBar status={plan.status} />
+            </View>
+          ) : null}
+        </Section>
 
-      <Section title="Apple Health">
-        {healthAvail === 'available' ? (
-          <>
-            <Row
-              label={healthBusy ? 'Connecting…' : 'Connect / Reconnect'}
-              value=""
-              onPress={connectHealth}
-            />
-            <Pressable onPress={() => void Linking.openSettings()} style={{ padding: space.lg, paddingTop: 0 }}>
-              <Text style={[type.caption, { color: theme.textMuted }]}>
-                Already answered the prompt? <Text style={{ color: theme.protein }}>Manage access in Settings</Text>
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <Row label="Apple Health" value={healthAvail === 'not-ios' ? 'iOS only' : 'Unavailable on this device'} />
-        )}
-      </Section>
-
-      <Section title="Your data">
-        <Row label={dataBusy ? 'Working…' : 'Export data'} value="" onPress={exportData} />
-        <Row label="Import data" value="" onPress={importData} />
-        <Text style={[type.caption, { color: theme.textFaint, padding: space.lg, paddingTop: space.xs, lineHeight: 18 }]}>
-          One JSON file with everything: meals, weights, goals, settings. Your API key never
-          travels in it — re-enter that once after restoring on a new phone.
-        </Text>
-      </Section>
-
-      <Section title="How your numbers work">
-        {goal ? (
-          <View style={{ padding: space.lg, gap: space.sm }}>
-            <Line label="BMR (Mifflin-St Jeor)" value={`${Math.round(goal.bmr)} kcal`} />
-            <Line label="TDEE (BMR × activity)" value={`${Math.round(goal.tdee)} kcal`} />
-            <Line label="Your target" value={`${Math.round(goal.targetKcal)} kcal`} />
-            {goal.floorApplied ? (
-              <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
-                Raised to our safe floor. Your inputs alone gave {Math.round(goal.targetRawKcal)} kcal.
-              </Text>
-            ) : null}
+        <Section title="publik account">
+          {optional && !signedIn ? (
+            <Row label="Sign in with publik" value="" onPress={() => router.push('/publik-sign-in' as never)} />
+          ) : null}
+          {!optional || signedIn ? (
+            <Row label={accountBusy ? 'Working…' : 'Sign out'} value="" onPress={accountBusy ? undefined : signOut} />
+          ) : null}
+          <Row label="Delete account" value="" onPress={accountBusy ? undefined : deleteAccount} />
+          <View style={[styles.row, { borderBottomColor: theme.border }]}>
+            <Text style={[type.body, { color: theme.text, flex: 1 }]}>Count app use</Text>
+            <Switch accessibilityLabel="Count app use" value={countUse} onValueChange={changeCountUse} />
           </View>
+          <Text style={[type.caption, { color: theme.textFaint, padding: space.lg, paddingTop: space.xs, lineHeight: 18 }]}>
+            When this is on, publik counts when {APP_NAME} opens and how long it stays open. The count
+            has no food data and no photos.{optional ? ' Nothing is counted before you sign in.' : ''}
+          </Text>
+        </Section>
+
+        {HEALTHKIT_IN_BUILD ? (
+          <Section title="Apple Health">
+            {healthAvail === 'available' ? (
+              <>
+                <Row
+                  label={healthBusy ? 'Connecting…' : 'Connect / Reconnect'}
+                  value=""
+                  onPress={connectHealth}
+                />
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => void Linking.openSettings()}
+                  style={[tap, { paddingHorizontal: space.lg, paddingBottom: space.sm }]}
+                >
+                  <Text style={[type.caption, { color: theme.textMuted }]}>
+                    Already answered the prompt? <Text style={{ color: theme.protein }}>Manage access in Settings</Text>
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <Row label="Apple Health" value={healthAvail === 'not-ios' ? 'iOS only' : 'Unavailable on this device'} />
+            )}
+          </Section>
         ) : null}
-      </Section>
 
-      <Section title="Start over">
-        <Row
-          label="Redo onboarding"
-          value=""
-          onPress={() => {
-            Alert.alert(
-              'Erase everything and start over?',
-              'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and disconnects publik API. It cannot be undone, and there is no backup on a server because there is no server of ours.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Erase and restart',
-                  style: 'destructive',
-                  onPress: () => {
-                    void resetEverything().then(() => router.replace('/onboarding' as never))
+        <Section title="Your data">
+          <Row label={dataBusy ? 'Working…' : 'Export data'} value="" onPress={exportData} />
+          <Row label="Import data" value="" onPress={importData} />
+          <Text style={[type.caption, { color: theme.textFaint, padding: space.lg, paddingTop: space.xs, lineHeight: 18 }]}>
+            One JSON file with everything: meals, weights, goals, settings. Your API key never
+            travels in it — re-enter that once after restoring on a new phone.
+          </Text>
+        </Section>
+
+        <Section title="How your numbers work">
+          {goal ? (
+            <View style={{ padding: space.lg, gap: space.sm }}>
+              {/* Plain words, not "BMR" and "TDEE" (blind test round 2, N7). */}
+              <Line label="Calories your body uses at rest" value={`${Math.round(goal.bmr)} kcal`} />
+              <Line label="Calories you use in a normal day" value={`${Math.round(goal.tdee)} kcal`} />
+              <Line label="Your target" value={`${Math.round(goal.targetKcal)} kcal`} />
+              {goal.floorApplied ? (
+                <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
+                  Raised to our safe floor. Your inputs alone gave {Math.round(goal.targetRawKcal)} kcal.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </Section>
+
+        <Section title="Start over">
+          <Row
+            label="Redo onboarding"
+            value=""
+            onPress={() => {
+              Alert.alert(
+                'Erase everything and start over?',
+                'Deletes your profile, goals, weight history, logged meals and saved API keys from this device, and signs this phone out of publik. You cannot undo it. We keep no copy of your food log, so export it first if you want to keep it.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Erase and restart',
+                    style: 'destructive',
+                    onPress: () => {
+                      // Required mode: the key is gone, so Sign in with publik
+                      // shows again; after it, the onboarding gate opens
+                      // onboarding. Optional mode has no wall: onboarding now.
+                      void resetEverything()
+                        .catch(() => undefined)
+                        .then(() => {
+                          requestPublikSignIn()
+                          if (optional) router.replace('/onboarding')
+                        })
+                    },
                   },
-                },
-              ],
-            )
-          }}
-        />
-      </Section>
+                ],
+              )
+            }}
+          />
+        </Section>
 
-      <Section title="About">
-        <Row label="License" value="AGPL-3.0" />
-        <Row label="Nutrition data" value="USDA, CC0" />
-      </Section>
+        <Section title="Help">
+          <Row label="Help and support" value="" onPress={() => void openPublikLink(supportUrl({ source: 'profile' }))} />
+          <Row label="How estimates work" value="" onPress={() => router.push('/how-estimates-work' as never)} />
+        </Section>
 
-      <Text style={[type.caption, { color: theme.textFaint, marginTop: space.xl, lineHeight: 19 }]}>
-        Nut AI's estimates are AI-generated approximations and may not be accurate. It is not a
-        medical device and does not diagnose, treat, cure or prevent any condition. Consult a
-        registered dietitian or healthcare provider before making medical decisions.
-      </Text>
-    </ScrollView>
+        <Section title="About">
+          <Row label="Privacy policy" value="" onPress={() => void openPublikLink(PRIVACY_URL)} />
+          <Row label="License" value="AGPL-3.0" />
+          <Row label="Nutrition data" value="USDA, CC0" />
+          {/* The version and build of this app (blind test round 2, N12). */}
+          <Text testID="profile-version" style={[type.caption, { color: theme.textMuted, padding: space.lg }]}>
+            {appVersionLine(
+              Constants.expoConfig?.version,
+              Platform.OS === 'ios' ? Constants.expoConfig?.ios?.buildNumber : Constants.expoConfig?.android?.versionCode,
+            )}
+          </Text>
+        </Section>
+
+        <Text style={[type.caption, { color: theme.textFaint, marginTop: space.xl, lineHeight: 19 }]}>
+          {APP_NAME}'s estimates are AI-generated approximations and may not be accurate. It is not a
+          medical device and does not diagnose, treat, cure or prevent any condition. Consult a
+          registered dietitian or healthcare provider before making medical decisions.
+        </Text>
+      </ScrollView>
+      <StatusBarScrim />
+    </View>
   )
 }
 

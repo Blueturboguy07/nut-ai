@@ -6,7 +6,7 @@ export default function SexScreen() {
       step="sex"
       field="sex"
       title="Choose your sex"
-      subtitle="This is used only for the BMR equation that sets your calorie target."
+      subtitle="We use this only to calculate the calories your body uses at rest. That sets your calorie target."
       options={[
         { value: 'male', label: 'Male', glyph: 'male' },
         { value: 'female', label: 'Female', glyph: 'female' },

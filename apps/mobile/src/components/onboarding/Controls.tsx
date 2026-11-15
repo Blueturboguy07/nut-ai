@@ -16,9 +16,9 @@ import { useTheme } from '../../theme/ThemeProvider'
 import { MIN_TAP_TARGET, radius, space, type } from '../../theme/tokens'
 
 /**
- * The three input controls the onboarding flow needs, matched to the reference
- * walkthrough: a selectable option card, a segmented unit toggle, and the two
- * value pickers (a horizontal ruler and a vertical wheel).
+ * The three input controls the onboarding flow needs: a selectable option
+ * card, a segmented unit toggle, and the two value pickers (a horizontal ruler
+ * and a vertical wheel).
  */
 
 // ---------------------------------------------------------------------------

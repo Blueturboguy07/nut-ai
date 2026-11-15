@@ -4,6 +4,7 @@ import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { APP_NAME } from '../../src/inference/publik-copy'
 import { radius, space, type } from '../../src/theme/tokens'
 
 export default function ThanksScreen() {
@@ -22,7 +23,7 @@ export default function ThanksScreen() {
 
         <Text style={[styles.heading, { color: theme.text }]}>Thank you for trusting us!</Text>
         <Text style={[type.body, { color: theme.textMuted, textAlign: 'center', marginTop: space.md }]}>
-          Now let's personalize Nut AI for you...
+          Now let's personalize {APP_NAME} for you...
         </Text>
 
         <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
@@ -30,8 +31,8 @@ export default function ThanksScreen() {
             Personalized to your goals
           </Text>
           <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.xs }]}>
-            Your answers set your targets, bias how we match your food, and decide which parts of
-            the app are switched on.
+            Your answers set your daily calorie and macro targets. You can change them at any
+            time in Profile.
           </Text>
         </View>
       </View>

@@ -1,11 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  APP_SLUG,
+  APP_TOKEN_PLACEHOLDER,
+  aiProvidersOf,
+  appTokenOf,
   chargeUsdFromHeaders,
   classifyGatewayError,
-  formatMicros,
+  purchaseLinksFor,
+  purchaseLinksLogLine,
+  purchaseLinksOn,
+  storefrontReading,
+  setPurchaseLinks,
+  gateWalletFromJson,
+  notePlanResetsAt,
+  planStatus,
+  planUse,
+  publikClaimState,
+  inAppClaimUrl,
   isSafePublikLink,
   isUsableAppToken,
   provision,
+  provisionGateMessage,
   walletFromHeaders,
   walletPatchFromHeaders,
   walletFromJson,
@@ -13,7 +28,7 @@ import {
   publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
-import { provisionFailureMessage, waitPhrase } from './publik-copy'
+import { appVersionLine, planLimitMessage, planStatusLine, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -87,7 +102,7 @@ describe('provision', () => {
     if (r.ok) {
       expect(r.key).toBe(KEY)
       expect(r.starterMicros).toBe(0)
-      expect(r.install.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
+      expect(r.install.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
       expect(r.install.claimState).toBe('anonymous')
       expect(r.install.baseUrl).toBe('https://publikhq.com/api/v1')
       expect(r.install.models.fast).toBe('publik-fast')
@@ -126,6 +141,47 @@ describe('provision', () => {
     expect(bad.ok && bad.install.baseUrl).toBe('https://publikhq.com/api/v1')
   })
 
+  it('403 install_revoked is its own outcome (the caller makes ONE new install), not a revoked app token', async () => {
+    const r = await provision(INPUT, scripted(403, { error: { type: 'install_revoked', message: 'This install was disconnected by its owner. Provision a new install.', reprovision: false } }).impl)
+    expect(r).toEqual({ ok: false, kind: 'install-revoked', status: 403 })
+    expect(r.ok === false && provisionGateMessage(r, CFG)).toContain('Retry')
+  })
+
+  it('a 401 / 403 page that is not publik\'s JSON (a captive portal, a proxy) is "not reachable", not a revoked token', async () => {
+    for (const status of [401, 403]) {
+      const portal = vi.fn(async () => ({
+        ok: false,
+        status,
+        headers: new Headers(),
+        json: async () => {
+          throw new SyntaxError('Unexpected token < in JSON at position 0')
+        },
+      })) as unknown as typeof fetch
+      const r = await provision(INPUT, portal)
+      expect(r).toEqual({ ok: false, kind: 'offline', status })
+      expect(r.ok === false && provisionGateMessage(r, CFG)).toBeUndefined()
+    }
+  })
+
+  it('a 200 that is not JSON (a captive portal) is "not reachable", never "Update Nut AI"', async () => {
+    for (const body of ['<html>', null, ['not', 'an', 'object']]) {
+      const page = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => {
+          if (body === '<html>') throw new SyntaxError('Unexpected token < in JSON at position 0')
+          return body
+        },
+      })) as unknown as typeof fetch
+      const r = await provision(INPUT, page)
+      expect(r).toEqual({ ok: false, kind: 'offline', status: 200 })
+      // The gate shows the Retry screen's "not reachable" line (undefined = UNREACHABLE_MESSAGE).
+      expect(r.ok === false && provisionGateMessage(r, CFG)).toBeUndefined()
+      expect(r.ok === false && provisionFailureMessage(r)).toMatch(/^No connection/)
+    }
+  })
+
   it('200 replay with key:null is a named outcome, not a key', async () => {
     const r = await provision(INPUT, scripted(200, { ...MINT_201, key: null, starter_micros: 0 }).impl)
     expect(r).toMatchObject({ ok: false, kind: 'replayed' })
@@ -135,6 +191,9 @@ describe('provision', () => {
     expect(await provision(INPUT, scripted(429, {}, { 'retry-after': '120' }).impl)).toMatchObject({ ok: false, kind: 'rate-limited', retryAfterSec: 120 })
     expect(await provision(INPUT, scripted(401, {}).impl)).toMatchObject({ ok: false, kind: 'token-revoked' })
     expect(await provision(INPUT, scripted(403, {}).impl)).toMatchObject({ ok: false, kind: 'token-revoked' })
+    // The server's reasons (app/api/v1/installs): 401 invalid_app_token, 403 app_suspended, 403 install_revoked.
+    expect(await provision(INPUT, scripted(401, { error: { type: 'invalid_app_token', message: 'x' } }).impl)).toMatchObject({ ok: false, kind: 'token-revoked', status: 401 })
+    expect(await provision(INPUT, scripted(403, { error: { type: 'app_suspended', message: 'x' } }).impl)).toMatchObject({ ok: false, kind: 'token-revoked', status: 403 })
     expect(await provision(INPUT, scripted(503, {}).impl)).toMatchObject({ ok: false, kind: 'unavailable', status: 503 })
     const thrower = vi.fn(async () => { throw new TypeError('Network request failed') }) as unknown as typeof fetch
     expect(await provision(INPUT, thrower)).toMatchObject({ ok: false, kind: 'offline' })
@@ -164,6 +223,90 @@ describe('app token shape', () => {
     expect(isUsableAppToken('pat_nut-ai_REPLACE_ME')).toBe(false)
     expect(isUsableAppToken('')).toBe(false)
     expect(isUsableAppToken(undefined)).toBe(false)
+  })
+})
+
+describe('the app token of a build', () => {
+  const FILE = `pat_nut-ai_${'f'.repeat(32)}`
+  it('a release build takes it ONLY from the build input (PUBLIK_APP_TOKEN)', () => {
+    expect(appTokenOf(TOKEN, FILE, false)).toBe(TOKEN)
+    expect(appTokenOf(undefined, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf(null, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf('', FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf(APP_TOKEN_PLACEHOLDER, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+  })
+  it('the committed file serves a dev build only, and the build input still wins there', () => {
+    expect(appTokenOf(undefined, FILE, true)).toBe(FILE)
+    expect(appTokenOf(TOKEN, FILE, true)).toBe(TOKEN)
+    expect(appTokenOf(undefined, APP_TOKEN_PLACEHOLDER, true)).toBe(APP_TOKEN_PLACEHOLDER)
+  })
+})
+
+describe('the version line in Profile (blind test round 2, N12)', () => {
+  it('names the app, the version and the build', () => {
+    expect(appVersionLine('0.1.9', '42')).toBe('publik Nut AI 0.1.9 (42)')
+    expect(appVersionLine('0.1.9', 42)).toBe('publik Nut AI 0.1.9 (42)')
+    expect(appVersionLine('0.1.9', undefined)).toBe('publik Nut AI 0.1.9')
+    expect(appVersionLine(undefined, null)).toBe('publik Nut AI unknown version')
+  })
+})
+
+describe('purchase links (the App Store rule)', () => {
+  it('an App Store build shows them only in the US storefront; unknown = hidden', () => {
+    expect(purchaseLinksFor(true, 'USA')).toBe(true)
+    expect(purchaseLinksFor(true, 'usa')).toBe(true)
+    expect(purchaseLinksFor(true, 'US')).toBe(true)
+    for (const c of ['GBR', 'CAN', 'DEU', 'IND', 'JPN', '', null, undefined]) expect(purchaseLinksFor(true, c)).toBe(false)
+  })
+  it('a build that is not an App Store build shows them on a real phone', () => {
+    for (const c of ['USA', 'GBR', null]) expect(purchaseLinksFor(false, c)).toBe(true)
+    for (const c of ['USA', 'GBR', null]) expect(purchaseLinksFor(false, c, 'device')).toBe(true)
+  })
+
+  // Blind test round 2 (Nov 15 2026, N1): StoreKit on a simulator reports the
+  // US storefront, so the App Store build on a simulator showed "Get a plan".
+  it('a simulator = storefront unknown, whatever StoreKit says', () => {
+    expect(storefrontReading(true, 'USA')).toEqual({ device: 'simulator', storefront: null, why: 'simulator' })
+    expect(storefrontReading(true, null)).toEqual({ device: 'simulator', storefront: null, why: 'simulator' })
+    const sim = storefrontReading(true, 'USA')
+    expect(purchaseLinksFor(true, sim.storefront, sim.device)).toBe(false)
+    // No purchase link on a simulator in any build.
+    expect(purchaseLinksFor(false, 'USA', 'simulator')).toBe(false)
+  })
+
+  it('only a real device that reports the USA shows them in an App Store build', () => {
+    const usa = storefrontReading(false, 'usa')
+    expect(usa).toEqual({ device: 'device', storefront: 'USA', why: 'read' })
+    expect(purchaseLinksFor(true, usa.storefront, usa.device)).toBe(true)
+    for (const c of ['GBR', 'CAN', '', null, undefined, 42, 'U.S.']) {
+      const r = storefrontReading(false, c)
+      expect(purchaseLinksFor(true, r.storefront, r.device)).toBe(false)
+    }
+    // No native module (or a read error): the device is unknown, so no link even for "USA".
+    const unknown = storefrontReading(null, 'USA')
+    expect(unknown.device).toBe('unknown')
+    expect(purchaseLinksFor(true, unknown.storefront, unknown.device)).toBe(false)
+  })
+
+  it('the start log line names the storefront, the rule and the Google sentence', () => {
+    expect(purchaseLinksLogLine(storefrontReading(true, 'USA'), false)).toBe(
+      'publik storefront: unknown (simulator) · purchase links: off · To get a plan, search for "publik" on Google.',
+    )
+    expect(purchaseLinksLogLine(storefrontReading(false, 'USA'), true)).toBe('publik storefront: USA (device) · purchase links: on')
+    expect(purchaseLinksLogLine(storefrontReading(false, null), false)).toBe(
+      'publik storefront: unknown (no answer) · purchase links: off · To get a plan, search for "publik" on Google.',
+    )
+  })
+  it('the module setting is what classifyGatewayError and gateScreen use by default', () => {
+    const before = purchaseLinksOn()
+    try {
+      setPurchaseLinks(false)
+      expect(purchaseLinksOn()).toBe(false)
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type: 'insufficient_credit', claim_state: 'claimed', top_up_url: 'https://publikhq.com/wallet' } }))
+      expect(f?.action).toBeUndefined()
+    } finally {
+      setPurchaseLinks(before)
+    }
   })
 })
 
@@ -229,20 +372,48 @@ describe('wallet from headers', () => {
     expect(lapsed.balanceMicros).toBe(3_120_000)
   })
 
-  it('chargeUsdFromHeaders and formatMicros', () => {
+  it('chargeUsdFromHeaders (kept for the local scan log; never shown)', () => {
     expect(chargeUsdFromHeaders(new Headers({ 'x-publik-charge-micros': '41000' }))).toBe(0.041)
     expect(chargeUsdFromHeaders(new Headers({}))).toBeNull()
-    expect(formatMicros(1_920_000)).toBe('$1.92')
-    expect(formatMicros(400)).toBe('$0.0004')
-    expect(formatMicros(0)).toBe('$0.00')
-    expect(formatMicros(null)).toBe('—')
   })
 
   it('walletFromJson reads the GET /wallet shape', () => {
     const w = walletFromJson(MINT_201.wallet, 'anonymous')
     expect(w.balanceMicros).toBe(0)
     expect(w.weekResetsAt).toBe('2026-09-26T00:00:00Z')
-    expect(w.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
+    expect(w.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
+  })
+})
+
+describe('the publik pages the app opens', () => {
+  it('inAppClaimUrl adds in_app=1 and keeps the other query values and the fragment', () => {
+    expect(inAppClaimUrl('https://publikhq.com/claim/HK7F-2QWD')).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?ref=app&x=1')).toBe('https://publikhq.com/claim/A?ref=app&x=1&in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?')).toBe('https://publikhq.com/claim/A?in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A#top')).toBe('https://publikhq.com/claim/A?in_app=1#top')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?ref=app#top')).toBe('https://publikhq.com/claim/A?ref=app&in_app=1#top')
+    // An old in_app value is replaced, not doubled.
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?in_app=0&ref=app')).toBe('https://publikhq.com/claim/A?ref=app&in_app=1')
+    // Given its own result, the same link.
+    const once = inAppClaimUrl('https://publikhq.com/claim/A?ref=app')
+    expect(inAppClaimUrl(once)).toBe(once)
+  })
+
+  it('every claim_url from publik becomes the in-app claim link; a link off publik stays null', () => {
+    const gate = gateWalletFromJson({ claim_state: 'anonymous', claim_url: 'https://publikhq.com/claim/A?ref=app', top_up_url: 'https://publikhq.com/wallet?top_up=1' })
+    expect(gate.claimUrl).toBe('https://publikhq.com/claim/A?ref=app&in_app=1')
+    // Get a plan (US storefront only): the site, as before.
+    expect(gate.topUpUrl).toBe('https://publikhq.com/wallet?top_up=1')
+    expect(gateWalletFromJson({ claim_state: 'anonymous', claim_url: 'https://evil.example/claim/A' }).claimUrl).toBeNull()
+    expect(walletFromJson({ claim_url: 'https://publikhq.com.evil/claim/A' }, 'anonymous').claimUrl).toBeNull()
+  })
+
+  it('privacy and account deletion open publik\'s bare in-app pages', () => {
+    // ?app=nut-ai: the page shows this app's summary (blind test round 2, N11).
+    expect(PRIVACY_URL).toBe(`https://publikhq.com/in-app/privacy?app=${APP_SLUG}`)
+    expect(PUBLIK_DELETE_ACCOUNT_URL).toBe('https://publikhq.com/in-app/delete-account')
+    expect(isSafePublikLink(PRIVACY_URL)).toBe(true)
+    expect(isSafePublikLink(PUBLIK_DELETE_ACCOUNT_URL)).toBe(true)
   })
 })
 
@@ -273,20 +444,18 @@ describe('classifyGatewayError', () => {
       },
     })
 
-  it('402 insufficient_credit → quota-exhausted with the server message and exactly one link (top_up_url)', () => {
+  it('402 insufficient_credit → quota-exhausted in our own words (never the gateway amount) and exactly one link (top_up_url)', () => {
     const f = classifyGatewayError(402, body402())
     expect(f?.kind).toBe('quota-exhausted')
     expect(f?.retryable).toBe(false)
-    expect(f?.message).toMatch(/^Your publik balance is too low/)
-    // The gateway writes for desktops; this is a phone.
-    expect(f?.message).toContain('Link this phone to your publik account')
-    expect(f?.message).not.toContain('this computer')
+    expect(f?.message).toBe('Your publik plan limit is reached. Get a plan at the link below, or use your own key in Profile → AI provider.')
+    expect(f?.message).not.toMatch(/\$\d/)
     expect(f?.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
   })
 
-  it('claimed → the button becomes "Add a plan or pack" and follows top_up_url', () => {
+  it('claimed → the button is "Get a plan" and follows top_up_url', () => {
     const f = classifyGatewayError(402, body402({ claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' }))
-    expect(f?.action).toEqual({ label: 'Add a plan or pack', url: 'https://publikhq.com/dashboard/api/add' })
+    expect(f?.action).toEqual({ label: 'Get a plan', url: 'https://publikhq.com/dashboard/api/add' })
   })
 
   it('a top_up_url off publikhq.com yields no action at all', () => {
@@ -304,11 +473,31 @@ describe('classifyGatewayError', () => {
   })
 
   it('caps, model gates and outages map to their own states', () => {
-    expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'daily_cap_reached', claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' } }))).toMatchObject({ kind: 'quota-exhausted', retryable: false, action: { label: 'Raise the cap' } })
+    expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'daily_cap_reached', claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' } }))).toMatchObject({ kind: 'quota-exhausted', retryable: false, action: { label: 'Get a plan' } })
     expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'rate_limit_exceeded' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
-    expect(classifyGatewayError(402, JSON.stringify({ error: { type: 'model_requires_claim', claim_url: 'https://publikhq.com/claim/A' } }))).toMatchObject({ kind: 'model-unavailable', action: { url: 'https://publikhq.com/claim/A' } })
+    expect(classifyGatewayError(402, JSON.stringify({ error: { type: 'model_requires_claim', claim_url: 'https://publikhq.com/claim/A' } }))).toMatchObject({ kind: 'model-unavailable', action: { url: 'https://publikhq.com/claim/A?in_app=1' } })
     expect(classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'Unknown model' } }))).toMatchObject({ kind: 'model-unavailable' })
     expect(classifyGatewayError(503, JSON.stringify({ error: { type: 'gateway_unavailable' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
+  })
+
+  it('outside the US storefront of an App Store build: no link and no price, in every link case', () => {
+    const anon402 = classifyGatewayError(402, body402(), false)
+    expect(anon402).toMatchObject({ kind: 'quota-exhausted', retryable: false })
+    expect(anon402?.action).toBeUndefined()
+    // Not the gateway's own message, which names a link and an amount.
+    expect(anon402?.message).toBe('Your publik plan limit is reached. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
+    expect(anon402?.message).not.toMatch(/\$|pack|link|https?:/i)
+    const claimed402 = classifyGatewayError(402, body402({ claim_state: 'claimed', message: undefined }), false)
+    expect(claimed402?.action).toBeUndefined()
+    expect(claimed402?.message).not.toMatch(/\$|pack|https?:/i)
+    for (const type of ['daily_cap_reached', 'week_budget_reached', 'model_requires_claim']) {
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type, claim_state: 'claimed', top_up_url: 'https://publikhq.com/wallet', claim_url: 'https://publikhq.com/claim/A' } }), false)
+      expect(f).not.toBeNull()
+      expect(f?.action).toBeUndefined()
+      expect(f?.message).not.toMatch(/\$/)
+    }
+    // In the US storefront (or not an App Store build) the link is there as before.
+    expect(classifyGatewayError(402, body402(), true)?.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
   })
 
   it('a non-publik body is not claimed', () => {
@@ -361,6 +550,169 @@ describe('provisionFailureMessage', () => {
     expect(provisionFailureMessage({ ok: false, kind: 'offline' })).toMatch(/^No connection\. Nothing was set up/)
     expect(provisionFailureMessage({ ok: false, kind: 'unavailable' })).toContain('not available for this build')
     expect(provisionFailureMessage({ ok: false, kind: 'token-revoked', status: 401 })).toContain('not available for this build')
-    expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update Nut AI')
+    expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update publik Nut AI')
+  })
+})
+
+describe('no money: AI use is a percent of the plan limit (founder rule, Nov 14 2026)', () => {
+  // Saturday Nov 14 2026, noon, local time.
+  const now = new Date(2026, 10, 14, 12, 0, 0)
+  const monday = new Date(2026, 10, 16, 0, 0, 0).toISOString()
+  const base = { ...emptyWallet('claimed') }
+
+  it('planUse reads used_percent, else 100 - remaining_percent, else the week figures', () => {
+    expect(planUse(walletFromJson({ used_percent: 62.7, resets_at: monday }, 'claimed'))).toEqual({ usedPercent: 62, resetsAt: monday, limitReached: false })
+    expect(planUse(walletFromJson({ remaining_percent: 25 }, 'claimed'))).toMatchObject({ usedPercent: 75, limitReached: false })
+    expect(planUse({ ...base, weekUsedMicros: 300, weekBudgetMicros: 1200, weekResetsAt: monday })).toEqual({ usedPercent: 25, resetsAt: monday, limitReached: false })
+    expect(planUse({ ...base, weekUsedMicros: 1500, weekBudgetMicros: 1200 })).toMatchObject({ usedPercent: 100, limitReached: true })
+    expect(planUse(walletFromJson({ used_percent: 100 }, 'claimed')).limitReached).toBe(true)
+    // 99.6% is not the limit.
+    expect(planUse({ ...base, weekUsedMicros: 996, weekBudgetMicros: 1000 })).toMatchObject({ usedPercent: 99, limitReached: false })
+  })
+
+  it('with no limit to measure against: no number, only "Plan active" or "Plan limit reached"', () => {
+    expect(planUse({ ...base, balanceMicros: 40_000 })).toEqual({ usedPercent: null, resetsAt: null, limitReached: false })
+    expect(planUse({ ...base, balanceMicros: 0 })).toEqual({ usedPercent: null, resetsAt: null, limitReached: true })
+    expect(planUseLine(planUse({ ...base, balanceMicros: 40_000 }), now)).toBe('Plan active')
+    expect(planUseLine(planUse({ ...base, balanceMicros: 0 }), now)).toBe('Plan limit reached')
+    expect(planUseLine({ usedPercent: null, resetsAt: monday, limitReached: true }, now)).toBe('Plan limit reached · resets Monday')
+  })
+
+  it('planUseLine: "62% of your plan used · resets Monday"', () => {
+    expect(planUseLine({ usedPercent: 62, resetsAt: monday, limitReached: false }, now)).toBe('62% of your plan used · resets Monday')
+    expect(planUseLine({ usedPercent: 0, resetsAt: null, limitReached: false }, now)).toBe('0% of your plan used')
+  })
+
+  it('resetPhrase: a weekday within 6 days, "today", a date after that; nothing for the past or junk', () => {
+    expect(resetPhrase(monday, now)).toBe('resets Monday')
+    expect(resetPhrase(new Date(2026, 10, 14, 23, 0, 0).toISOString(), now)).toBe('resets today')
+    expect(resetPhrase(new Date(2026, 10, 24, 9, 0, 0).toISOString(), now)).toBe('resets Nov 24')
+    expect(resetPhrase(new Date(2026, 10, 13).toISOString(), now)).toBeNull()
+    expect(resetPhrase('not a date', now)).toBeNull()
+    expect(resetPhrase(null, now)).toBeNull()
+  })
+
+  it('the plan-limit message names the reset and keeps the storefront rule', () => {
+    expect(planLimitMessage(monday, true, now)).toBe('Your publik plan limit is reached. It resets Monday. Get a plan at the link below, or use your own key in Profile → AI provider.')
+    expect(planLimitMessage(monday, false, now)).toBe(
+      'Your publik plan limit is reached. It resets Monday. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.',
+    )
+    expect(planLimitMessage(null, false, now)).toBe('Your publik plan limit is reached. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
+  })
+
+  it('a 402 or a weekly limit says when it resets: from the error, else the last wallet', () => {
+    const soon = new Date(Date.now() + 2 * 86_400_000).toISOString()
+    const phrase = resetPhrase(soon)!
+    const week = classifyGatewayError(402, JSON.stringify({ error: { type: 'week_budget_reached', claim_state: 'claimed', resets_at: soon } }), false)
+    expect(week?.kind).toBe('quota-exhausted')
+    expect(week?.message).toContain(`It ${phrase}.`)
+    try {
+      notePlanResetsAt(soon)
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type: 'insufficient_credit', claim_state: 'claimed', message: 'Add $5.00 to keep going.' } }), true)
+      expect(f?.message).toContain(`It ${phrase}.`)
+      expect(f?.message).not.toMatch(/\$\d/)
+    } finally {
+      notePlanResetsAt(null)
+    }
+  })
+
+  it('a gateway message with an amount of money is never shown', () => {
+    const f = classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'That model costs $0.07 a call.' } }))
+    expect(f?.message).toBe('publik API does not know that model. Pick one in Profile → AI provider.')
+  })
+})
+
+describe('ai_providers: the companies the publik AI consent names (GET /wallet)', () => {
+  it("keeps publik's list in order, and null when the field is absent", () => {
+    const w = walletFromJson({ claim_state: 'claimed', ai_providers: ['OpenRouter', 'Amazon Web Services', 'OpenAI', 'Google', 'Brave'] }, 'anonymous')
+    expect(w.aiProviders).toEqual(['OpenRouter', 'Amazon Web Services', 'OpenAI', 'Google', 'Brave'])
+    expect(walletFromJson({ claim_state: 'claimed' }, 'anonymous').aiProviders).toBeNull()
+    expect(emptyWallet('claimed').aiProviders).toBeNull()
+  })
+
+  it('drops what is not a company name: non-strings, blanks, duplicates, control characters, long text', () => {
+    expect(aiProvidersOf([' OpenAI ', 'OpenAI', '', 7, null, 'Goo\u0007gle', 'x'.repeat(61), 'Google'])).toEqual(['OpenAI', 'Google'])
+    expect(aiProvidersOf([])).toBeNull()
+    expect(aiProvidersOf('OpenAI')).toBeNull()
+    expect(aiProvidersOf(undefined)).toBeNull()
+    expect(aiProvidersOf(Array.from({ length: 20 }, (_, i) => `Company ${i}`))).toHaveLength(12)
+  })
+})
+
+describe('the plan state is true, and its use shows as a percent with a bar (blind test round 1, B3/B5)', () => {
+  const now = new Date(2026, 10, 14, 12, 0, 0)
+  const monday = new Date(2026, 10, 16, 0, 0, 0).toISOString()
+
+  it('walletFromJson reads plan.kind (null when publik did not send it)', () => {
+    expect(walletFromJson({ plan: { kind: 'plan', label: 'Plus' } }, 'claimed').planKind).toBe('plan')
+    expect(walletFromJson({ plan: { kind: 'pack' } }, 'claimed').planKind).toBe('pack')
+    expect(walletFromJson({ plan: { kind: 'none' } }, 'claimed').planKind).toBe('none')
+    expect(walletFromJson({ plan: { kind: 'gold' } }, 'claimed').planKind).toBeNull()
+    expect(walletFromJson({}, 'claimed').planKind).toBeNull()
+    expect(emptyWallet('claimed').planKind).toBeNull()
+  })
+
+  it('a plan: the percent used and the reset', () => {
+    const s = planStatus(walletFromJson({ plan: { kind: 'plan' }, used_percent: 62.7, resets_at: monday }, 'claimed'))
+    expect(s).toEqual({ kind: 'plan', percent: 62, resetsAt: monday, limitReached: false })
+    expect(planStatusLine(s, now)).toBe('62% of your plan used · resets Monday')
+    const full = planStatus(walletFromJson({ plan: { kind: 'plan' }, remaining_percent: 0, resets_at: monday }, 'claimed'))
+    expect(planStatusLine(full, now)).toBe('100% of your plan used · resets Monday')
+    expect(full.limitReached).toBe(true)
+  })
+
+  it('prepaid: GET /wallet prepaid_remaining_percent is the percent left (blind test round 2, N2)', () => {
+    const w = walletFromJson({ plan: { kind: 'pack' }, balance_micros: 3_100_000, prepaid_remaining_percent: 62 }, 'claimed')
+    expect(w.prepaidRemainingPercent).toBe(62)
+    const s = planStatus(w)
+    expect(s).toEqual({ kind: 'prepaid', percent: 62, resetsAt: null, limitReached: false })
+    expect(planStatusLine(s, now)).toBe('62% left of your prepaid balance')
+    // A part of 1% left is 1%, not "used up"; 0 is used up; null falls back.
+    expect(planStatus({ ...w, prepaidRemainingPercent: 0.4 }).percent).toBe(1)
+    expect(planStatusLine(planStatus({ ...w, prepaidRemainingPercent: 0 }), now)).toBe('Prepaid balance used up')
+    expect(walletFromJson({ prepaid_remaining_percent: 140 }, 'claimed').prepaidRemainingPercent).toBe(100)
+    expect(walletFromJson({ prepaid_remaining_percent: '62' }, 'claimed').prepaidRemainingPercent).toBeNull()
+    expect(walletFromJson({ prepaid_remaining_percent: null }, 'claimed').prepaidRemainingPercent).toBeNull()
+    expect(emptyWallet('claimed').prepaidRemainingPercent).toBeNull()
+  })
+
+  it('prepaid (a pack, or a balance with no plan): the percent LEFT', () => {
+    const pack = planStatus(walletFromJson({ plan: { kind: 'pack' }, remaining_percent: 40, balance_micros: 1_000 }, 'claimed'))
+    expect(pack).toEqual({ kind: 'prepaid', percent: 40, resetsAt: null, limitReached: false })
+    expect(planStatusLine(pack, now)).toBe('40% left of your prepaid balance')
+    const balance = planStatus(walletFromJson({ plan: { kind: 'none' }, balance_micros: 1_250_000 }, 'claimed'))
+    expect(balance.kind).toBe('prepaid')
+    expect(planStatusLine(balance, now)).toBe('Prepaid balance active')
+    const spent = planStatus(walletFromJson({ plan: { kind: 'pack' }, balance_micros: 0 }, 'claimed'))
+    expect(planStatusLine(spent, now)).toBe('Prepaid balance used up')
+  })
+
+  it('no plan: "No publik plan yet", never "Plan active"', () => {
+    const none = planStatus(walletFromJson({ plan: { kind: 'none' }, balance_micros: 0 }, 'claimed'))
+    expect(none).toEqual({ kind: 'none', percent: null, resetsAt: null, limitReached: false })
+    expect(planStatusLine(none, now)).toBe('No publik plan yet')
+    // A snapshot an older version stored (no plan kind): a limit means a plan, a balance prepaid, else none.
+    expect(planStatus({ ...emptyWallet('claimed'), planKind: null, balanceMicros: 0 }).kind).toBe('none')
+    expect(planStatus({ ...emptyWallet('claimed'), weekBudgetMicros: 100, weekUsedMicros: 25 }).kind).toBe('plan')
+    expect(planStatus({ ...emptyWallet('claimed'), balanceMicros: 5 }).kind).toBe('prepaid')
+  })
+
+  it('no line has money in it', () => {
+    const lines = [
+      planStatusLine({ kind: 'plan', percent: 10, resetsAt: monday, limitReached: false }, now),
+      planStatusLine({ kind: 'plan', percent: null, resetsAt: null, limitReached: false }, now),
+      planStatusLine({ kind: 'prepaid', percent: 55, resetsAt: null, limitReached: false }, now),
+      planStatusLine({ kind: 'none', percent: null, resetsAt: null, limitReached: false }, now),
+    ]
+    for (const l of lines) expect(l).not.toMatch(/\$|\d+\.\d\d|price|cost/i)
+  })
+})
+
+describe('one truth for "linked" (blind test round 1, B11)', () => {
+  it('the wallet publik sent last wins; else the install in the Keychain', () => {
+    expect(publikClaimState({ claimState: 'claimed' }, null)).toBe('claimed')
+    expect(publikClaimState({ claimState: 'claimed' }, { claimState: 'anonymous' })).toBe('anonymous')
+    expect(publikClaimState({ claimState: 'anonymous' }, { claimState: 'claimed' })).toBe('claimed')
+    expect(publikClaimState(null, null)).toBe('anonymous')
   })
 })

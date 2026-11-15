@@ -12,10 +12,8 @@ export default function ProfessionalScreen() {
       step={stepIndex('professional')}
       total={TOTAL_STEPS}
       title="Do you currently work with a personal trainer or registered dietitian?"
-      // The real consumer: someone with a professional gets the shareable PDF
-      // export surfaced, and the app stops offering its own coaching nudges —
-      // it should not argue with their dietitian.
-      subtitle="If you do, we'll surface a shareable export and stay out of your coaching."
+      // No subtitle (App Store 2.1, Nov 14 2026): the shareable export and the
+      // coaching it promised are not built. The answer is saved only.
       ctaDisabled={a.worksWithProfessional == null}
       onCta={() => router.push(nextRoute('professional') as never)}
     >

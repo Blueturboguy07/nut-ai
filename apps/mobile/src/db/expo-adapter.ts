@@ -68,22 +68,54 @@ export async function openUserDb(): Promise<DbAdapter> {
  * resolver bug while actually being a missing asset. Hence `nutritionCorpusInfo`
  * below, so that failure is legible rather than mysterious.
  */
-let nutritionImported = false
+let nutritionReady: Promise<void> | null = null
+
+/**
+ * Copy the bundled database into SQLite's directory, once per run.
+ *
+ * THE REQUIRE IS NOT IN A try BLOCK, on purpose. Metro treats a require
+ * inside try/catch as OPTIONAL: a build without the asset bundled anyway,
+ * the require threw at run time, the catch took it, and the app opened an
+ * EMPTY nutrition.db ("The food database did not load", blind test round 1,
+ * Nov 14 2026, B2). The asset is gitignored and made by `npm run
+ * data:build`; now a build without it fails at the bundle step. CI builds it
+ * (mobile-build.yml) and proves the search in the built app (the food-db
+ * self-test).
+ *
+ * A phone that once ran a build without the asset holds an empty
+ * nutrition.db, and the import by name does not replace a file that exists.
+ * So when the copy has no foods it is imported again, over the old file.
+ */
+async function importNutritionDb(): Promise<void> {
+  const assetId = require('../../assets/nutrition.db')
+  try {
+    // Idempotent by name. Re-copying 4.7 MB on every cold start would be a
+    // visible delay for nothing.
+    await SQLite.importDatabaseFromAssetAsync('nutrition.db', { assetId, forceOverwrite: false })
+  } catch {
+    // Already imported by a previous launch: the common path.
+  }
+  let foods = 0
+  const check = await SQLite.openDatabaseAsync('nutrition.db', { useNewConnection: true })
+  try {
+    foods = (await nutritionCorpusInfo(new ExpoDbAdapter(check))).foods
+  } finally {
+    await check.closeAsync().catch(() => undefined)
+  }
+  if (foods === 0) {
+    await SQLite.importDatabaseFromAssetAsync('nutrition.db', { assetId, forceOverwrite: true })
+  }
+}
 
 export async function openNutritionDb(): Promise<DbAdapter> {
-  if (!nutritionImported) {
-    try {
-      await SQLite.importDatabaseFromAssetAsync('nutrition.db', {
-        assetId: require('../../assets/nutrition.db'),
-        // Idempotent by name. Re-copying 4.7 MB on every cold start would be a
-        // visible delay for nothing.
-        forceOverwrite: false,
-      })
-    } catch {
-      // Already imported by a previous launch — the common path.
-    }
-    nutritionImported = true
+  if (!nutritionReady) {
+    nutritionReady = importNutritionDb().catch((e: unknown) => {
+      // The next open tries again.
+      nutritionReady = null
+      throw e
+    })
   }
+  await nutritionReady
 
   const db = await SQLite.openDatabaseAsync('nutrition.db')
   return new ExpoDbAdapter(db)

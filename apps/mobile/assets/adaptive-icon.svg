@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <!--
-    The Nut AI mark. Same grammar as the incumbent's: a white food silhouette
-    inside four scan-frame corners on near-black — except the food is ours.
+    The Nut AI mark: a white food silhouette inside four scan-frame corners
+    on near-black.
     Peanut is drawn as a pure silhouette (no shell texture): at 60px on a home
     screen, texture reads as noise and silhouette reads as identity.
   -->

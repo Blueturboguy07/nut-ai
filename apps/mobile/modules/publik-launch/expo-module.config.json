@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["PublikLaunchModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.publiklaunch.PublikLaunchModule"]
+  }
+}

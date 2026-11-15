@@ -11,8 +11,7 @@ import { MIN_TAP_TARGET, radius, space, type } from '../../theme/tokens'
  * docked bottom action.
  *
  * Every screen in the flow uses this, which is what makes the flow feel like one
- * thing rather than twenty. The measurements are taken from the reference
- * walkthrough: a 44pt circular back button on a very light fill, a 6pt pill
+ * thing rather than twenty. The measurements: a 44pt circular back button on a very light fill, a 6pt pill
  * progress track, a ~40pt bold title with tight tracking, and a full-width pill
  * button docked above the home indicator.
  */
@@ -110,6 +109,8 @@ export function OnboardingScreen({
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: 180 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
         >
           {body}
         </ScrollView>

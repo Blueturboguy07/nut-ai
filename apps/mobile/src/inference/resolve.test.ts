@@ -9,7 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const settings = new Map<string, string>()
 const creds = new Map<string, { kind: 'api_key' | 'oauth'; value: string }>()
 let install: any = null
+// The dev-build flag (Claude subscription tokens) and the consent answers, per test.
+const h = vi.hoisted(() => ({ dev: true, consent: true, asked: [] as string[] }))
 
+vi.mock('../build-flags', () => ({
+  get CLAUDE_SUBSCRIPTION_TOKENS() {
+    return h.dev
+  },
+}))
+vi.mock('./ai-consent', () => ({
+  ensureAiConsent: async (d: string) => {
+    h.asked.push(d)
+    return h.consent
+  },
+}))
 vi.mock('../data/repo', () => ({
   setting: async (k: string, fallback = '') => settings.get(k) ?? fallback,
 }))
@@ -35,6 +48,9 @@ beforeEach(() => {
   settings.clear()
   creds.clear()
   install = null
+  h.dev = true
+  h.consent = true
+  h.asked = []
 })
 
 describe('resolveInference', () => {
@@ -140,5 +156,39 @@ describe('resolveInference', () => {
   it('a vendor setting with no key → key-missing', async () => {
     settings.set('provider', 'anthropic')
     expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'key-missing' } })
+  })
+})
+
+describe('consent and the App Store build', () => {
+  it('nothing goes to an AI provider the person did not agree to: publik and each vendor are asked on their own', async () => {
+    h.consent = false
+    settings.set('provider', 'publik')
+    creds.set('publik', { kind: 'api_key', value: 'pk_x' })
+    install = INSTALL
+    expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'consent-declined' } })
+    settings.set('provider', 'openai')
+    creds.set('openai', { kind: 'api_key', value: 'sk-vendor' })
+    expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'consent-declined' } })
+    expect(h.asked).toEqual(['publik', 'openai'])
+  })
+
+  it('no key, no question: the consent is asked only when a call could be made', async () => {
+    settings.set('provider', 'anthropic')
+    expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'key-missing' } })
+    expect(h.asked).toEqual([])
+  })
+
+  it('every build but a dev build refuses a saved Claude CLI token (Android too); an API key works as before', async () => {
+    h.dev = false
+    settings.set('provider', 'anthropic')
+    creds.set('anthropic', { kind: 'oauth', value: 'sk-ant-oat01-x' })
+    expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'key-missing' } })
+    expect(h.asked).toEqual([])
+    creds.set('anthropic', { kind: 'api_key', value: 'sk-ant-api03-x' })
+    const r = await resolveInference()
+    expect(r.ok && r.value.credential).toEqual({ kind: 'api_key', value: 'sk-ant-api03-x' })
+    h.dev = true
+    creds.set('anthropic', { kind: 'oauth', value: 'sk-ant-oat01-x' })
+    expect((await resolveInference()).ok).toBe(true)
   })
 })

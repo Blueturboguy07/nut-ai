@@ -71,8 +71,8 @@ export interface OnboardingAnswers {
   healthConnected: boolean
   /**
    * 'publik' is the app's own default supply (publik API); a vendor is the
-   * user's own key; 'none' means no cloud path — barcode, label OCR, search
-   * and manual still work.
+   * user's own key; 'none' means no cloud path — barcode scans and food
+   * search still work; photo and label scans need an AI provider.
    */
   provider: ProviderId | 'publik' | 'none' | undefined
   providerModel: string | null

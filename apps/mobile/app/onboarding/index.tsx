@@ -2,17 +2,19 @@ import { router } from 'expo-router'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle } from 'react-native-svg'
+import { PUBLIK_GATE_MODE } from '../../src/build-flags'
 import { useTheme } from '../../src/theme/ThemeProvider'
-import { radius, space, type } from '../../src/theme/tokens'
+import { radius, space, tap, type } from '../../src/theme/tokens'
 
 /**
  * Welcome.
  *
- * Two deliberate departures from the reference:
+ * Two deliberate choices:
  *
- *   NO "Already have an account? Sign In". There are no accounts. There is no
- *   server. Offering a sign-in link that cannot work would be the first thing a
- *   new user tapped and the first promise broken.
+ *   NO "Already have an account? Sign In". The only account is the publik
+ *   account, and Sign in with publik is its own screen: before onboarding in
+ *   a required build, and at the AI plan choice or in Profile in an optional
+ *   build. The food log has no account; it stays on this phone.
  *
  *   NO language pill. English is the only shipped locale; a picker with one
  *   option is a control that lies about what it does.
@@ -69,14 +71,14 @@ export default function Welcome() {
         </Pressable>
 
         <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.lg }]}>
-          No account. No subscription. Your food data never leaves this device.
+          {PUBLIK_GATE_MODE === 'optional' ? 'No account needed. ' : ''}Meal photos go to the AI provider you
+          choose. Your food log stays on this phone.
         </Text>
 
         <Pressable
           accessibilityRole="button"
           onPress={() => router.push('/onboarding/restore' as never)}
-          hitSlop={space.sm}
-          style={{ marginTop: space.md, alignSelf: 'center' }}
+          style={[tap, { marginTop: space.sm, alignSelf: 'center' }]}
         >
           <Text style={[type.label, { color: theme.textMuted, textDecorationLine: 'underline' }]}>
             Restore from a backup

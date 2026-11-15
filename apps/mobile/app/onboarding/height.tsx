@@ -7,7 +7,7 @@ import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer, useAnswers } from '../../src/onboarding/store'
 import { space } from '../../src/theme/tokens'
 
-const DEFAULT_CM = 168 // 5 ft 6 in, the reference default
+const DEFAULT_CM = 168 // 5 ft 6 in
 
 const CM_PER_IN = 2.54
 

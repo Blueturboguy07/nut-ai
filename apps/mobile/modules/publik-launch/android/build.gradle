@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.publiklaunch'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.publiklaunch"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+    // A CI test build only (PUBLIK_TEST_HOOKS=1 in the Gradle environment).
+    // Without it the module reads no intent extra at all.
+    buildConfigField "boolean", "PUBLIK_TEST_HOOKS", System.getenv("PUBLIK_TEST_HOOKS") == "1" ? "true" : "false"
+  }
+  buildFeatures {
+    buildConfig true
+  }
+}

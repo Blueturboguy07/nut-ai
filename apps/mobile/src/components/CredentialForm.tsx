@@ -1,13 +1,17 @@
 import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
-import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, InputAccessoryView, Keyboard, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { cheapestModel, type ProviderId } from '@nutai/prompt'
+import { CLAUDE_SUBSCRIPTION_TOKENS } from '../build-flags'
 import { putSetting } from '../data/repo'
 import { looksPlausible, saveCredential, type CredentialKind } from '../inference/credentials'
 import { validateCredential } from '../inference/pathA/validate'
 import { useTheme } from '../theme/ThemeProvider'
-import { radius, space, type } from '../theme/tokens'
+import { radius, space, tap, type } from '../theme/tokens'
 import { Icon } from './Icon'
+
+/** The keyboard bar of the key field (iOS). */
+const VERIFY_BAR_ID = 'credential-verify'
 
 /**
  * The credential entry + validation form, shared VERBATIM between onboarding
@@ -18,7 +22,14 @@ import { Icon } from './Icon'
  *
  * On success it persists everything scans need (Keychain credential + the
  * provider/provider_model settings the orchestrator reads) and reports up.
+ *
+ * Only a dev build (Metro) has the "Claude CLI token" tab
+ * (build-flags.ts CLAUDE_SUBSCRIPTION_TOKENS). Every other build, Android
+ * too, has no tab and refuses a Claude subscription token even when it is
+ * pasted as a key: Anthropic does not allow third-party apps to use Claude
+ * subscription credentials. An Anthropic API key works as before.
  */
+const CLI_TOKEN_TAB = CLAUDE_SUBSCRIPTION_TOKENS
 
 const CONSOLE_URL: Record<ProviderId, string> = {
   anthropic: 'https://console.anthropic.com/settings/keys',
@@ -58,12 +69,19 @@ export function CredentialForm({
     setBusy(true)
     setError(null)
 
-    const res = await validateCredential(provider, model.id, { kind, value: value.trim() })
+    const res = await validateCredential(provider, model.id, { kind: CLI_TOKEN_TAB ? kind : 'api_key', value: value.trim() }, fetch, 15_000, {
+      apiKeyOnly: !CLI_TOKEN_TAB,
+    })
     setBusy(false)
 
     if (!res.ok) {
       setError(explain(res.error.kind, res.error.message))
       setDetail(res.detail)
+      return
+    }
+    if (!CLI_TOKEN_TAB && provider === 'anthropic' && res.usedShape === 'bearer') {
+      setError('This is a Claude subscription token. This app takes an Anthropic API key only: get one from the Anthropic console. Nothing was saved.')
+      setDetail(null)
       return
     }
 
@@ -82,7 +100,7 @@ export function CredentialForm({
   return (
     <View>
       {/* Anthropic accepts either shape, so the choice is explicit. */}
-      {provider === 'anthropic' ? (
+      {provider === 'anthropic' && CLI_TOKEN_TAB ? (
         <View style={[styles.tabs, { backgroundColor: theme.bgSunken }]}>
           {(['api_key', 'oauth'] as const).map((k) => (
             <Pressable
@@ -102,7 +120,7 @@ export function CredentialForm({
       ) : null}
 
       <View style={[styles.how, { backgroundColor: theme.bgSunken }]}>
-        {provider === 'anthropic' && kind === 'oauth' ? (
+        {provider === 'anthropic' && kind === 'oauth' && CLI_TOKEN_TAB ? (
           <>
             <Text style={[type.bodyStrong, { color: theme.text }]}>Sign in through the Claude CLI</Text>
             <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
@@ -133,8 +151,8 @@ export function CredentialForm({
               <Icon name="chevron" size={14} color={theme.protein} />
             </Pressable>
             <Text style={[type.caption, { color: theme.textFaint, marginTop: space.sm, lineHeight: 18 }]}>
-              Billing is between you and {PROVIDER_NAME[provider]}. We never see the key, and there
-              is no account here to attach it to.
+              Billing is between you and {PROVIDER_NAME[provider]}. The key stays on this phone and
+              goes only to {PROVIDER_NAME[provider]}.
             </Text>
           </>
         )}
@@ -155,8 +173,35 @@ export function CredentialForm({
         autoCorrect={false}
         secureTextEntry={!ok}
         editable={!busy}
+        returnKeyType="done"
+        onSubmitEditing={() => void verify()}
+        // iOS: "Verify and save" rides on the keyboard (blind test round 2, N8).
+        inputAccessoryViewID={Platform.OS === 'ios' ? VERIFY_BAR_ID : undefined}
         style={[styles.input, { color: theme.text, backgroundColor: theme.bgSunken, borderColor: error ? theme.safety : theme.border }]}
       />
+
+      {Platform.OS === 'ios' ? (
+        <InputAccessoryView nativeID={VERIFY_BAR_ID}>
+          <View style={[styles.bar, { backgroundColor: theme.bgSunken, borderTopColor: theme.border }]}>
+            <Pressable accessibilityRole="button" onPress={() => Keyboard.dismiss()} style={[tap, { paddingHorizontal: space.md }]}>
+              <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
+            </Pressable>
+            {ok ? null : (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy || !plausible}
+                onPress={() => {
+                  Keyboard.dismiss()
+                  void verify()
+                }}
+                style={[styles.barVerify, { backgroundColor: theme.text }, (busy || !plausible) && { opacity: 0.4 }]}
+              >
+                <Text style={[type.bodyStrong, { color: theme.bg }]}>{busy ? 'Checking…' : 'Verify and save'}</Text>
+              </Pressable>
+            )}
+          </View>
+        </InputAccessoryView>
+      ) : null}
 
       {busy ? (
         <View style={{ marginTop: space.lg, alignItems: 'center' }}>
@@ -183,7 +228,7 @@ export function CredentialForm({
           </View>
           <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
             Verified as {shape === 'bearer' ? 'an OAuth / CLI token' : 'an API key'}. Using{' '}
-            {model.label} at roughly ${model.approxScanCostUsd.toFixed(4)} per scan.
+            {model.label}.
           </Text>
         </View>
       ) : (
@@ -210,7 +255,9 @@ export function CredentialForm({
 function explain(kind: string, fallback: string): string {
   switch (kind) {
     case 'key-invalid':
-      return 'That credential was rejected. Check you copied the whole thing, and that the tab above matches its type — an API key and a CLI token use different headers.'
+      return CLI_TOKEN_TAB
+        ? 'That credential was rejected. Check you copied the whole thing, and that the tab above matches its type — an API key and a CLI token use different headers.'
+        : 'That key was rejected. Check that you copied the whole key.'
     case 'quota-exhausted':
       return 'The credential works, but the account is out of credit. Add billing with your provider and try again.'
     case 'model-unavailable':
@@ -251,6 +298,21 @@ const styles = StyleSheet.create({
     minHeight: 54,
   },
   result: { marginTop: space.lg, padding: space.lg, borderRadius: radius.lg },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  barVerify: {
+    paddingHorizontal: space.lg,
+    minHeight: 44,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   verify: {
     marginTop: space.lg,
     paddingVertical: space.md,

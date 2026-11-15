@@ -3,6 +3,9 @@ import { useState } from 'react'
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Icon, type IconName } from '../../src/components/Icon'
+import { startScan } from '../../src/scan/orchestrator'
+import { pickMealPhoto } from '../../src/scan/pick-photo'
+import { setPhase } from '../../src/scan/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
 import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
 
@@ -14,10 +17,9 @@ import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
  * and it is the highest eating-disorder-risk surface in this product category.
  * Cutting it is the decision, not a gap.
  *
- * The FAB is ALWAYS present and ALWAYS opens real logging. The reference
- * paywalls this button, which is the direct cause of its most-reported
- * complaint. No IAP is configured anywhere in this project, which is what leaves
- * App Store Guideline 3.1.1 nothing to attach to.
+ * The FAB is ALWAYS present and ALWAYS opens real logging. A paywall on this
+ * button would block the one thing the app is for, so there is none. No IAP is
+ * configured anywhere in this project.
  */
 
 const TABS: ReadonlyArray<{ name: string; label: string; icon: IconName }> = [
@@ -32,12 +34,28 @@ interface Action {
   route: string
 }
 
+// "Describe a meal" and "Choose a photo" need no camera (blind test round 1,
+// Nov 14 2026): a simulator, a phone whose camera cannot be used, App Review.
 const ACTIONS: Action[] = [
   { label: 'Log exercise', icon: 'dumbbell', route: '/log-exercise' },
   { label: 'Saved foods', icon: 'bookmark', route: '/saved-foods' },
   { label: 'Food Database', icon: 'search', route: '/food-search' },
+  { label: 'Describe a meal', icon: 'pencil', route: '/describe-meal' },
+  { label: 'Choose a photo', icon: 'image', route: 'pick-photo' },
   { label: 'Scan food', icon: 'scan', route: '/camera' },
 ]
+
+/** Longer than the menu's fade-out, so the picker opens on the tab screen. */
+const PICKER_DELAY_MS = 450
+
+/** "Choose a photo": a meal photo from the library, through the same scan as a camera photo. */
+async function choosePhoto(): Promise<void> {
+  const uri = await pickMealPhoto().catch(() => null)
+  if (!uri) return
+  setPhase({ kind: 'captured', photoUri: uri })
+  router.push('/result')
+  void startScan(uri)
+}
 
 export default function TabLayout() {
   const theme = useTheme()
@@ -49,7 +67,15 @@ export default function TabLayout() {
       <Tabs
         screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: theme.bg } }}
         tabBar={({ state, navigation }) => (
-          <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
+          // An opaque band with a hairline on top (blind test round 2, N10):
+          // content scrolled under the bar showed between the pill and the
+          // + button, as a stray dark mark, and "Sign out" sat behind it.
+          <View
+            style={[
+              styles.wrap,
+              { paddingBottom: Math.max(insets.bottom, space.md), backgroundColor: theme.bg, borderTopColor: theme.border },
+            ]}
+          >
             <View style={[styles.pill, { backgroundColor: theme.bgElevated, borderColor: theme.border }]}>
               {TABS.map((tab, i) => {
                 const focused = state.index === i
@@ -97,7 +123,10 @@ export default function TabLayout() {
                 accessibilityRole="button"
                 onPress={() => {
                   setSheetOpen(false)
-                  router.push(a.route as never)
+                  // The photo picker opens after this menu has faded out: iOS
+                  // does not present it over a sheet that is closing.
+                  if (a.route === 'pick-photo') setTimeout(() => void choosePhoto(), PICKER_DELAY_MS)
+                  else router.push(a.route as never)
                 }}
                 style={[styles.action, { backgroundColor: theme.bgElevated }]}
               >
@@ -134,6 +163,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.md,
     paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   pill: {
     flex: 1,
@@ -165,7 +196,7 @@ const styles = StyleSheet.create({
   },
   action: {
     width: '47%',
-    aspectRatio: 1.35,
+    aspectRatio: 1.6,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',

@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { reconcileFromMacros } from '@nutai/totals'
+import { KEYBOARD_DONE_ID, KeyboardDoneBar } from '../src/components/KeyboardDone'
 import { currentGoal, overrideTargets, type CurrentGoal } from '../src/data/repo'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { radius, space, type } from '../src/theme/tokens'
+import { radius, space, tap, type } from '../src/theme/tokens'
 
 /**
  * Edit nutrition goals.
@@ -75,7 +76,7 @@ export default function EditGoals() {
     <View style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top + space.lg }}>
       <View style={styles.head}>
         <Text style={[type.title, { color: theme.text }]}>Nutrition goals</Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
           <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
         </Pressable>
       </View>
@@ -123,6 +124,7 @@ export default function EditGoals() {
           <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>Save</Text>
         </Pressable>
       </View>
+      <KeyboardDoneBar />
     </View>
   )
 }
@@ -142,6 +144,7 @@ function Field({
       <View style={[styles.field, { backgroundColor: theme.bgSunken, borderColor: theme.border }]}>
         <TextInput
           keyboardType="number-pad"
+          inputAccessoryViewID={KEYBOARD_DONE_ID}
           value={value}
           onChangeText={onChange}
           accessibilityLabel={`${label} in ${unit}`}

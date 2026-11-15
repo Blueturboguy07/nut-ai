@@ -5,9 +5,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Icon, type IconName } from '../src/components/Icon'
 import { startBarcodeScan, startLabelScan, startReceiptScan, startScan } from '../src/scan/orchestrator'
+import { pickMealPhoto } from '../src/scan/pick-photo'
 import { setPhase } from '../src/scan/store'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { APP_NAME } from '../src/inference/publik-copy'
+import { MIN_TAP_TARGET, radius, space, tap, type } from '../src/theme/tokens'
 
 type CameraMode = 'food' | 'barcode' | 'label' | 'receipt'
 
@@ -32,6 +34,11 @@ const MODES: Array<{ id: CameraMode; label: string; icon: IconName }> = [
  * lives in src/scan/orchestrator.ts and runs behind the result screen's
  * progress states. This screen's whole job is to hand off and get out of the
  * way fast.
+ *
+ * NO CAMERA NEEDED (blind test round 1, Nov 14 2026): "Choose a photo" (the
+ * photo library) and "Describe a meal" (text) sit next to the shutter, and on
+ * the screen without camera access. A simulator, a phone whose camera cannot
+ * be used, and App Review can still get an estimate.
  */
 export default function Camera() {
   const theme = useTheme()
@@ -45,22 +52,66 @@ export default function Camera() {
 
   if (!permission) return <View style={{ flex: 1, backgroundColor: '#000' }} />
 
+  /** A library photo goes through the same scan as a camera photo, in the mode that is on. */
+  async function choosePhoto() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const uri = await pickMealPhoto().catch(() => null)
+      if (!uri) return
+      setPhase({ kind: 'captured', photoUri: uri })
+      router.replace('/result')
+      if (mode === 'label') void startLabelScan(uri)
+      else if (mode === 'receipt') void startReceiptScan(uri)
+      else void startScan(uri)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function describeMeal() {
+    router.replace('/describe-meal' as never)
+  }
+
   if (!permission.granted) {
     return (
       <View style={[styles.center, { backgroundColor: theme.bg, paddingTop: insets.top }]}>
         <Text style={[type.heading, { color: theme.text, textAlign: 'center' }]}>
-          Nut AI needs your camera
+          {APP_NAME} needs your camera
         </Text>
         <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.sm }]}>
           Photos stay on your device unless you chose a cloud provider during setup.
         </Text>
         <Pressable
+          accessibilityRole="button"
           onPress={requestPermission}
           style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl }]}
         >
           <Text style={[type.bodyStrong, { color: theme.bg }]}>Allow camera</Text>
         </Pressable>
-        <Pressable onPress={() => router.back()} hitSlop={space.md} style={{ marginTop: space.lg }}>
+        <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.xl }]}>
+          No camera? Use a photo you took, or say what you ate.
+        </Text>
+        <View style={{ flexDirection: 'row', gap: space.sm, marginTop: space.md }}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={choosePhoto}
+            disabled={busy}
+            style={[styles.secondary, { borderColor: theme.border }]}
+          >
+            <Icon name="image" size={18} color={theme.text} />
+            <Text style={[type.label, { color: theme.text }]}>Choose a photo</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={describeMeal}
+            style={[styles.secondary, { borderColor: theme.border }]}
+          >
+            <Icon name="pencil" size={18} color={theme.text} />
+            <Text style={[type.label, { color: theme.text }]}>Describe a meal</Text>
+          </Pressable>
+        </View>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={[tap, { marginTop: space.lg }]}>
           <Text style={[type.body, { color: theme.textMuted }]}>Not now</Text>
         </Pressable>
       </View>
@@ -107,6 +158,28 @@ export default function Camera() {
       />
 
       <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom, space.xl) }]}>
+        {/* No camera needed: a library photo, or the meal in words. */}
+        <View style={styles.altRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Choose a photo"
+            onPress={choosePhoto}
+            disabled={busy}
+            style={styles.altPill}
+          >
+            <Icon name="image" size={18} color="#fff" />
+            <Text style={[type.label, { color: '#fff' }]}>Choose a photo</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Describe a meal"
+            onPress={describeMeal}
+            style={styles.altPill}
+          >
+            <Icon name="pencil" size={18} color="#fff" />
+            <Text style={[type.label, { color: '#fff' }]}>Describe a meal</Text>
+          </Pressable>
+        </View>
         <View style={styles.modeRow}>
           {MODES.map((m) => {
             const active = mode === m.id
@@ -145,7 +218,6 @@ export default function Camera() {
         accessibilityRole="button"
         accessibilityLabel="Close"
         onPress={() => router.back()}
-        hitSlop={space.md}
         style={[styles.close, { top: insets.top + space.md }]}
       >
         <Text style={{ color: '#fff', fontSize: 22 }}>×</Text>
@@ -185,6 +257,30 @@ const styles = StyleSheet.create({
     minHeight: MIN_TAP_TARGET,
   },
   modePillActive: { backgroundColor: '#fff' },
+  altRow: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, alignSelf: 'stretch', justifyContent: 'center' },
+  altPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    minHeight: MIN_TAP_TARGET,
+  },
+  secondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    minHeight: MIN_TAP_TARGET,
+  },
   hint: { color: 'rgba(255,255,255,0.85)', paddingVertical: space.lg },
   shutter: {
     width: 74,

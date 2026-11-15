@@ -46,7 +46,7 @@ export function OptionScreen<K extends keyof OnboardingAnswers>({
       title={title}
       {...(subtitle ? { subtitle } : {})}
       scroll={scroll}
-      // Continue stays disabled until a choice is made, matching the reference:
+      // Continue stays disabled until a choice is made:
       // a greyed button is a clearer instruction than an enabled one that does
       // nothing.
       ctaDisabled={current == null}

@@ -4,7 +4,8 @@ An open-source AI photo calorie tracker that never shows a number it cannot just
 
 Point your camera at a meal and get calories and macros — with an honest uncertainty range, the
 assumptions it made shown as editable chips, and a correction flow that recomputes everything locally
-and instantly. No subscription, no paywall, no account, no server.
+and instantly. No subscription and no paywall. The app asks you to sign in with a free publik
+account once, the first time you open it.
 
 <img src="docs/img/hero.png" alt="Nut AI home screen" width="320" />
 
@@ -20,15 +21,22 @@ and instantly. No subscription, no paywall, no account, no server.
   touch a model), **nutrition label** (transcribes the printed panel, refuses to guess a missing
   serving weight), and **receipt** (reads the line items, then fetches each item's published
   nutrition with the merchant as the brand).
+- **No camera needed**: **Describe a meal** (write what you ate, get an AI estimate) and **Choose a
+  photo** (a meal photo from your photo library) sit next to the camera, for a phone whose camera
+  cannot be used. Both go through the same review screen as a camera photo.
+- **Food Database search** on the bundled USDA database: on the phone, no network, no key. Plain
+  foods come first ("rice" finds plain rice, a name shows once). Pick the amount before you log it:
+  the food's servings with a realistic default (a medium banana, a large egg), a number of servings
+  or grams, and the live kcal and macros. Home lists each entry of the day with its amount and
+  kcal; tap one to change the grams or delete it.
 - **Web lookup for branded and restaurant food**: when the local database misses — or a logo in
   frame names a brand — one search against the provider's own tool transcribes the published
   nutrition facts, source URL attached. Menu ambiguity comes back as options that each carry their
   own macros, so answering "which sandwich?" is instant and free.
 - **Fix Result**: describe what's wrong in a sentence; only what you mention changes.
-- **A health score with a published formula** — fixed arithmetic over what you logged, reasons shown
-  on tap, never an "AI" number.
 - **Exercise logging** where Run and Weight lifting use MET × your body weight × minutes (no model),
-  Describe is the one AI-estimated path and says so, and Manual is your number verbatim.
+  Describe is the one AI-estimated path and says so, and Manual is your number verbatim. Home lists
+  the workouts of the day; they do not change your calorie target.
 - **Adaptive targets** that re-derive from your weigh-in trend, with hand-set targets always
   respected.
 - **Export / import**: one JSON file with everything; restore it from the first onboarding screen on
@@ -65,14 +73,15 @@ silently change, and the two worst bugs in this product category become structur
 Chosen during onboarding, changeable any time, and presented neutrally:
 
 - **Bring your own key** — your own Anthropic / OpenAI / Google key. Your photo goes to the provider you
-  named and nowhere else. Typically well under a cent per scan.
+  named and nowhere else.
 - **On-device** — free, private, works on a plane. Accuracy is **unproven** and will be measured and
   published before it ships as a default.
 
-Either way, barcode scanning, label OCR, text search, manual entry and the entire correction flow work
-offline with no key at all.
+Either way, barcode scans of foods in the bundled database, food search, changing the amounts on a
+result and manual exercise entries work offline with no key at all. Photo, label and receipt scans
+and Describe a meal need an AI provider.
 
-## What we deliberately do not clone
+## What we deliberately leave out
 
 No paywalled shutter button. No social feed. No streak-restore purchase. No opaque "AI health score".
 No red numbers for missed goals — red is reserved for safety warnings, never for food or bodies.
@@ -103,8 +112,8 @@ because most of the accuracy lives between the model and the number.
 
 ## Put it on your phone
 
-You build it yourself — that is the deal with an app that has no server, no account, and no store
-listing taking a cut. One-time setup, ~20 minutes.
+You can build it yourself. One-time setup, ~20 minutes. The first time it opens, the app asks you
+to sign in with publik; a release build needs the publik app token (see `docs/PUBLIK-API.md`).
 
 **iPhone** (needs a Mac with [Xcode](https://apps.apple.com/app/xcode/id497799835)):
 
@@ -119,10 +128,11 @@ open ios/NutAI.xcworkspace              # then: pick your phone, press Run (⌘R
 Xcode will ask you to pick a signing team the first time — your free Apple ID works (apps signed
 this way re-install every 7 days; a $99/yr developer account removes that limit).
 
-Apple does not grant a free Apple ID the HealthKit capability, so the build above ships without
-the optional "Health reconnect" step and app.config.ts's Health entitlement — the app runs exactly
-the same otherwise. If you have a paid Apple Developer Program membership, get HealthKit back with
-`SKIP_HEALTHKIT=0 npm run prebuild` before opening Xcode.
+Apple does not grant a free Apple ID the HealthKit capability, so the build above has no HealthKit:
+no Health entitlement, the HealthKit library is not linked, and the app shows no Apple Health
+screen, row or onboarding step. The app runs the same otherwise. If you have a paid Apple Developer
+Program membership, get HealthKit back with `SKIP_HEALTHKIT=0` for the prebuild and for the Xcode
+build (app.config.ts is read again at build time).
 
 **Android** (any computer with [Android Studio](https://developer.android.com/studio)'s SDK):
 
@@ -133,14 +143,13 @@ npm run data:build
 cd apps/mobile && npx expo run:android --variant release   # phone plugged in, USB debugging on
 ```
 
-Photo scans run on **publik API** by default — no key to paste; priced per scan at 50% of the
-model's published list price, every charge visible on your publik dashboard. A new phone starts at
-$0.00: linking it to your publik account gives $0.05 of free use, once, and a plan, a pack or your
-own key takes it from there. Scans can also run on your own Anthropic, OpenAI or Google key, added
-during onboarding or later in Profile.
-Either way it is typically well under a cent per scan, and the app works without any of it for
-barcode, label, search and manual logging. Builders: see `docs/PUBLIK-API.md` for the one value a
-build needs before publik mode shows up.
+Photo scans run on **publik API** by default — no key to paste. AI use counts toward your publik
+plan, and the app shows it as a percent of the plan limit, never as money. Linking the phone to
+your publik account gives some free use to try it, once; then a plan, a pack or your own key
+takes it from there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
+later in Profile. Without any of it, barcode scans and food search still work; photo scans, label
+scans and Describe a meal need an AI provider. Builders: see `docs/PUBLIK-API.md` for the one value a build needs
+before publik mode shows up.
 
 ## Your data stays yours
 

@@ -12,9 +12,11 @@ import {
 import Storage from 'expo-sqlite/kv-store'
 import { ONBOARDING_DONE_KEY } from '../onboarding/done-key'
 import { EXPORT_TABLES, WIPE_ONLY_TABLES } from './backup-core'
+import { dayEntries as entriesOf, deleteEntry, setEntryGrams, type DayEntry } from './day-entries'
+import { fixScaledSearchSnapshots } from './manual-food'
 import { localDate, slotFor } from './date-utils'
 import { clearCredential } from '../inference/credentials'
-import { disconnectPublik } from '../inference/publik'
+import { forgetPublikNow } from '../inference/publik'
 import { openUserDb } from '../db/expo-adapter'
 
 export { localDate, slotFor }
@@ -34,6 +36,8 @@ export async function db(): Promise<DbAdapter> {
   if (cached) return cached
   const handle = await openUserDb()
   await migrate(handle, Date.now())
+  // Once per phone: the Food Database rows of versions up to 0.1.8 (manual-food.ts).
+  await fixScaledSearchSnapshots(handle).catch(() => 0)
   cached = handle
   return handle
 }
@@ -68,7 +72,9 @@ export async function resetEverything(): Promise<void> {
   for (const p of ['anthropic', 'openai', 'google'] as const) {
     await clearCredential(p)
   }
-  await disconnectPublik()
+  // Sign out of publik on this phone now; the revoke goes in the background.
+  const revoke = await forgetPublikNow()
+  void revoke()
 
   await Storage.removeItem(ONBOARDING_DONE_KEY)
 }
@@ -146,6 +152,24 @@ export async function putSetting(key: string, value: string): Promise<void> {
 export async function recordConsent(key: string, detail: string): Promise<void> {
   const h = await db()
   await h.run('INSERT OR REPLACE INTO consents (key, granted, granted_at, detail) VALUES (?, 1, ?, ?)', [key, Date.now(), detail])
+}
+
+/** True when the user gave this consent. */
+export async function consentGiven(key: string): Promise<boolean> {
+  const h = await db()
+  const row = await h.get<{ granted: number }>('SELECT granted FROM consents WHERE key = ?', [key])
+  return row?.granted === 1
+}
+
+/** The birth year from onboarding, or null (not asked yet, or no profile). */
+export async function birthYearOnFile(): Promise<number | null> {
+  try {
+    const h = await db()
+    const row = await h.get<{ birth_year: number | null }>('SELECT birth_year FROM user_profile WHERE id = 1')
+    return typeof row?.birth_year === 'number' ? row.birth_year : null
+  } catch {
+    return null
+  }
 }
 
 /** Manual target override from the plan screen's pencil icons. */
@@ -241,6 +265,56 @@ export async function dayTotals(date: string): Promise<DayTotals> {
     // is worse than a number that is visibly incomplete.
     pendingCount: pending?.c ?? 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// The day's entries (Home list: name, amount, kcal; change the amount, delete)
+// ---------------------------------------------------------------------------
+
+export type { DayEntry }
+
+export async function dayEntries(date: string): Promise<DayEntry[]> {
+  return entriesOf(await db(), date)
+}
+
+export async function changeEntryGrams(itemId: number, grams: number): Promise<void> {
+  await setEntryGrams(await db(), itemId, grams)
+}
+
+export async function removeEntry(itemId: number): Promise<void> {
+  await deleteEntry(await db(), itemId)
+}
+
+// ---------------------------------------------------------------------------
+// Exercise
+// ---------------------------------------------------------------------------
+
+export interface ExerciseEntry {
+  id: number
+  name: string
+  kcal: number
+  /** 'manual' (typed in Log exercise) or the Health import's provenance. */
+  provenance: string
+}
+
+/**
+ * The workouts logged on one day, oldest first. Blind test round 1, Nov 14
+ * 2026 (B10): a logged workout showed nowhere; Home now lists them. They do
+ * not change the daily target (dayTotals counts food only).
+ */
+export async function exerciseOn(date: string): Promise<ExerciseEntry[]> {
+  const h = await db()
+  return h.all<ExerciseEntry>(
+    `SELECT id, name, kcal, provenance FROM exercise_entries
+     WHERE local_date = ? ORDER BY logged_at, id`,
+    [date],
+  )
+}
+
+/** Remove one workout the person typed in (a Health import is not removed here). */
+export async function deleteExercise(id: number): Promise<void> {
+  const h = await db()
+  await h.run(`DELETE FROM exercise_entries WHERE id = ? AND provenance = 'manual'`, [id])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,28 @@
+{
+  "prepaid": {
+    "claim_state": "claimed",
+    "account": { "handle": "demo" },
+    "plan": { "kind": "pack", "label": null },
+    "balance_micros": 3100000,
+    "prepaid_remaining_percent": 62,
+    "used_percent": null,
+    "resets_at": null,
+    "week": null,
+    "starter": null,
+    "ai_providers": ["OpenRouter", "Amazon Web Services"],
+    "add_credit_url": "https://publikhq.com/dashboard/api/add"
+  },
+  "plan": {
+    "claim_state": "claimed",
+    "account": { "handle": "demo" },
+    "plan": { "kind": "plan", "label": "Plus" },
+    "balance_micros": 0,
+    "prepaid_remaining_percent": null,
+    "used_percent": 35,
+    "resets_at": "2099-01-05T12:00:00Z",
+    "week": null,
+    "starter": null,
+    "ai_providers": ["OpenRouter"],
+    "add_credit_url": "https://publikhq.com/dashboard/api/add"
+  }
+}

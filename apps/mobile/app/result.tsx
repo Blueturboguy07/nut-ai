@@ -3,7 +3,6 @@ import { useState } from 'react'
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,10 +13,15 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { WebLookupResult } from '@nutai/core-schema'
-import { healthScore } from '@nutai/totals'
+import type { DisplayTotals } from '@nutai/totals'
+import { AiResultLinks } from '../src/components/AiResultLinks'
+import { StatusBarScrim } from '../src/components/StatusBarScrim'
+import { useKeyboardInset } from '../src/components/useKeyboardInset'
+import { estimateRangeSentence } from '../src/scan/estimate-copy'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
+import { openPublikLink, usePurchaseLinks } from '../src/inference/publik'
 import { fixScan, lookupOther, retryScan } from '../src/scan/orchestrator'
 import {
   answerQuestion,
@@ -29,7 +33,8 @@ import {
   type WebLookupState,
 } from '../src/scan/store'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { KEYBOARD_DONE_ID, KeyboardDoneBar } from '../src/components/KeyboardDone'
+import { MIN_TAP_TARGET, radius, space, tap, tapIcon, type } from '../src/theme/tokens'
 
 /**
  * The result screen.
@@ -47,7 +52,9 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
 export default function Result() {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
+  const keyboard = useKeyboardInset()
   const phase = useScan()
+  const purchaseLinks = usePurchaseLinks()
   const [expandedBand, setExpandedBand] = useState(false)
   const [logging, setLogging] = useState(false)
   const [fixOpen, setFixOpen] = useState(false)
@@ -61,15 +68,18 @@ export default function Result() {
         : stage === 'identifying'
           ? 'Identifying ingredients…'
           : 'Matching the nutrition database…'
+    // No photo: "Describe a meal" (the person's words) or a barcode.
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Image source={{ uri: phase.photoUri }} style={styles.photo} />
+        {phase.photoUri ? <Image source={{ uri: phase.photoUri }} style={styles.photo} /> : null}
         <ActivityIndicator color={theme.textMuted} style={{ marginTop: space.xl }} />
         <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{copy}</Text>
-        <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center' }]}>
-          Your photo is saved — nothing is lost if this fails.
-        </Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md} style={{ marginTop: space.xl }}>
+        {phase.photoUri ? (
+          <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center' }]}>
+            Your photo is saved — nothing is lost if this fails.
+          </Text>
+        ) : null}
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={[tap, { marginTop: space.xl }]}>
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
       </View>
@@ -77,23 +87,37 @@ export default function Result() {
   }
 
   if (phase.kind === 'failed') {
+    // A plan limit (publik 402, weekly or daily limit): plain words, when it
+    // resets (in the message), the storefront rule, and Use my own key.
+    const limit = phase.failureKind === 'quota-exhausted'
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Image source={{ uri: phase.photoUri }} style={[styles.photo, { opacity: 0.5 }]} />
+        {phase.photoUri ? <Image source={{ uri: phase.photoUri }} style={[styles.photo, { opacity: 0.5 }]} /> : null}
         <Text style={[type.heading, { color: theme.text, marginTop: space.xl, textAlign: 'center' }]}>
-          Could not read this meal
+          {limit ? 'Limit reached' : 'Could not read this meal'}
         </Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center', lineHeight: 19 }]}>
           {phase.message}
         </Text>
-        {/* The one link a failure may carry (publik API's top_up_url). The URL
-            was origin-checked when the failure was classified, never here. */}
-        {phase.action ? (
+        {/* The one link a failure may carry (publik API's top_up_url: Get a
+            plan). The URL was origin-checked when the failure was
+            classified, and again by openPublikLink, which opens it in the
+            in-app browser sheet. None in an App Store build outside the US
+            storefront: those publik pages sell plans (usePurchaseLinks). */}
+        {phase.action && purchaseLinks ? (
           <Pressable
-            onPress={() => void Linking.openURL(phase.action!.url)}
+            onPress={() => void openPublikLink(phase.action!.url)}
             style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
           >
             <Text style={[type.bodyStrong, { color: theme.bg }]}>{phase.action.label}</Text>
+          </Pressable>
+        ) : null}
+        {limit ? (
+          <Pressable
+            onPress={() => router.push('/provider-settings' as never)}
+            style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
+          >
+            <Text style={[type.bodyStrong, { color: theme.bg }]}>Use my own key</Text>
           </Pressable>
         ) : null}
         {phase.canRetry ? (
@@ -104,10 +128,20 @@ export default function Result() {
             <Text style={[type.bodyStrong, { color: theme.bg }]}>Try again</Text>
           </Pressable>
         ) : null}
+        {/* A photo the model could not read: the person can say what it was. */}
+        {phase.photoUri && !limit ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => { reset(); router.replace('/describe-meal' as never) }}
+            style={[tap, { marginTop: space.lg }]}
+          >
+            <Text style={[type.label, { color: theme.protein }]}>Describe the meal instead</Text>
+          </Pressable>
+        ) : null}
         <Pressable
+          accessibilityRole="button"
           onPress={() => { reset(); router.back() }}
-          hitSlop={space.md}
-          style={{ marginTop: space.lg }}
+          style={[tap, { marginTop: space.sm }]}
         >
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
@@ -119,7 +153,7 @@ export default function Result() {
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
         <Text style={[type.heading, { color: theme.text }]}>Nothing to show yet</Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md} style={{ marginTop: space.xl }}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={[tap, { marginTop: space.xl }]}>
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
       </View>
@@ -132,7 +166,7 @@ export default function Result() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 120 }}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 120 + keyboard }}>
         <Text style={[type.title, { color: theme.text }]}>
           {result.items[0]?.row.displayName ?? 'Your meal'}
         </Text>
@@ -141,6 +175,13 @@ export default function Result() {
         <View style={{ marginTop: space.lg }}>
           <Text style={[type.hero, { color: theme.text }]}>{result.totals.kcal}</Text>
           <Text style={[type.caption, { color: theme.textMuted, marginTop: -space.xs }]}>kcal</Text>
+          {/* The same rounded number is saved (blind test round 2, N3), and
+              it says plainly that it is an estimate with a range. */}
+          {estimateRangeSentence(result.totals.kcal, result.mealBand) ? (
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
+              {estimateRangeSentence(result.totals.kcal, result.mealBand)}
+            </Text>
+          ) : null}
 
           <View style={{ marginTop: space.md }}>
             <ConfidenceChip
@@ -153,10 +194,7 @@ export default function Result() {
           </View>
         </View>
 
-        <StatsPager
-          totals={result.totals}
-          grams={result.meal.ingredients.reduce((a, r) => a + r.grams, 0)}
-        />
+        <StatsPager totals={result.totals} />
 
         {/* Highlighted questions: at most two, ever. */}
         {highlighted.map((q) => (
@@ -166,8 +204,8 @@ export default function Result() {
               {q.question.options.map((opt) => (
                 <Pressable
                   key={opt.value}
+                  accessibilityRole="button"
                   onPress={() => answerQuestion(q, opt.value)}
-                  hitSlop={space.sm}
                   style={[styles.chip, { borderColor: theme.uncertain }]}
                 >
                   <Text style={[type.label, { color: theme.text }]}>{opt.label}</Text>
@@ -181,7 +219,7 @@ export default function Result() {
         {preAnswered.length > 0 && (
           <View style={{ marginTop: space.lg, gap: space.xs }}>
             {preAnswered.map((q) => (
-              <Pressable key={q.question.id} onPress={() => answerQuestion(q, q.appliedDefault ?? '')} hitSlop={space.xs}>
+              <Pressable key={q.question.id} accessibilityRole="button" onPress={() => answerQuestion(q, q.appliedDefault ?? '')} style={tap}>
                 <Text style={[type.caption, { color: theme.textMuted }]}>
                   {q.disclosure} · <Text style={{ color: theme.uncertain }}>change</Text>
                 </Text>
@@ -213,6 +251,7 @@ export default function Result() {
                 <TextInput
                   accessibilityLabel={`Grams of ${row.displayName}`}
                   keyboardType="numeric"
+                  inputAccessoryViewID={KEYBOARD_DONE_ID}
                   defaultValue={String(Math.round(row.grams))}
                   onChangeText={(t) => editGrams(row.id, Number(t))}
                   style={[styles.gramInput, { color: theme.text, borderColor: theme.border }]}
@@ -222,7 +261,6 @@ export default function Result() {
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${row.displayName}`}
                   onPress={() => removeRow(row.id)}
-                  hitSlop={space.md}
                   style={styles.remove}
                 >
                   <Text style={{ color: theme.textFaint, fontSize: 20 }}>×</Text>
@@ -233,9 +271,24 @@ export default function Result() {
             </View>
           )
         })}
-      </ScrollView>
 
-      <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg, borderColor: theme.border }]}>
+        <AiResultLinks source="result" />
+      </ScrollView>
+      <StatusBarScrim />
+      <KeyboardDoneBar />
+
+      {/* Above the keyboard while it is open (blind test round 2, N8). */}
+      <View
+        style={[
+          styles.actions,
+          {
+            bottom: keyboard,
+            paddingBottom: keyboard > 0 ? space.md : Math.max(insets.bottom, space.lg),
+            backgroundColor: theme.bg,
+            borderColor: theme.border,
+          },
+        ]}
+      >
         <View style={{ flexDirection: 'row', gap: space.md }}>
           <Pressable
             accessibilityRole="button"
@@ -309,9 +362,9 @@ export default function Result() {
             <Text style={[type.bodyStrong, { color: theme.bg }]}>Update</Text>
           </Pressable>
           <Pressable
+            accessibilityRole="button"
             onPress={() => setFixOpen(false)}
-            hitSlop={space.md}
-            style={{ alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }}
+            style={[tap, { alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }]}
           >
             <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
           </Pressable>
@@ -400,11 +453,13 @@ function WebLookupCard({ rowId, state }: { rowId: string; state: WebLookupState 
               style={[styles.otherInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.bg }]}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search"
               onPress={() => {
                 if (otherText.trim()) void lookupOther(rowId, otherText.trim())
                 setOtherOpen(false)
               }}
-              hitSlop={space.sm}
+              style={tapIcon}
             >
               <Icon name="search" size={18} color={theme.text} />
             </Pressable>
@@ -448,17 +503,17 @@ function Macro({
 }
 
 /**
- * Two stat pages, swipeable like the incumbent's: macros, then
- * fiber/sugar/sodium with the health score. The score is arithmetic from
- * @nutai/totals — tap it and every point shows its named rule.
+ * Two swipeable stat pages: macros, then fiber/sugar/sodium. No health score
+ * (blind test round 2, Nov 15 2026, N5: "Health score, 5/10" was an
+ * unexplained score and a health claim).
  */
-function StatsPager({ totals, grams }: { totals: Parameters<typeof healthScore>[0]; grams: number }) {
+type StatsTotals = Pick<DisplayTotals, 'protein_g' | 'carbs_g' | 'fat_g' | 'fiber_g' | 'sugar_g' | 'sodium_mg'>
+
+function StatsPager({ totals }: { totals: StatsTotals }) {
   const theme = useTheme()
   const { width } = useWindowDimensions()
   const pageW = width - space.lg * 2
   const [page, setPage] = useState(0)
-  const [showWhy, setShowWhy] = useState(false)
-  const hs = healthScore(totals, grams > 0 ? grams : undefined)
 
   return (
     <View style={{ marginTop: space.xl }}>
@@ -481,37 +536,6 @@ function StatsPager({ totals, grams }: { totals: Parameters<typeof healthScore>[
             <Macro label="Sodium" value={totals.sodium_mg} unit="mg" color={theme.fat} icon="sodium" />
           </View>
 
-          {hs ? (
-            <Pressable
-              onPress={() => setShowWhy((v) => !v)}
-              style={[styles.healthCard, { backgroundColor: theme.bgSunken }]}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                <Icon name="heart" size={18} color={theme.protein} />
-                <Text style={[type.bodyStrong, { color: theme.text, flex: 1 }]}>Health score</Text>
-                <Text style={[type.bodyStrong, { color: theme.text }]}>{hs.score}/10</Text>
-              </View>
-              <View style={[styles.healthTrack, { backgroundColor: theme.bgElevated }]}>
-                <View
-                  style={[
-                    styles.healthFill,
-                    { width: `${hs.score * 10}%` as const, backgroundColor: theme.affirm },
-                  ]}
-                />
-              </View>
-              {showWhy &&
-                hs.reasons.map((r) => (
-                  <Text key={r} style={[type.caption, { color: theme.textMuted, marginTop: space.xs }]}>
-                    · {r}
-                  </Text>
-                ))}
-              {showWhy && (
-                <Text style={[type.micro, { color: theme.textFaint, marginTop: space.sm }]}>
-                  Computed by fixed rules from these totals — never by the AI.
-                </Text>
-              )}
-            </Pressable>
-          ) : null}
         </View>
       </ScrollView>
 
@@ -532,9 +556,6 @@ const styles = StyleSheet.create({
   statsPage: { flexDirection: 'row', gap: space.md },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: space.md },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  healthCard: { marginTop: space.lg, padding: space.lg, borderRadius: radius.lg },
-  healthTrack: { height: 6, borderRadius: 3, marginTop: space.md, overflow: 'hidden' },
-  healthFill: { height: 6, borderRadius: 3 },
   secondary: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -563,7 +584,7 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm,
     borderRadius: radius.pill,
     borderWidth: 1,
-    minHeight: 36,
+    minHeight: MIN_TAP_TARGET,
     justifyContent: 'center',
   },
   row: {

@@ -1,8 +1,8 @@
-import { router } from 'expo-router'
+import { Redirect, router } from 'expo-router'
 import Svg, { Circle } from 'react-native-svg'
 import { StyleSheet, Text, View } from 'react-native'
 import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
-import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
+import { FLOW, nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { setAnswer } from '../../src/onboarding/store'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -13,7 +13,7 @@ import { radius, space, type } from '../../src/theme/tokens'
  *
  * This is a REAL setting with a real consumer: when on, up to 200 unused calories
  * carry into the next day's target. It is also the one screen in the flow with a
- * Yes/No pair instead of Continue, matching the reference.
+ * Yes/No pair instead of Continue.
  *
  * The cap matters and is not cosmetic. Uncapped rollover lets someone bank a week
  * of deficit into one day, which is the mechanic that turns a tracker into a
@@ -80,6 +80,9 @@ function DayCard({
 
 export default function RolloverScreen() {
   const theme = useTheme()
+
+  // Calorie rollover is not built yet: the flow leaves this step out (flow.ts NOT_BUILT).
+  if (!FLOW.includes('rollover')) return <Redirect href={nextRoute('rollover') as never} />
 
   const choose = (v: boolean) => {
     setAnswer('rolloverCalories', v)

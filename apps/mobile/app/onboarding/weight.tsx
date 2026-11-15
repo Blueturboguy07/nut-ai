@@ -6,7 +6,7 @@ import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { kgToLb, lbToKg, setAnswer, useAnswers } from '../../src/onboarding/store'
 import { space } from '../../src/theme/tokens'
 
-const DEFAULT_KG = 88.4 // ~194.9 lbs, matching the reference default
+const DEFAULT_KG = 88.4 // ~194.9 lbs
 
 export default function WeightScreen() {
   const { width } = useWindowDimensions()
