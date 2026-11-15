@@ -45,6 +45,9 @@ const ACTIONS: Action[] = [
   { label: 'Scan food', icon: 'scan', route: '/camera' },
 ]
 
+/** Longer than the menu's fade-out, so the picker opens on the tab screen. */
+const PICKER_DELAY_MS = 450
+
 /** "Choose a photo": a meal photo from the library, through the same scan as a camera photo. */
 async function choosePhoto(): Promise<void> {
   const uri = await pickMealPhoto().catch(() => null)
@@ -112,7 +115,9 @@ export default function TabLayout() {
                 accessibilityRole="button"
                 onPress={() => {
                   setSheetOpen(false)
-                  if (a.route === 'pick-photo') void choosePhoto()
+                  // The photo picker opens after this menu has faded out: iOS
+                  // does not present it over a sheet that is closing.
+                  if (a.route === 'pick-photo') setTimeout(() => void choosePhoto(), PICKER_DELAY_MS)
                   else router.push(a.route as never)
                 }}
                 style={[styles.action, { backgroundColor: theme.bgElevated }]}
