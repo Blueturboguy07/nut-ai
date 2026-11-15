@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   APP_TOKEN_PLACEHOLDER,
+  aiProvidersOf,
   appTokenOf,
   chargeUsdFromHeaders,
   classifyGatewayError,
@@ -567,5 +568,22 @@ describe('no money: AI use is a percent of the plan limit (founder rule, Nov 14 
   it('a gateway message with an amount of money is never shown', () => {
     const f = classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'That model costs $0.07 a call.' } }))
     expect(f?.message).toBe('publik API does not know that model. Pick one in Profile → AI provider.')
+  })
+})
+
+describe('ai_providers: the companies the publik AI consent names (GET /wallet)', () => {
+  it("keeps publik's list in order, and null when the field is absent", () => {
+    const w = walletFromJson({ claim_state: 'claimed', ai_providers: ['OpenRouter', 'Amazon Web Services', 'OpenAI', 'Google', 'Brave'] }, 'anonymous')
+    expect(w.aiProviders).toEqual(['OpenRouter', 'Amazon Web Services', 'OpenAI', 'Google', 'Brave'])
+    expect(walletFromJson({ claim_state: 'claimed' }, 'anonymous').aiProviders).toBeNull()
+    expect(emptyWallet('claimed').aiProviders).toBeNull()
+  })
+
+  it('drops what is not a company name: non-strings, blanks, duplicates, control characters, long text', () => {
+    expect(aiProvidersOf([' OpenAI ', 'OpenAI', '', 7, null, 'Goo\u0007gle', 'x'.repeat(61), 'Google'])).toEqual(['OpenAI', 'Google'])
+    expect(aiProvidersOf([])).toBeNull()
+    expect(aiProvidersOf('OpenAI')).toBeNull()
+    expect(aiProvidersOf(undefined)).toBeNull()
+    expect(aiProvidersOf(Array.from({ length: 20 }, (_, i) => `Company ${i}`))).toHaveLength(12)
   })
 })

@@ -287,6 +287,29 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
 }
 
 /**
+ * The companies publik can send this person's requests to now (GET /wallet
+ * `ai_providers`), for the publik AI consent question. Read fresh each time
+ * (at most `waitMs`); with no answer in time, the list of the last wallet
+ * read. null: publik did not send the list (the question then names no
+ * company).
+ */
+export async function publikAiProviders(waitMs = 4_000): Promise<string[] | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<'late'>((resolve) => {
+    timer = setTimeout(() => resolve('late'), waitMs)
+  })
+  try {
+    const fresh = await Promise.race([refreshPublikWallet().catch(() => null), late])
+    if (fresh !== 'late' && fresh) return fresh.aiProviders ?? null
+    return (await loadPublikWallet())?.aiProviders ?? null
+  } catch {
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
  * Fold a header PATCH into the stored snapshot (after every metered call).
  *
  * The patch carries only the fields the response named, so a field the

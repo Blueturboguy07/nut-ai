@@ -138,8 +138,8 @@ cd apps/mobile && npx expo run:android --variant release   # phone plugged in, U
 
 Photo scans run on **publik API** by default — no key to paste. AI use counts toward your publik
 plan, and the app shows it as a percent of the plan limit, never as money. Linking the phone to
-your publik account gives some free use, once, and a plan, a pack or your own key takes it from
-there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
+your publik account gives some free use to try it, once; then a plan, a pack or your own key
+takes it from there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
 later in Profile. Without any of it, barcode scans and food search still work; photo and label
 scans need an AI provider. Builders: see `docs/PUBLIK-API.md` for the one value a build needs
 before publik mode shows up.

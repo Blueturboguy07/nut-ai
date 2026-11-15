@@ -76,10 +76,10 @@ jobs:
         include:
           - gate: required
             artifact: ios-sim-app
-            zip: NutAI-0.1.6-simulator-arm64.zip
+            zip: NutAI-0.1.7-simulator-arm64.zip
           - gate: optional
             artifact: ios-sim-app-optional
-            zip: NutAI-0.1.6-optional-simulator-arm64.zip
+            zip: NutAI-0.1.7-optional-simulator-arm64.zip
     env:
       PUBLIK_TEST_HOOKS: '1'
       EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
@@ -131,7 +131,7 @@ jobs:
             const f = JSON.parse(require("fs").readFileSync(0, "utf8"))
             console.log("UIDeviceFamily =", JSON.stringify(f))
             if (JSON.stringify(f) !== "[1]") process.exit(1)'
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.6
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.7
           test "$(plutil -extract CFBundleVersion raw -o - "$P")" = "$APP_BUILD_NUMBER"
           # The label under the icon is the short name; the App Store and in-app name is "publik Nut AI".
           test "$(plutil -extract CFBundleDisplayName raw -o - "$P")" = "Nut AI"
@@ -188,7 +188,7 @@ jobs:
             kill "$PID" 2>/dev/null || true
             echo "attempt $attempt:"
             grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; }
-            if grep -q 'publik self-test: ok nut-ai 0.1.6' "$LOG"; then ok=1; break; fi
+            if grep -q 'publik self-test: ok nut-ai 0.1.7' "$LOG"; then ok=1; break; fi
             grep -q 'not reachable' "$LOG" || break
             sleep 15
           done
@@ -247,11 +247,11 @@ jobs:
         run: |
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
           mkdir -p "$RUNNER_TEMP/out"
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.6-test.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.7-test.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: ${{ runner.temp }}/out/nut-ai-0.1.6-test.apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.7-test.apk
           if-no-files-found: error
       - name: Keys stay out of Android backups (merged manifest)
         working-directory: apps/mobile/android
@@ -263,10 +263,10 @@ jobs:
           R=$(find app/build/intermediates -name 'secure_store_backup_rules.xml' -print -quit)
           if [ -n "$R" ]; then echo "== $R"; cat "$R"; fi
           grep -q 'android:fullBackupContent=' "$M"
-          grep -q 'android:versionName="0.1.6"' "$M"
+          grep -q 'android:versionName="0.1.7"' "$M"
       - name: The app token in the APK came from the build input (never printed)
         run: |
-          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.6-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.7-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
           node -e '
             const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
             const t = c.extra && c.extra.publikAppToken

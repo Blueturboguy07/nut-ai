@@ -19,20 +19,33 @@ const keyOf = (d: AiDestination) => `ai.share.${d}`
 
 const NAME: Record<AiDestination, string> = { publik: 'publik', anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' }
 
-/**
- * App Store 5.1.2(i): name the companies that get the data. publik's API
- * (GET /api/v1/wallet, the SDK docs) does not list its model providers, so
- * the publik path names them by example.
- */
-export const PUBLIK_AI_PROVIDERS_SENTENCE =
-  'publik sends them to the AI provider that answers (for example Anthropic, Google or OpenAI).'
+/** "A", "A or B", "A, B or C". */
+function orList(names: readonly string[]): string {
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+}
 
-/** The question, naming where the data goes. */
-export function aiConsentCopy(d: AiDestination, appName: string): { title: string; body: string; agree: string; decline: string } {
+/**
+ * App Store 5.1.2(i): name the companies that get the data. On the publik
+ * path they are publik's own list, GET /api/v1/wallet `ai_providers` (read
+ * each time the question shows, publik.ts publikAiProviders; never
+ * hard-coded). Without that list: the same sentence with no company names.
+ */
+export function publikProvidersSentence(providers: readonly string[] | null | undefined): string {
+  return providers && providers.length
+    ? `publik sends them to the AI provider that answers: ${orList(providers)}.`
+    : 'publik sends them to the AI provider that answers.'
+}
+
+/** The question, naming where the data goes. `publikProviders`: the publik path's `ai_providers`. */
+export function aiConsentCopy(
+  d: AiDestination,
+  appName: string,
+  publikProviders: readonly string[] | null = null,
+): { title: string; body: string; agree: string; decline: string } {
   const name = NAME[d]
   const where =
     d === 'publik'
-      ? `publik (publikhq.com). ${PUBLIK_AI_PROVIDERS_SENTENCE}`
+      ? `publik (publikhq.com). ${publikProvidersSentence(publikProviders)}`
       : `${name}, with your own key`
   return {
     title: `Send meal photos to ${name}?`,

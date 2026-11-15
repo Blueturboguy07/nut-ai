@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { PublikGate } from '../src/components/PublikGate'
 import { aiConsentCopy, setAiConsentPrompter } from '../src/inference/ai-consent'
+import { publikAiProviders } from '../src/inference/publik'
 import { APP_NAME } from '../src/inference/publik-copy'
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider'
 
@@ -14,11 +15,14 @@ import { ONBOARDING_DONE_KEY } from '../src/onboarding/done-key'
 export { ONBOARDING_DONE_KEY }
 
 // The question before anything goes to an AI provider the first time
-// (src/inference/ai-consent.ts). It names the provider; "Not now" sends nothing.
+// (src/inference/ai-consent.ts). It names the provider, and on the publik
+// path publik's own list of companies (GET /wallet `ai_providers`, read now);
+// "Not now" sends nothing.
 setAiConsentPrompter(
-  (destination) =>
-    new Promise<boolean>((resolve) => {
-      const c = aiConsentCopy(destination, APP_NAME)
+  async (destination) => {
+    const providers = destination === 'publik' ? await publikAiProviders().catch(() => null) : null
+    return new Promise<boolean>((resolve) => {
+      const c = aiConsentCopy(destination, APP_NAME, providers)
       Alert.alert(
         c.title,
         c.body,
@@ -28,7 +32,8 @@ setAiConsentPrompter(
         ],
         { cancelable: true, onDismiss: () => resolve(false) },
       )
-    }),
+    })
+  },
 )
 
 /**

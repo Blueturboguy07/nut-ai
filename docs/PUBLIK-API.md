@@ -4,12 +4,12 @@ Photo scans, label and receipt transcription, the branded-food lookup and the
 "describe a workout" estimate all need an AI model. By default they run on
 **publik API** (`https://publikhq.com/api/v1`): the phone mints its own
 bounded key at the first start (Sign in with publik, below), and
-every call is metered at 50% of the model's published list price against a
-publik balance. A new install starts at $0.00 (publik migration 0059), and
-every metered call answers 402 `insufficient_credit` until the phone is linked
-to a publik account, a plan or pack is added, or the user pastes their own
-key. Linking gives $0.05 of free use, once per publik account; it is the only
-free use publik API gives. A user who prefers their own
+every call counts toward the person's publik plan. A new install starts with
+no free use (publik migration 0059), and every metered call answers 402
+`insufficient_credit` until the phone is linked to a publik account, a plan
+or pack is added, or the user pastes their own key. Linking gives some free
+use to try it, once per publik account; it is the only free use publik API
+gives. The app never shows an amount of money (see "No money in the app"). A user who prefers their own
 Anthropic, OpenAI or Google key still gets the neutral vendor picker; a
 user-entered key always wins and publik code never touches the vendor slots.
 
@@ -93,11 +93,15 @@ description never goes to a provider the person did not agree to.
 **Not now** sends nothing.
 
 App Store 5.1.2(i): the question names the company that gets the data. On
-the publik path it says `publik (publikhq.com). publik sends them to the AI
-provider that answers (for example Anthropic, Google or OpenAI).` publik's
-API (GET /api/v1/wallet, the SDK docs) does not list its model providers, so
-the app names them by example. An own-key path names the chosen provider
-only.
+the publik path it names publik and publik's own list of companies, GET
+/api/v1/wallet `ai_providers`, read each time the question shows (at most
+4 s; else the list of the last wallet read): `publik (publikhq.com). publik
+sends them to the AI provider that answers: OpenRouter, Amazon Web Services,
+OpenAI or Google.` Without the field: `publik sends them to the AI provider
+that answers.` with no company names. The list is never hard-coded
+(`aiProvidersOf` in publik-core.ts, `publikProvidersSentence` in
+ai-consent.ts, `publikAiProviders` in publik.ts). An own-key path names the
+chosen provider only.
 
 ### Report a wrong result, How estimates work, Help and support
 

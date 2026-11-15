@@ -165,6 +165,13 @@ export interface PublikWallet {
   /** Links from the wallet body; always on publikhq.com or dropped. */
   claimUrl: string | null
   addCreditUrl: string | null
+  /**
+   * GET /wallet `ai_providers`: the companies publik can send this person's
+   * requests to now ("OpenRouter", "Amazon Web Services", ...). The publik
+   * AI consent question names them (ai-consent.ts). null when publik did not
+   * send the field. Never hard-coded: read from publik each time.
+   */
+  aiProviders: string[] | null
 }
 
 export interface ProvisionInput {
@@ -393,7 +400,26 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
     claimState: w.claim_state === 'claimed' || w.claim_state === 'anonymous' ? w.claim_state : claimState,
     claimUrl: claimLinkOf(w.claim_url),
     addCreditUrl: isSafePublikLink(w.add_credit_url) ? w.add_credit_url : null,
+    aiProviders: aiProvidersOf(w.ai_providers),
   }
+}
+
+/**
+ * GET /wallet `ai_providers` → the company names, in publik's order: strings
+ * only, trimmed, no duplicates, no control characters, at most 12 names of at
+ * most 60 characters. null when the field is absent, not a list, or empty.
+ */
+export function aiProvidersOf(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null
+  const out: string[] = []
+  for (const item of v) {
+    if (typeof item !== 'string') continue
+    const name = item.trim()
+    if (!name || name.length > 60 || /[\u0000-\u001f\u007f]/.test(name) || out.includes(name)) continue
+    out.push(name)
+    if (out.length === 12) break
+  }
+  return out.length ? out : null
 }
 
 /** Every metered response carries the balance; read it without a second call (CONTRACT §1). */
@@ -467,6 +493,7 @@ export function emptyWallet(claimState: PublikWallet['claimState'] = 'anonymous'
     claimState,
     claimUrl: null,
     addCreditUrl: null,
+    aiProviders: null,
   }
 }
 
@@ -673,7 +700,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.6'
+export const APP_VERSION = '0.1.7'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000

@@ -84,7 +84,7 @@ export function planUseLine(u: PlanUse, now: Date = new Date()): string {
 
 /** Where a meal photo goes on publik mode — the second disclosure a phone owes. */
 export const DISCLOSURE_DATA_PATH =
-  "Your meal photo and the text around it go through publik's servers to the AI provider that answers (for example Anthropic, Google or OpenAI). publik does not store request bodies beyond a 24-hour idempotency fingerprint; the AI provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
+  "Your meal photo and the text around it go through publik's servers to the AI provider that answers. publik does not store request bodies beyond a 24-hour idempotency fingerprint; the AI provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
 
 /**
  * The only publik pages the app opens for sign-in, privacy and account

@@ -67,7 +67,7 @@ const config: ExpoConfig = {
   slug: SLUG,
   // The publik module's APP_VERSION (src/inference/publik-core.ts) says the
   // same; a test checks it.
-  version: '0.1.6',
+  version: '0.1.7',
   // The mark: a white peanut silhouette inside four scan-frame corners on
   // near-black. Source of truth is assets/icon.svg; the PNGs are rendered
   // from it (rsvg-convert), never hand-edited.
