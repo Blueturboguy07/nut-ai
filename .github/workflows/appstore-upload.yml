@@ -6,6 +6,16 @@
 # PUBLIK_APP_TOKEN secret (the "Check publik build settings" phase refuses any other build).
 # HealthKit stays off (the app.config.ts default), so the App ID has no capability.
 #
+# The preparation is the same as the ios-sim-app-store job of mobile-build.yml (the build that
+# blind tests use): the food database (apps/mobile/assets/nutrition.db, `npm run data:build`,
+# not in git, cached by the hash of its sources) and its "egg" check, the test hooks OFF
+# (PUBLIK_TEST_HOOKS=0, EXPO_PUBLIC_PUBLIK_TEST_HOOKS=0), the launch screen check after the
+# prebuild. Run 43700471213 (Nov 15 2026) had no data build: the JS bundle failed with
+# "Unable to resolve module ../../assets/nutrition.db". The ipa check now fails when the
+# food database is not inside the ipa (size, same bytes as the built file, foods and "egg"),
+# when the ipa asks for a Face ID or microphone permission, when the version is not the
+# app.config.ts version, or when the launch screen or the privacy manifest is not right.
+#
 # Run it by hand (Actions > App Store upload > Run workflow):
 #   upload false (default): archive, export (method app-store-connect), check the ipa and
 #                           validate it with App Store Connect. Nothing is uploaded.
@@ -66,6 +76,9 @@ env:
   # An App Store build: the required gate, no test hooks (plugins/withPublikTokenCheck.js).
   EXPO_PUBLIC_APP_STORE_BUILD: "1"
   EXPO_PUBLIC_PUBLIK_GATE_MODE: required
+  # The test hooks OFF, set as the ios-sim-app-store job sets them (native and JS).
+  PUBLIK_TEST_HOOKS: "0"
+  EXPO_PUBLIC_PUBLIK_TEST_HOOKS: "0"
 
 jobs:
   appstore:
@@ -210,12 +223,46 @@ jobs:
 
       - run: npm ci
 
+      # The food database: the same three steps as the ios-sim-app-store job (mobile-build.yml).
+      - name: Cache the food database (nutrition.db)
+        id: nutrition-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/assets/nutrition.db
+          key: nutrition-db-v1-${{ hashFiles('tools/nutrition-data/src/**', 'packages/db-adapter/src/schema.ts') }}
+
+      - name: Build the food database (npm run data:build)
+        if: steps.nutrition-cache.outputs.cache-hit != 'true'
+        run: npm run data:build
+
+      - name: The food database is there and finds egg
+        run: |
+          node --disable-warning=ExperimentalWarning -e '
+            const { DatabaseSync } = require("node:sqlite")
+            const db = new DatabaseSync("apps/mobile/assets/nutrition.db", { readOnly: true })
+            const foods = db.prepare("SELECT COUNT(*) AS c FROM foods").get().c
+            const egg = db.prepare("SELECT COUNT(*) AS c FROM food_fts WHERE food_fts MATCH ?").get("egg").c
+            console.log("nutrition.db:", foods, "foods,", egg, "full-text matches for egg")
+            if (foods < 1000 || egg < 1) process.exit(1)'
+          ls -l apps/mobile/assets/nutrition.db
+          echo "NUTRITION_DB_SHA256=$(shasum -a 256 apps/mobile/assets/nutrition.db | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "EXPECTED_VERSION=$(sed -nE "s/^  version: '([0-9]+(\.[0-9]+){0,2})',.*/\1/p" apps/mobile/app.config.ts)" >> "$GITHUB_ENV"
+
       - name: Prebuild ios/ (App Store build)
         working-directory: apps/mobile
         run: |
+          set -euo pipefail
           export APP_BUILD_NUMBER="$BUILD_NUMBER"
           echo "APP_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
           npx expo prebuild --platform ios --clean --no-install
+          # The launch screen in the app's colours, not white (blind test round 2, N9;
+          # plugins/withLaunchScreen.js): the same checks as the ios-sim-app-store job.
+          grep -q 'image="LaunchMark"' ios/NutAI/SplashScreen.storyboard
+          grep -q 'red="0.043" green="0.043" blue="0.059"' ios/NutAI/SplashScreen.storyboard
+          test -s ios/NutAI/Images.xcassets/LaunchMark.imageset/LaunchMark.png
+          echo "launch screen: LaunchMark on #0B0B0F"
+          # The build-settings phase (plugins/withPublikTokenCheck.js) is in the project.
+          grep -q 'Check publik build settings' ios/NutAI.xcodeproj/project.pbxproj
           command -v pod >/dev/null || brew install cocoapods
           cd ios && pod install
 
@@ -339,7 +386,7 @@ jobs:
           ls -l "$IPA"
 
       # App Store upload blockers, checked in the exported ipa.
-      - name: Check the ipa for upload blockers
+      - name: Check the ipa for upload blockers and the food database
         run: |
           set +e -u
           W="$RUNNER_TEMP/ipa-check"
@@ -356,20 +403,59 @@ jobs:
           ID=$(pl "$INFO" CFBundleIdentifier); V=$(pl "$INFO" CFBundleShortVersionString); B=$(pl "$INFO" CFBundleVersion)
           [ "$ID" = "$MAIN_BUNDLE_ID" ] && ok "bundle id $ID" || bad "CFBundleIdentifier is '$ID', not '$MAIN_BUNDLE_ID'"
           [[ "$V" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] && ok "version $V" || bad "CFBundleShortVersionString '$V'"
+          [ -n "$EXPECTED_VERSION" ] && [ "$V" = "$EXPECTED_VERSION" ] && ok "version $V = app.config.ts version" || bad "CFBundleShortVersionString is '$V', app.config.ts says '$EXPECTED_VERSION'"
           [ "$B" = "$BUILD_NUMBER" ] && ok "build $B" || bad "CFBundleVersion is '$B', not '$BUILD_NUMBER'"
-          DN=$(pl "$INFO" CFBundleDisplayName); [ -n "$DN" ] && ok "CFBundleDisplayName '$DN'" || bad "no CFBundleDisplayName"
+          # The label under the icon is the short name; the App Store and in-app name is "publik Nut AI".
+          DN=$(pl "$INFO" CFBundleDisplayName); [ "$DN" = "Nut AI" ] && ok "CFBundleDisplayName '$DN'" || bad "CFBundleDisplayName is '$DN', not 'Nut AI'"
           [ "$(pl "$INFO" ITSAppUsesNonExemptEncryption)" = "false" ] && ok "ITSAppUsesNonExemptEncryption false" || bad "ITSAppUsesNonExemptEncryption is not false"
           ok "MinimumOSVersion $(pl "$INFO" MinimumOSVersion)"
-          if pl "$INFO" UILaunchStoryboardName >/dev/null || pl "$INFO" UILaunchScreen >/dev/null; then ok "launch screen ($(pl "$INFO" UILaunchStoryboardName || echo UILaunchScreen))"; else bad "no launch screen (UILaunchStoryboardName or UILaunchScreen)"; fi
+          # The launch screen (blind test round 2, N9): the compiled SplashScreen storyboard.
+          if [ "$(pl "$INFO" UILaunchStoryboardName)" = SplashScreen ] && [ -d "$APP/SplashScreen.storyboardc" ]; then ok "launch screen SplashScreen (SplashScreen.storyboardc in the app)"; else bad "the launch screen is not SplashScreen with SplashScreen.storyboardc in the app"; fi
           FAM=$(plutil -extract UIDeviceFamily json -o - "$INFO" 2>/dev/null)
           [ "$FAM" = "[1]" ] && ok "iPhone only (UIDeviceFamily [1])" || note "UIDeviceFamily $FAM"
           [ "$(pl "$INFO" DTPlatformName)" = "iphoneos" ] && ok "DTPlatformName iphoneos, SDK $(pl "$INFO" DTSDKName), Xcode $(pl "$INFO" DTXcode)" || bad "DTPlatformName is '$(pl "$INFO" DTPlatformName)'"
           for k in NSCameraUsageDescription NSMicrophoneUsageDescription NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription NSHealthShareUsageDescription NSHealthUpdateUsageDescription NSSpeechRecognitionUsageDescription NSLocalNetworkUsageDescription NSFaceIDUsageDescription; do
             v=$(pl "$INFO" "$k") && note "$k = $v"
           done
+          # No Face ID (expo-secure-store faceIDPermission false) and no microphone (expo-camera
+          # microphonePermission false: photos only) permission.
+          for k in NSFaceIDUsageDescription NSMicrophoneUsageDescription; do
+            pl "$INFO" "$k" >/dev/null && bad "$k is in Info.plist (the app does not use it)" || ok "$k absent"
+          done
 
-          # Privacy manifest.
+          # Privacy manifest: valid, and the same content checks as the ios-sim-app-store job.
           if [ -f "$APP/PrivacyInfo.xcprivacy" ] && plutil -lint "$APP/PrivacyInfo.xcprivacy" >/dev/null; then ok "PrivacyInfo.xcprivacy in the app"; else bad "no valid PrivacyInfo.xcprivacy in the app"; fi
+          if plutil -convert json -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null | node -e '
+            const m = JSON.parse(require("fs").readFileSync(0, "utf8"))
+            console.log("      NSPrivacyTracking =", m.NSPrivacyTracking)
+            for (const a of m.NSPrivacyAccessedAPITypes) console.log("      " + a.NSPrivacyAccessedAPIType, a.NSPrivacyAccessedAPITypeReasons.join(","))
+            for (const c of m.NSPrivacyCollectedDataTypes) console.log("      " + c.NSPrivacyCollectedDataType, "linked:", c.NSPrivacyCollectedDataTypeLinked, "tracking:", c.NSPrivacyCollectedDataTypeTracking)
+            const o = m.NSPrivacyCollectedDataTypes.find((c) => c.NSPrivacyCollectedDataType === "NSPrivacyCollectedDataTypeOtherUserContent")
+            if (m.NSPrivacyTracking !== false || !o || o.NSPrivacyCollectedDataTypeLinked !== false || o.NSPrivacyCollectedDataTypeTracking !== false) process.exit(1)
+            if (o.NSPrivacyCollectedDataTypePurposes.join() !== "NSPrivacyCollectedDataTypePurposeAppFunctionality") process.exit(1)'; then
+            ok "privacy manifest: no tracking, OtherUserContent not linked (app functionality)"
+          else
+            bad "the privacy manifest content is not the app.config.ts manifest"
+          fi
+
+          # The food database (blind test round 1, B2): inside the ipa, a sane size, the same
+          # bytes as the file the data build made, and it finds "egg".
+          DB=$(find "$APP" -name 'nutrition.db' -type f -print -quit)
+          if [ -z "$DB" ]; then
+            bad "no food database (nutrition.db) in the ipa"
+          else
+            SZ=$(stat -f %z "$DB")
+            echo "      food database: ${DB#$APP/} $SZ bytes ($((SZ / 1048576)) MB)"
+            [ "$SZ" -ge 3000000 ] && [ "$SZ" -le 200000000 ] && ok "food database size $SZ bytes" || bad "food database size $SZ bytes (want 3,000,000 to 200,000,000)"
+            [ "$(shasum -a 256 "$DB" | cut -d' ' -f1)" = "$NUTRITION_DB_SHA256" ] && ok "food database = the built apps/mobile/assets/nutrition.db (sha256)" || bad "the food database in the ipa is not the built file"
+            if node --disable-warning=ExperimentalWarning -e '
+              const { DatabaseSync } = require("node:sqlite")
+              const db = new DatabaseSync(process.argv[1], { readOnly: true })
+              const foods = db.prepare("SELECT COUNT(*) AS c FROM foods").get().c
+              const egg = db.prepare("SELECT COUNT(*) AS c FROM food_fts WHERE food_fts MATCH ?").get("egg").c
+              console.log("      food database in the ipa:", foods, "foods,", egg, "full-text matches for egg")
+              if (foods < 1000 || egg < 1) process.exit(1)' "$DB"; then ok "food database in the ipa finds egg"; else bad "the food database in the ipa does not find egg"; fi
+          fi
 
           # Icons: the iPhone icon files in the bundle and the App Store icon in Assets.car, with no alpha.
           plutil -extract CFBundleIcons.CFBundlePrimaryIcon json -o - "$INFO" >/dev/null 2>&1 && ok "CFBundleIcons $(plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw -o - "$INFO" 2>/dev/null)" || bad "no CFBundleIcons in Info.plist"
@@ -441,6 +527,7 @@ jobs:
             echo "### $MAIN_BUNDLE_ID $V ($B)"
             echo "- signing: $SIGNING"
             echo "- ipa: $(basename "$IPA"), $(du -h "$IPA" | cut -f1)"
+            echo "- food database in the ipa: ${SZ:-none} bytes"
             echo "- ipa checks: $([ $fail = 0 ] && echo passed || echo FAILED)"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $fail
