@@ -32,7 +32,7 @@ function orList(names: readonly string[]): string {
  */
 export function publikProvidersSentence(providers: readonly string[] | null | undefined): string {
   return providers && providers.length
-    ? `publik sends them to the AI provider that answers: ${orList(providers)}.`
+    ? `publik sends them to the AI provider that answers: ${orList(providers).replace(/\.+$/, '')}.`
     : 'publik sends them to the AI provider that answers.'
 }
 
@@ -43,13 +43,14 @@ export function aiConsentCopy(
   publikProviders: readonly string[] | null = null,
 ): { title: string; body: string; agree: string; decline: string } {
   const name = NAME[d]
+  // Each `where` ends its own sentence (the publik path is two sentences).
   const where =
     d === 'publik'
       ? `publik (publikhq.com). ${publikProvidersSentence(publikProviders)}`
-      : `${name}, with your own key`
+      : `${name}, with your own key.`
   return {
     title: `Send meal photos to ${name}?`,
-    body: `To estimate calories, ${appName} sends your meal photos and the food and workout descriptions you type to ${where}. Your food log stays on this phone. Nothing goes to ${name} until you agree. You can change the AI provider in Profile → AI provider.`,
+    body: `To estimate calories, ${appName} sends your meal photos and the food and workout descriptions you type to ${where} Your food log stays on this phone. Nothing goes to ${name} until you agree. You can change the AI provider in Profile → AI provider.`,
     agree: 'I agree',
     decline: 'Not now',
   }
