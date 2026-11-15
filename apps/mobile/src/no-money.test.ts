@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import type * as TS from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -14,7 +15,7 @@ import { describe, expect, it } from 'vitest'
  * never count.
  */
 
-const ts = createRequire(__filename)('typescript') as typeof import('typescript')
+const ts = createRequire(__filename)('typescript') as typeof TS
 
 const MOBILE = join(__dirname, '..')
 const SKIP_DIRS = new Set(['node_modules', 'ios', 'android', '.expo', 'build', 'dist'])
@@ -36,12 +37,12 @@ function walk(dir: string): string[] {
 function moneyIn(fileName: string, code: string): string[] {
   const src = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   const found: string[] = []
-  const check = (n: ts.Node, text: string, beforeValue: boolean) => {
+  const check = (n: TS.Node, text: string, beforeValue: boolean) => {
     if (/\$\s?\d/.test(text) || (beforeValue && /\$$/.test(text))) {
       found.push(`${src.getLineAndCharacterOfPosition(n.getStart(src)).line + 1}: ${text.trim().slice(0, 120)}`)
     }
   }
-  const visit = (n: ts.Node): void => {
+  const visit = (n: TS.Node): void => {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isJsxText(n) || ts.isTemplateTail(n)) check(n, n.text, false)
     else if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n)) check(n, n.text, true)
     ts.forEachChild(n, visit)
