@@ -32,12 +32,16 @@ const MOBILE = join(__dirname, '..', '..')
 // file it should name is the module (publik-core.ts), not this test.
 const V1 = '/api/v1'
 
-/** The exact words of the gate (the publik contract of 2026-11-10). */
+/**
+ * The exact words of the gate (the publik contract of 2026-11-10), in a
+ * phone's words: Tap and the publik page that opens, not Click and the
+ * browser (blind test round 1, Nov 14 2026, B12).
+ */
 const WORDS = {
   title: 'Sign in with publik',
-  signInBody: 'This app uses your publik account. Click Sign in with publik, then sign in in your browser. This window continues when you are signed in.',
+  signInBody: 'This app uses your publik account. Tap Sign in with publik, then sign in on the publik page that opens. This screen continues when you are signed in.',
   signInButton: 'Sign in with publik',
-  waiting: 'Waiting for you to sign in in your browser.',
+  waiting: 'Waiting for you to sign in on the publik page.',
   unreachable: 'publik is not reachable. Check your connection.',
   retry: 'Retry',
   chooseTitle: 'Choose how to pay for AI',
@@ -239,9 +243,22 @@ describe('the gate words', () => {
     expect(gateScreen('choose', w(claimedPlan))).toMatchObject({ title: WORDS.connectTitle, body: `You are signed in as @mann. Your plan: Plus. ${WORDS.connectBody}` })
     expect(gateScreen('choose', w(claimedPlan)).buttons.map((b) => b.label)).toEqual([WORDS.connect, WORDS.ownKey])
     expect(gateScreen('choose', { ...w(claimedEmpty), handle: null, balanceMicros: 1_250_000 }).body).toBe(
-      // No amount of money (founder rule, Nov 14 2026).
-      `You are signed in to publik. Your publik plan is active. ${WORDS.connectBody}`,
+      // No amount of money (founder rule, Nov 14 2026), and the true state (B5).
+      `You are signed in to publik. You have a prepaid publik balance. ${WORDS.connectBody}`,
     )
+    // No placeholder name: a plan or a pack with no label says what it is.
+    expect(gateScreen('choose', { ...w(claimedPlan), handle: null, plan: { kind: 'plan', label: null } }).body).toBe(
+      `You are signed in to publik. You have a publik plan. ${WORDS.connectBody}`,
+    )
+    expect(gateScreen('choose', { ...w(claimedPlan), handle: null, plan: { kind: 'pack', label: null } }).body).toBe(
+      `You are signed in to publik. You have a prepaid publik balance. ${WORDS.connectBody}`,
+    )
+    expect(gateScreen('choose', { ...w(claimedPlan), handle: null, plan: { kind: 'pack', label: 'Starter pack' } }).body).toBe(
+      `You are signed in to publik. Your prepaid pack: Starter pack. ${WORDS.connectBody}`,
+    )
+    for (const s of [gateScreen('sign_in', null), gateScreen('choose', w(claimedEmpty)), gateScreen('choose', w(claimedPlan))]) {
+      expect(s.body).not.toMatch(/\bclick\b|browser|window|Your pack: publik/i)
+    }
   })
 
   it('outside the US storefront of an App Store build: no Get a plan and no price; Connect your plan and Use my own key stay', () => {
@@ -353,7 +370,7 @@ describe('ensureSignedIn against a fake publik', () => {
     const none = scriptedUI({ [WORDS.title]: WORDS.signInButton })
     await expect(ensureSignedIn(none.ui, phone().device)).rejects.toThrow('stuck')
     expect(none.opened).toEqual([])
-    expect(none.seen[1]?.note).toBe('publik did not send a sign-in link for this phone. Click Sign in with publik to try again.')
+    expect(none.seen[1]?.note).toBe('publik did not send a sign-in link for this phone. Tap Sign in with publik to try again.')
     // A claim link an older version stored (no in_app): opened as the in-app page.
     const old = phone({}, { key: KEY, claimUrl: 'https://publikhq.com/claim/old?ref=app', choice: null, claimed: false })
     const ui = scriptedUI({ [WORDS.title]: WORDS.signInButton })

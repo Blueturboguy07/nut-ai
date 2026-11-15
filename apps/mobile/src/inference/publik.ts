@@ -287,6 +287,19 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
 }
 
 /**
+ * The stored wallet; with none stored, a fresh one from publik. A reinstall
+ * keeps the publik key and install (Keychain) but not the app's storage,
+ * where the wallet lives: the sign-in stays, and the plan is read again
+ * (blind test round 1, Nov 14 2026, B11). null: no key, or no answer.
+ */
+export async function ensurePublikWallet(): Promise<PublikWallet | null> {
+  const stored = await loadPublikWallet()
+  if (stored) return stored
+  if (!(await publikConnected().catch(() => false))) return null
+  return refreshPublikWallet().catch(() => null)
+}
+
+/**
  * The companies publik can send this person's requests to now (GET /wallet
  * `ai_providers`), for the publik AI consent question. Read fresh each time
  * (at most `waitMs`); with no answer in time, the list of the last wallet
@@ -491,6 +504,26 @@ function watchAppState(): void {
   }
 }
 
+/**
+ * One more self-test line after the publik line (test builds only): the app
+ * registers the food database check (app/_layout.tsx). Never throws.
+ */
+let selfTestExtra: (() => Promise<string>) | null = null
+export function setPublikSelfTestExtra(check: (() => Promise<string>) | null): void {
+  selfTestExtra = check
+}
+
+/** The publik line, then the extra line (if any), then the app exits. */
+function printSelfTestAndExit(line: string): void {
+  void (async () => {
+    let extra: string | null = null
+    if (selfTestExtra) {
+      extra = await selfTestExtra().catch((e: unknown) => `self-test extra failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    printLineAndExit(extra ? `${line}\n${extra}` : line)
+  })()
+}
+
 function phoneDevice(): GateDevice {
   return {
     cfg: publikBuildConfig(),
@@ -508,7 +541,7 @@ function phoneDevice(): GateDevice {
     countUse: countAppUse,
     wait: waitInForeground,
     value: launchValue,
-    printAndExit: printLineAndExit,
+    printAndExit: printSelfTestAndExit,
     telemetryInstallId,
     log: (line) => console.log(line),
   }

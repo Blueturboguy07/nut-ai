@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { db } from '../src/data/repo'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { radius, space, type } from '../src/theme/tokens'
+import { radius, space, tap, type } from '../src/theme/tokens'
 
 /**
  * Saved meals.
@@ -43,7 +43,7 @@ export default function SavedFoods() {
     <View style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top + space.lg }}>
       <View style={styles.head}>
         <Text style={[type.title, { color: theme.text }]}>Saved foods</Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
           <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
         </Pressable>
       </View>

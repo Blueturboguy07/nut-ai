@@ -1,21 +1,25 @@
 import { router, useFocusEffect } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle } from 'react-native-svg'
 import { Icon, type IconName } from '../../src/components/Icon'
 import {
   currentGoal,
   dayTotals,
+  deleteExercise,
+  exerciseOn,
   localDate,
   runAdaptive,
   type AdaptiveOutcome,
   type CurrentGoal,
   type DayTotals,
+  type ExerciseEntry,
 } from '../../src/data/repo'
 import { useTheme } from '../../src/theme/ThemeProvider'
+import { StatusBarScrim } from '../../src/components/StatusBarScrim'
 import { APP_NAME } from '../../src/inference/publik-copy'
-import { radius, space, type } from '../../src/theme/tokens'
+import { radius, space, tap, tapIcon, type } from '../../src/theme/tokens'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -46,6 +50,8 @@ export default function Home() {
   const [goal, setGoal] = useState<CurrentGoal | null>(null)
   const [totals, setTotals] = useState<DayTotals | null>(null)
   const [adaptive, setAdaptive] = useState<AdaptiveOutcome | null>(null)
+  const [workouts, setWorkouts] = useState<ExerciseEntry[]>([])
+  const [round, setRound] = useState(0)
   const [offset, setOffset] = useState(0)
 
   const selected = useMemo(() => Date.now() + offset * 86_400_000, [offset])
@@ -57,17 +63,33 @@ export default function Home() {
         // The adaptive loop runs BEFORE reading the goal, so a target it just
         // changed is the one rendered. Its own gates decide whether it may act.
         const outcome = await runAdaptive(Date.now())
-        const [g, t] = await Promise.all([currentGoal(), dayTotals(localDate(selected))])
+        const [g, t, w] = await Promise.all([
+          currentGoal(),
+          dayTotals(localDate(selected)),
+          exerciseOn(localDate(selected)).catch(() => [] as ExerciseEntry[]),
+        ])
         if (!alive) return
         setAdaptive(outcome)
         setGoal(g)
         setTotals(t)
+        setWorkouts(w)
       })()
       return () => {
         alive = false
       }
-    }, [selected]),
+    }, [selected, round]),
   )
+
+  function removeWorkout(w: ExerciseEntry) {
+    Alert.alert('Remove this workout?', w.name, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => void deleteExercise(w.id).finally(() => setRound((n) => n + 1)),
+      },
+    ])
+  }
 
   if (!goal || !totals) {
     return (
@@ -82,106 +104,140 @@ export default function Home() {
   const pct = goal.targetKcal > 0 ? totals.kcal / goal.targetKcal : 0
   const empty = totals.mealCount === 0 && totals.pendingCount === 0
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + space.sm, paddingBottom: 150 }}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.wordmark, { color: theme.text }]}>{APP_NAME}</Text>
-      </View>
-
-      {/* Day strip */}
-      <DayStrip selected={offset} onSelect={setOffset} />
-
-      {/* Calories and the three macros, all from the food log. */}
-      <View style={{ paddingHorizontal: space.lg, marginTop: space.md }}>
-        <View style={[styles.heroCard, { backgroundColor: theme.bgElevated, borderColor: theme.border }]}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.hero, { color: theme.text }]}>
-              {Math.abs(Math.round(remaining))}
-            </Text>
-            <Text style={[type.body, { color: theme.textMuted }]}>
-              {over ? 'Calories over' : 'Calories left'}
-            </Text>
-          </View>
-          <Ring pct={pct} over={over} size={128} stroke={12}>
-            <Icon name="flame" size={26} color={theme.text} />
-          </Ring>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        style={{ backgroundColor: theme.bg }}
+        contentContainerStyle={{ paddingTop: insets.top + space.sm, paddingBottom: 150 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={[styles.wordmark, { color: theme.text }]}>{APP_NAME}</Text>
         </View>
 
-        <View style={styles.macroRow}>
-          <MacroCard label="Protein" icon="protein" eaten={totals.protein_g} target={goal.protein_g} color={theme.protein} />
-          <MacroCard label="Carbs" icon="carbs" eaten={totals.carbs_g} target={goal.carbs_g} color={theme.carbs} />
-          <MacroCard label="Fat" icon="fat" eaten={totals.fat_g} target={goal.fat_g} color={theme.fat} />
-        </View>
-      </View>
+        {/* Day strip */}
+        <DayStrip selected={offset} onSelect={setOffset} />
 
-      {/* Adaptive target status — always legible, never a silent change. */}
-      <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
-        <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent' }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <Icon name="target" size={18} color={theme.text} />
-            <Text style={[type.bodyStrong, { color: theme.text }]}>Your target</Text>
-          </View>
-          <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
-            {adaptive?.surfaced
-              ? `Updated to ${Math.round(adaptive.newKcal ?? 0)} kcal. ${adaptive.explanation}`
-              : goal.adaptive
-                ? (adaptive?.reason ?? 'Adapting from your own trend and intake.')
-                : 'Fixed — you set this by hand, so we leave it alone.'}
-          </Text>
-          <Pressable
-            onPress={() => router.push('/log-weight' as never)}
-            hitSlop={space.sm}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.md }}
-          >
-            <Icon name="scale" size={16} color={theme.protein} />
-            <Text style={[type.label, { color: theme.protein }]}>Log today's weight</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => router.push('/log-exercise' as never)}
-            hitSlop={space.sm}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.md }}
-          >
-            <Icon name="dumbbell" size={16} color={theme.protein} />
-            <Text style={[type.label, { color: theme.protein }]}>Log exercise</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Recently uploaded */}
-      <View style={{ paddingHorizontal: space.lg, marginTop: space.xl }}>
-        <Text style={[type.title, { color: theme.text, fontSize: 24 }]}>Recently uploaded</Text>
-
-        {empty ? (
-          <View style={[styles.emptyCard, { backgroundColor: theme.bgSunken }]}>
-            <View style={[styles.ghostRow, { backgroundColor: theme.bgElevated }]}>
-              <Icon name="bowl" size={26} color={theme.textFaint} />
-              <View style={{ flex: 1, gap: 6 }}>
-                <View style={[styles.skeleton, { backgroundColor: theme.ringTrack, width: '70%' }]} />
-                <View style={[styles.skeleton, { backgroundColor: theme.ringTrack, width: '45%' }]} />
-              </View>
-            </View>
-            <Text style={[type.body, { color: theme.textMuted, textAlign: 'center', marginTop: space.lg }]}>
-              Tap + to add your first meal of the day
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent' }]}>
-            <Text style={[type.bodyStrong, { color: theme.text }]}>
-              {totals.mealCount} {totals.mealCount === 1 ? 'meal' : 'meals'} logged
-            </Text>
-            {totals.pendingCount > 0 ? (
-              <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
-                +{totals.pendingCount} still analyzing — not counted yet
+        {/* Calories and the three macros, all from the food log. */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.md }}>
+          <View style={[styles.heroCard, { backgroundColor: theme.bgElevated, borderColor: theme.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.hero, { color: theme.text }]}>
+                {Math.abs(Math.round(remaining))}
               </Text>
-            ) : null}
+              <Text style={[type.body, { color: theme.textMuted }]}>
+                {over ? 'Calories over' : 'Calories left'}
+              </Text>
+            </View>
+            <Ring pct={pct} over={over} size={128} stroke={12}>
+              <Icon name="flame" size={26} color={theme.text} />
+            </Ring>
           </View>
-        )}
-      </View>
-    </ScrollView>
+
+          <View style={styles.macroRow}>
+            <MacroCard label="Protein" icon="protein" eaten={totals.protein_g} target={goal.protein_g} color={theme.protein} />
+            <MacroCard label="Carbs" icon="carbs" eaten={totals.carbs_g} target={goal.carbs_g} color={theme.carbs} />
+            <MacroCard label="Fat" icon="fat" eaten={totals.fat_g} target={goal.fat_g} color={theme.fat} />
+          </View>
+        </View>
+
+        {/* Adaptive target status — always legible, never a silent change. */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
+          <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <Icon name="target" size={18} color={theme.text} />
+              <Text style={[type.bodyStrong, { color: theme.text }]}>Your target</Text>
+            </View>
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
+              {adaptive?.surfaced
+                ? `Updated to ${Math.round(adaptive.newKcal ?? 0)} kcal. ${adaptive.explanation}`
+                : goal.adaptive
+                  ? (adaptive?.reason ?? 'Adapting from your own trend and intake.')
+                  : 'Fixed — you set this by hand, so we leave it alone.'}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push('/log-weight' as never)}
+              style={[tap, { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm }]}
+            >
+              <Icon name="scale" size={16} color={theme.protein} />
+              <Text style={[type.label, { color: theme.protein }]}>Log today's weight</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push('/log-exercise' as never)}
+              style={[tap, { flexDirection: 'row', alignItems: 'center', gap: space.xs }]}
+            >
+              <Icon name="dumbbell" size={16} color={theme.protein} />
+              <Text style={[type.label, { color: theme.protein }]}>Log exercise</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Exercise logged on the selected day (blind test round 1, B10). */}
+        {workouts.length > 0 ? (
+          <View style={{ paddingHorizontal: space.lg, marginTop: space.xl }}>
+            <Text style={[type.title, { color: theme.text, fontSize: 24 }]}>Exercise</Text>
+            <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent', marginTop: space.md }]}>
+              {workouts.map((w) => (
+                <View key={w.id} style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 44 }}>
+                  <Icon name="dumbbell" size={18} color={theme.text} />
+                  <Text style={[type.body, { color: theme.text, flex: 1 }]} numberOfLines={2}>
+                    {w.name}
+                  </Text>
+                  <Text style={[type.bodyStrong, { color: theme.text }]}>{Math.round(w.kcal)} kcal</Text>
+                  {w.provenance === 'manual' ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${w.name}`}
+                      onPress={() => removeWorkout(w)}
+                      style={tapIcon}
+                    >
+                      <Icon name="close" size={16} color={theme.textFaint} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+              <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
+                Calories burned are an estimate. They do not change your daily target.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Recently uploaded */}
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.xl }}>
+          <Text style={[type.title, { color: theme.text, fontSize: 24 }]}>Recently uploaded</Text>
+
+          {empty ? (
+            <View style={[styles.emptyCard, { backgroundColor: theme.bgSunken }]}>
+              <View style={[styles.ghostRow, { backgroundColor: theme.bgElevated }]}>
+                <Icon name="bowl" size={26} color={theme.textFaint} />
+                <View style={{ flex: 1, gap: 6 }}>
+                  <View style={[styles.skeleton, { backgroundColor: theme.ringTrack, width: '70%' }]} />
+                  <View style={[styles.skeleton, { backgroundColor: theme.ringTrack, width: '45%' }]} />
+                </View>
+              </View>
+              <Text style={[type.body, { color: theme.textMuted, textAlign: 'center', marginTop: space.lg }]}>
+                Tap + to add your first meal of the day
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.card, { backgroundColor: theme.bgSunken, borderColor: 'transparent' }]}>
+              <Text style={[type.bodyStrong, { color: theme.text }]}>
+                {totals.mealCount} {totals.mealCount === 1 ? 'meal' : 'meals'} logged
+              </Text>
+              {totals.pendingCount > 0 ? (
+                <Text style={[type.caption, { color: theme.uncertain, marginTop: space.xs }]}>
+                  +{totals.pendingCount} still analyzing — not counted yet
+                </Text>
+              ) : null}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+      <StatusBarScrim />
+    </View>
   )
 }
 

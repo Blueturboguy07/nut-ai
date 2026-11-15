@@ -6,8 +6,10 @@ import { Alert } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { PublikGate } from '../src/components/PublikGate'
+import { foodDbSelfTest } from '../src/data/food-search'
+import { openNutritionDb } from '../src/db/expo-adapter'
 import { aiConsentCopy, setAiConsentPrompter } from '../src/inference/ai-consent'
-import { publikAiProviders } from '../src/inference/publik'
+import { ensurePublikWallet, publikAiProviders, setPublikSelfTestExtra } from '../src/inference/publik'
 import { APP_NAME } from '../src/inference/publik-copy'
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider'
 
@@ -35,6 +37,11 @@ setAiConsentPrompter(
     })
   },
 )
+
+// The CI self-test (test builds only, PUBLIK_SELF_TEST) also proves that
+// the bundled food database loads and that a search for "egg" finds food
+// (blind test round 1, Nov 14 2026, B2). Its line follows the publik line.
+setPublikSelfTestExtra(async () => foodDbSelfTest(await openNutritionDb()))
 
 /**
  * The entry gates, in order.
@@ -76,6 +83,13 @@ function Root() {
   const theme = useTheme()
   useOnboardingGate()
 
+  // A reinstall keeps the publik key (Keychain) but not the app's storage:
+  // keep the sign-in, and read the plan again, so every screen shows one
+  // truth (blind test round 1, B11). Nothing happens when a wallet is stored.
+  useEffect(() => {
+    void ensurePublikWallet().catch(() => null)
+  }, [])
+
   return (
     <>
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
@@ -94,6 +108,7 @@ function Root() {
         <Stack.Screen name="edit-goals" options={{ presentation: 'modal' }} />
         <Stack.Screen name="report-result" options={{ presentation: 'modal' }} />
         <Stack.Screen name="how-estimates-work" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="describe-meal" options={{ presentation: 'modal' }} />
       </Stack>
     </>
   )

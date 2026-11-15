@@ -2,6 +2,8 @@ import { router } from 'expo-router'
 import { useEffect, useState } from 'react'
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ExerciseEstimateZ } from '@nutai/core-schema'
 import { AiResultLinks } from '../src/components/AiResultLinks'
 import { Icon, type IconName } from '../src/components/Icon'
+import { KEYBOARD_DONE_ID, KeyboardDoneBar } from '../src/components/KeyboardDone'
 import { db, localDate, setting, weightHistory } from '../src/data/repo'
 import {
   exerciseKcal,
@@ -37,7 +40,13 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
  *
  * Everything lands in exercise_entries with provenance 'manual' (typed here,
  * as opposed to imported from Apple Health) so the HealthKit reader can never
- * double-count a workout that was also typed in.
+ * double-count a workout that was also typed in. Home lists the workouts of
+ * the selected day (repo exerciseOn).
+ *
+ * Blind test round 1, Nov 14 2026 (B10): the number pad covered the button
+ * and had no Done key. Each form is now a KeyboardAvoidingView whose button
+ * dock sits in the layout (not absolute), so it moves up above the keyboard,
+ * and the number fields carry a Done bar (KeyboardDoneBar).
  */
 
 type Step =
@@ -162,9 +171,9 @@ function IntensityScreen({ exercise, onBack }: { exercise: ExerciseKind; onBack:
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Header title={KIND_META[exercise].title} icon={KIND_META[exercise].icon} onBack={onBack} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 140 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }} keyboardShouldPersistTaps="handled">
         <View style={styles.sectionHead}>
           <Icon name="sun" size={20} color={theme.text} />
           <Text style={[type.title, { color: theme.text, fontSize: 26 }]}>Set intensity</Text>
@@ -175,7 +184,13 @@ function IntensityScreen({ exercise, onBack }: { exercise: ExerciseKind; onBack:
             {anchors.map((a) => {
               const active = a.level === level
               return (
-                <Pressable key={a.level} onPress={() => setLevel(a.level)} hitSlop={space.sm}>
+                <Pressable
+                  key={a.level}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setLevel(a.level)}
+                  style={{ minHeight: MIN_TAP_TARGET, justifyContent: 'center' }}
+                >
                   <Text style={[active ? type.heading : type.bodyStrong, { color: active ? theme.text : theme.textMuted }]}>
                     {a.title}
                   </Text>
@@ -242,6 +257,7 @@ function IntensityScreen({ exercise, onBack }: { exercise: ExerciseKind; onBack:
         <TextInput
           accessibilityLabel="Duration in minutes"
           keyboardType="number-pad"
+          inputAccessoryViewID={KEYBOARD_DONE_ID}
           value={minutes}
           onChangeText={setMinutes}
           style={[styles.minutesInput, { color: theme.text, borderColor: theme.border }]}
@@ -250,6 +266,7 @@ function IntensityScreen({ exercise, onBack }: { exercise: ExerciseKind; onBack:
 
       <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg }]}>
         <Pressable
+          accessibilityRole="button"
           onPress={save}
           disabled={!valid || saving}
           style={[styles.cta, { backgroundColor: valid ? theme.text : theme.border }]}
@@ -259,7 +276,8 @@ function IntensityScreen({ exercise, onBack }: { exercise: ExerciseKind; onBack:
           </Text>
         </Pressable>
       </View>
-    </View>
+      <KeyboardDoneBar />
+    </KeyboardAvoidingView>
   )
 }
 
@@ -322,9 +340,9 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Header title="Describe Exercise" onBack={onBack} />
-      <ScrollView contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }} keyboardShouldPersistTaps="handled">
         <TextInput
           autoFocus
           placeholder="Describe workout time, intensity, etc."
@@ -387,7 +405,7 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
           </Pressable>
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   )
 }
 
@@ -409,14 +427,15 @@ function ManualScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Header title="Manual" icon="flame" onBack={onBack} />
-      <ScrollView contentContainerStyle={{ padding: space.lg }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }} keyboardShouldPersistTaps="handled">
         <Text style={[type.label, { color: theme.textMuted }]}>Calories burned</Text>
         <TextInput
           autoFocus
           accessibilityLabel="Calories burned"
           keyboardType="number-pad"
+          inputAccessoryViewID={KEYBOARD_DONE_ID}
           placeholder="250"
           placeholderTextColor={theme.textFaint}
           value={kcal}
@@ -428,6 +447,7 @@ function ManualScreen({ onBack }: { onBack: () => void }) {
         <TextInput
           accessibilityLabel="Exercise name"
           placeholder="Workout"
+          returnKeyType="done"
           placeholderTextColor={theme.textFaint}
           value={name}
           onChangeText={setName}
@@ -441,6 +461,7 @@ function ManualScreen({ onBack }: { onBack: () => void }) {
 
       <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg }]}>
         <Pressable
+          accessibilityRole="button"
           onPress={add}
           disabled={!valid || saving}
           style={[styles.cta, { backgroundColor: valid ? theme.text : theme.border }]}
@@ -448,7 +469,8 @@ function ManualScreen({ onBack }: { onBack: () => void }) {
           <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>Add Exercise</Text>
         </Pressable>
       </View>
-    </View>
+      <KeyboardDoneBar />
+    </KeyboardAvoidingView>
   )
 }
 
@@ -533,6 +555,6 @@ const styles = StyleSheet.create({
     marginTop: space.lg,
   },
   example: { marginTop: space.lg, padding: space.lg, borderRadius: radius.lg },
-  dock: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.lg },
+  dock: { padding: space.lg },
   cta: { height: 60, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
 })

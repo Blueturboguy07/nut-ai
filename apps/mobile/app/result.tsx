@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { WebLookupResult } from '@nutai/core-schema'
 import { healthScore } from '@nutai/totals'
 import { AiResultLinks } from '../src/components/AiResultLinks'
+import { StatusBarScrim } from '../src/components/StatusBarScrim'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
@@ -30,7 +31,8 @@ import {
   type WebLookupState,
 } from '../src/scan/store'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { KEYBOARD_DONE_ID, KeyboardDoneBar } from '../src/components/KeyboardDone'
+import { MIN_TAP_TARGET, radius, space, tap, tapIcon, type } from '../src/theme/tokens'
 
 /**
  * The result screen.
@@ -63,15 +65,18 @@ export default function Result() {
         : stage === 'identifying'
           ? 'Identifying ingredients…'
           : 'Matching the nutrition database…'
+    // No photo: "Describe a meal" (the person's words) or a barcode.
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Image source={{ uri: phase.photoUri }} style={styles.photo} />
+        {phase.photoUri ? <Image source={{ uri: phase.photoUri }} style={styles.photo} /> : null}
         <ActivityIndicator color={theme.textMuted} style={{ marginTop: space.xl }} />
         <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{copy}</Text>
-        <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center' }]}>
-          Your photo is saved — nothing is lost if this fails.
-        </Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md} style={{ marginTop: space.xl }}>
+        {phase.photoUri ? (
+          <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center' }]}>
+            Your photo is saved — nothing is lost if this fails.
+          </Text>
+        ) : null}
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={[tap, { marginTop: space.xl }]}>
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
       </View>
@@ -84,7 +89,7 @@ export default function Result() {
     const limit = phase.failureKind === 'quota-exhausted'
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Image source={{ uri: phase.photoUri }} style={[styles.photo, { opacity: 0.5 }]} />
+        {phase.photoUri ? <Image source={{ uri: phase.photoUri }} style={[styles.photo, { opacity: 0.5 }]} /> : null}
         <Text style={[type.heading, { color: theme.text, marginTop: space.xl, textAlign: 'center' }]}>
           {limit ? 'Limit reached' : 'Could not read this meal'}
         </Text>
@@ -120,10 +125,20 @@ export default function Result() {
             <Text style={[type.bodyStrong, { color: theme.bg }]}>Try again</Text>
           </Pressable>
         ) : null}
+        {/* A photo the model could not read: the person can say what it was. */}
+        {phase.photoUri && !limit ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => { reset(); router.replace('/describe-meal' as never) }}
+            style={[tap, { marginTop: space.lg }]}
+          >
+            <Text style={[type.label, { color: theme.protein }]}>Describe the meal instead</Text>
+          </Pressable>
+        ) : null}
         <Pressable
+          accessibilityRole="button"
           onPress={() => { reset(); router.back() }}
-          hitSlop={space.md}
-          style={{ marginTop: space.lg }}
+          style={[tap, { marginTop: space.sm }]}
         >
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
@@ -135,7 +150,7 @@ export default function Result() {
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
         <Text style={[type.heading, { color: theme.text }]}>Nothing to show yet</Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md} style={{ marginTop: space.xl }}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={[tap, { marginTop: space.xl }]}>
           <Text style={[type.body, { color: theme.textMuted }]}>Close</Text>
         </Pressable>
       </View>
@@ -182,8 +197,8 @@ export default function Result() {
               {q.question.options.map((opt) => (
                 <Pressable
                   key={opt.value}
+                  accessibilityRole="button"
                   onPress={() => answerQuestion(q, opt.value)}
-                  hitSlop={space.sm}
                   style={[styles.chip, { borderColor: theme.uncertain }]}
                 >
                   <Text style={[type.label, { color: theme.text }]}>{opt.label}</Text>
@@ -197,7 +212,7 @@ export default function Result() {
         {preAnswered.length > 0 && (
           <View style={{ marginTop: space.lg, gap: space.xs }}>
             {preAnswered.map((q) => (
-              <Pressable key={q.question.id} onPress={() => answerQuestion(q, q.appliedDefault ?? '')} hitSlop={space.xs}>
+              <Pressable key={q.question.id} accessibilityRole="button" onPress={() => answerQuestion(q, q.appliedDefault ?? '')} style={tap}>
                 <Text style={[type.caption, { color: theme.textMuted }]}>
                   {q.disclosure} · <Text style={{ color: theme.uncertain }}>change</Text>
                 </Text>
@@ -229,6 +244,7 @@ export default function Result() {
                 <TextInput
                   accessibilityLabel={`Grams of ${row.displayName}`}
                   keyboardType="numeric"
+                  inputAccessoryViewID={KEYBOARD_DONE_ID}
                   defaultValue={String(Math.round(row.grams))}
                   onChangeText={(t) => editGrams(row.id, Number(t))}
                   style={[styles.gramInput, { color: theme.text, borderColor: theme.border }]}
@@ -238,7 +254,6 @@ export default function Result() {
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${row.displayName}`}
                   onPress={() => removeRow(row.id)}
-                  hitSlop={space.md}
                   style={styles.remove}
                 >
                   <Text style={{ color: theme.textFaint, fontSize: 20 }}>×</Text>
@@ -252,6 +267,8 @@ export default function Result() {
 
         <AiResultLinks source="result" />
       </ScrollView>
+      <StatusBarScrim />
+      <KeyboardDoneBar />
 
       <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg, borderColor: theme.border }]}>
         <View style={{ flexDirection: 'row', gap: space.md }}>
@@ -327,9 +344,9 @@ export default function Result() {
             <Text style={[type.bodyStrong, { color: theme.bg }]}>Update</Text>
           </Pressable>
           <Pressable
+            accessibilityRole="button"
             onPress={() => setFixOpen(false)}
-            hitSlop={space.md}
-            style={{ alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }}
+            style={[tap, { alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }]}
           >
             <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
           </Pressable>
@@ -418,11 +435,13 @@ function WebLookupCard({ rowId, state }: { rowId: string; state: WebLookupState 
               style={[styles.otherInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.bg }]}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search"
               onPress={() => {
                 if (otherText.trim()) void lookupOther(rowId, otherText.trim())
                 setOtherOpen(false)
               }}
-              hitSlop={space.sm}
+              style={tapIcon}
             >
               <Icon name="search" size={18} color={theme.text} />
             </Pressable>
@@ -581,7 +600,7 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm,
     borderRadius: radius.pill,
     borderWidth: 1,
-    minHeight: 36,
+    minHeight: MIN_TAP_TARGET,
     justifyContent: 'center',
   },
   row: {

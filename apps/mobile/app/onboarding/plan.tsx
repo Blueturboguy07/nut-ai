@@ -10,6 +10,8 @@ import {
 } from '@nutai/goals'
 import { Icon, type IconName } from '../../src/components/Icon'
 import { ProgressChart } from '../../src/components/onboarding/Charts'
+import { StatusBarScrim } from '../../src/components/StatusBarScrim'
+import { planDateLine, planGoalLine } from '../../src/onboarding/goal-copy'
 import { persistOnboarding } from '../../src/onboarding/persist'
 import {
   activityFor,
@@ -29,8 +31,15 @@ import { radius, space, type } from '../../src/theme/tokens'
  * This is where every earlier answer cashes out, and where the screen is most
  * careful about what it is willing to claim.
  *
- * KEPT: the estimated-progress chart, the editable calorie and macro cards, the
- * "Your info" recap, and "How to reach your goals". Those are genuinely useful.
+ * KEPT: the editable calorie and macro cards, the "Your info" recap, and "How
+ * to reach your goals". Those are genuinely useful.
+ *
+ * CHANGED (blind test round 1, Nov 14 2026, B6): the headline is the goal
+ * with no date ("Goal: lose 12 lbs", not "... by March 3"). The date at the
+ * chosen pace is a separate line labeled "Estimate, not a promise". The
+ * estimated-progress chart shows only when the goal is to lose weight, with
+ * the same label; "Maintain" and "Gain" get no projected curve
+ * (src/onboarding/goal-copy.ts).
  *
  * REMOVED (App Store 2.1, Nov 14 2026): "What we set up for you". It listed
  * features that do not exist (reminders, calorie rollover, diet-biased food
@@ -88,10 +97,8 @@ export default function PlanScreen() {
   }, [a, derivedGoal])
 
   const gaining = derivedGoal === 'gain'
-  const goalLine =
-    derivedGoal === 'maintain'
-      ? 'Goal: maintain your weight'
-      : `Goal: ${gaining ? 'gain' : 'lose'} ${plan.deltaLb.toFixed(0)} lbs by ${plan.dateLabel}`
+  const goalLine = planGoalLine(derivedGoal, plan.deltaLb)
+  const dateLine = planDateLine(derivedGoal, plan.deltaLb, plan.dateLabel)
 
   const diet = a.dietStyle ? DIET_BIAS[a.dietStyle] : null
 
@@ -110,15 +117,21 @@ export default function PlanScreen() {
             <Icon name="check" size={22} color={theme.bg} weight={2.4} />
           </View>
           <Text style={[styles.goal, { color: theme.text }]}>{goalLine}</Text>
+          {dateLine ? (
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center' }]}>
+              {dateLine}
+            </Text>
+          ) : null}
         </View>
 
-        <View style={{ marginTop: space.xl }}>
-          <ProgressChart
-            targetLabel={`${kgToLb(a.desiredWeightKg ?? a.weightKg ?? 80).toFixed(1)} lbs`}
-            dateLabel={derivedGoal === 'maintain' ? 'Ongoing' : plan.dateLabel}
-            gaining={gaining}
-          />
-        </View>
+        {derivedGoal === 'lose' && dateLine ? (
+          <View style={{ marginTop: space.xl }}>
+            <ProgressChart
+              targetLabel={`${kgToLb(a.desiredWeightKg ?? a.weightKg ?? 80).toFixed(1)} lbs`}
+              dateLabel={plan.dateLabel}
+            />
+          </View>
+        ) : null}
 
         {/* Daily recommendation */}
         <View style={[styles.section, { backgroundColor: theme.bgSunken }]}>
@@ -238,6 +251,7 @@ export default function PlanScreen() {
           <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>Let's get started!</Text>
         </Pressable>
       </View>
+      <StatusBarScrim />
     </View>
   )
 }

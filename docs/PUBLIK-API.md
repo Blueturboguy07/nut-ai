@@ -30,7 +30,9 @@ The gate is the publik module in `apps/mobile/src/inference/publik-core.ts`
 | `optional` | No wall. Sign-in is asked when the person picks publik API (onboarding, Profile → AI provider) or taps Profile → publik account → **Sign in with publik** (`app/publik-sign-in.tsx`, the same screens with **Not now**). Nothing is counted before the sign-in. |
 
 The flag is inlined by Metro at bundle time (`src/build-flags.ts`); nothing at
-run time can change it. CI builds both (`ios-sim-app`, `ios-sim-app-optional`).
+run time can change it. CI builds both (`ios-sim-app`, `ios-sim-app-optional`),
+and a third simulator app built as the App Store build is built
+(`ios-sim-app-store`, see CI below). Blind tests use `ios-sim-app-store`.
 
 ### What the gate does
 
@@ -136,14 +138,25 @@ Founder rule (Nov 14 2026): the app never shows how much money a person
 spends — no amount, no price per scan (publik or own key), no balance in
 dollars, no charges page, no amount in an error message (a gateway message
 with one is replaced by the app's own words). AI use shows only as a
-percent of the plan limit, with a bar on the publik card:
+percent, with a bar, on the publik card (Profile → AI provider) and in
+Profile under the AI provider row. The state is the TRUE one
+(`planStatus`, publik-core.ts; blind test round 1, Nov 14 2026, B3/B5):
 
-| GET /api/v1/wallet | The app shows |
-|---|---|
-| `used_percent` (or `remaining_percent`), `resets_at` | `62% of your plan used · resets Monday` |
-| until publik sends them: `week.used_micros` of `week.budget_micros`, `week.resets_at` | the same line, computed |
-| neither, balance left or no balance read | `Plan active` |
-| neither, empty balance and no weekly limit | `Plan limit reached` |
+| GET /api/v1/wallet | State | The app shows |
+|---|---|---|
+| `plan.kind: "plan"`, `used_percent` (or `remaining_percent`), `resets_at` | plan | `62% of your plan used · resets Monday` and a bar of the percent used |
+| until publik sends them: `week.used_micros` of `week.budget_micros`, `week.resets_at` | plan | the same line, computed |
+| a plan with no percent | plan | `Plan active` (or `Plan limit reached`) |
+| `plan.kind: "pack"`, or no plan with a balance left | prepaid | `40% of your prepaid balance left` and a bar of the percent left (`Prepaid balance active` with no percent, `Prepaid balance used up` at 0) |
+| `plan.kind: "none"` and no balance | none | `No publik plan yet` |
+
+The card's words follow the same state: `Your plan: <label>.`, `Your
+prepaid pack: <label>.`, `You have a prepaid publik balance.`; never "Your
+pack: publik." "Linked" is read once, by `publikClaimState` (the wallet's
+claim state, else the install's), on the card and in Profile. After a
+reinstall the publik key survives in the Keychain but the stored wallet does
+not: the app keeps the sign-in and reads the wallet again at start
+(`ensurePublikWallet`).
 
 A 402 or a weekly limit shows "Limit reached": `Your publik plan limit is
 reached. It resets Monday.`, then the storefront rule (US: a "Get a plan"
@@ -208,7 +221,7 @@ build. No URL scheme or web page reaches them.
 | Name | Effect |
 |---|---|
 | `PUBLIK_API_BASE_URL` | the whole module uses this publik (for example a local fake); its links open like publikhq.com's |
-| `PUBLIK_SELF_TEST=1` | mint a key, `GET /wallet`, print `publik self-test: ok nut-ai <version>` on stdout, exit |
+| `PUBLIK_SELF_TEST=1` | mint a key, `GET /wallet`, print `publik self-test: ok nut-ai <version>` on stdout, then the food database line `food-db self-test: ok <N> foods, <M> matches for egg (first: …)` (or `food-db self-test: failed: <why>`), exit |
 | `DO_NOT_TRACK`, `PUBLIK_TELEMETRY=0` | no usage counting |
 | `PUBLIK_TELEMETRY_DEBUG=1` | log each event and publik's answer |
 
@@ -245,10 +258,34 @@ prove the Gradle checks fail. The checks never print the token.
 then builds `ios-sim-app` (required mode) and `ios-sim-app-optional` (NutAI.app
 for the simulator, arm64, no certificate: only the ad-hoc signature that the
 simulator keychain needs) and `android-debug-apk` (the release variant,
-debuggable, signed with the debug key, cleartext allowed). All three are
-test-hooks builds with `EXPO_PUBLIC_APP_STORE_BUILD=0`. A fourth job,
-`android-release-check`, makes a release build with the test hooks off and
-uploads nothing. The native build steps get the app token from the repo
+debuggable, signed with the debug key, cleartext allowed). These three are
+test-hooks builds with `EXPO_PUBLIC_APP_STORE_BUILD=0`.
+
+`ios-sim-app-store` is the same simulator app built with the App Store
+flags: `EXPO_PUBLIC_APP_STORE_BUILD=1`, the required gate, the test hooks
+OFF, the app token from the secret. **Blind tests use this artifact.** A
+test-hooks build is not an App Store build: it shows purchase links (blind
+test round 1, Nov 14 2026: the tester used `ios-sim-app` and saw "Get a
+plan"). In a store build, purchase links stay off until StoreKit reports
+the US storefront; on an unknown or non-US storefront the only words are
+`To get a plan, search for "publik" on Google.` It has no self-test (no
+hooks); CI installs it on a simulator and checks that it still runs 25
+seconds after launch.
+
+A further job, `android-release-check`, makes a release build with the test
+hooks off and uploads nothing.
+
+Every app build bundles the food database. `apps/mobile/assets/nutrition.db`
+is not in git: each build job runs `npm run data:build` (cached by the hash
+of `tools/nutrition-data/src/**` and the schema) and checks that it has
+foods and that "egg" matches. The app's bundle fails without the file (the
+`require` in `src/db/expo-adapter.ts` is not optional any more). Blind test
+round 1 (B2): CI never built it, so the Food Database was empty in every
+CI build. The iOS jobs check that the database is inside the app, and the
+self-test of the test-hooks builds searches it for "egg" in the built app.
+The Android jobs check that it is inside the APK. **Any other workflow that
+builds the app (for example `appstore-upload.yml`) must also run `npm run
+data:build` after `npm ci`, or its bundle step fails.** The native build steps get the app token from the repo
 secret `PUBLIK_APP_TOKEN` as the build input; nothing prints it. The iOS
 jobs print the App Store settings of the built app (version, build number,
 iPhone only, encryption, no Face ID string, privacy manifest) and check that

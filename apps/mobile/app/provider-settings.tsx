@@ -23,10 +23,10 @@ import {
   signOutOfPublik,
 } from '../src/inference/publik'
 import { APP_NAME } from '../src/inference/publik-copy'
-import { PUBLIK_MODEL_PICK_SETTING, PUBLIK_MODELS, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
+import { PUBLIK_MODEL_PICK_SETTING, PUBLIK_MODELS, publikClaimState, type PublikInstall, type PublikWallet } from '../src/inference/publik-core'
 import { publikScanModelSetting } from '../src/inference/resolve'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { MIN_TAP_TARGET, radius, space, tap, tapIcon, type } from '../src/theme/tokens'
 
 /**
  * Provider settings — everything the onboarding key screen can do, available
@@ -195,7 +195,7 @@ export default function ProviderSettings() {
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View style={[styles.head, { paddingTop: insets.top + space.sm }]}>
         <Text style={[type.title, { color: theme.text }]}>AI provider</Text>
-        <Pressable onPress={() => router.back()} hitSlop={space.md}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => router.back()} style={tapIcon}>
           <Icon name="close" size={22} color={theme.textMuted} />
         </Pressable>
       </View>
@@ -272,7 +272,7 @@ export default function ProviderSettings() {
 
               <Text style={[type.label, { color: theme.textMuted, marginTop: space.xl }]}>Model</Text>
               <View style={{ marginTop: space.sm, gap: space.sm }}>
-                {publikModelList(publikWallet?.claimState ?? publikInstall.claimState).map((m) => {
+                {publikModelList(publikClaimState(publikInstall, publikWallet)).map((m) => {
                   const active = m.id === modelId
                   return (
                     <Pressable
@@ -294,7 +294,8 @@ export default function ProviderSettings() {
                 })}
               </View>
               <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
-                Every scan counts toward your publik plan. Profile shows how much of your plan you used.
+                Every scan counts toward your publik plan. The card above and Profile show how much of
+                your plan you used.
               </Text>
             </>
           ) : (
@@ -319,8 +320,8 @@ export default function ProviderSettings() {
               <Text style={[type.bodyStrong, { color: theme.text }]}>Key saved</Text>
               <Text style={[type.body, { color: theme.textMuted }]}>{masked}</Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: space.lg, marginTop: space.md }}>
-              <Pressable onPress={() => setShowForm(true)} hitSlop={space.sm}>
+            <View style={{ flexDirection: 'row', gap: space.lg, marginTop: space.sm }}>
+              <Pressable accessibilityRole="button" onPress={() => setShowForm(true)} style={tap}>
                 <Text style={[type.label, { color: theme.protein }]}>Replace key</Text>
               </Pressable>
               <Pressable
@@ -344,7 +345,8 @@ export default function ProviderSettings() {
                     ],
                   )
                 }
-                hitSlop={space.sm}
+                accessibilityRole="button"
+                style={tap}
               >
                 <Text style={[type.label, { color: theme.safety }]}>Remove key</Text>
               </Pressable>
@@ -410,8 +412,8 @@ export default function ProviderSettings() {
                 onPress={() => {
                   void setPublikChoice(null).then(() => setChoiceRound((n) => n + 1))
                 }}
-                hitSlop={space.sm}
-                style={{ marginTop: space.md }}
+                accessibilityRole="button"
+                style={[tap, { marginTop: space.sm }]}
               >
                 <Text style={[type.label, { color: theme.protein }]}>Ask again at the next start</Text>
               </Pressable>

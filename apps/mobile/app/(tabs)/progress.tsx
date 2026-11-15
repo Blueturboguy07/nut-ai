@@ -6,8 +6,9 @@ import Svg, { Circle, Line as SvgLine, Path, Rect, Text as SvgText } from 'react
 import { bmi, computeTrend, trendSlopeLbPerWeek, type TrendPoint, type WeightPoint } from '@nutai/goals'
 import { currentGoal, db, setting, weightHistory, type CurrentGoal } from '../../src/data/repo'
 import { Icon } from '../../src/components/Icon'
+import { StatusBarScrim } from '../../src/components/StatusBarScrim'
 import { useTheme } from '../../src/theme/ThemeProvider'
-import { radius, space, type } from '../../src/theme/tokens'
+import { radius, space, tap, type } from '../../src/theme/tokens'
 
 const LB_PER_KG = 2.20462
 
@@ -79,140 +80,143 @@ export default function Progress() {
   const bodyBmi = currentKg != null && heightCm != null ? bmi(currentKg, heightCm) : null
 
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.bg }}
-      contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 150 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={[type.title, { color: theme.text }]}>Progress</Text>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        style={{ backgroundColor: theme.bg }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: 150 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[type.title, { color: theme.text }]}>Progress</Text>
 
-      {/* Streak credits logging INTENT, so our own failures never break it. */}
-      <View style={styles.row}>
-        <View style={[styles.tile, { backgroundColor: theme.bgSunken }]}>
-          <Icon name="flame" size={30} color={theme.text} />
-          <Text style={[styles.tileNum, { color: theme.text }]}>{streak}</Text>
-          <Text style={[type.caption, { color: theme.textMuted }]}>Day streak</Text>
-        </View>
-        <View style={[styles.tile, { backgroundColor: theme.bgSunken }]}>
-          <Icon name="scale" size={30} color={theme.text} />
-          <Text style={[styles.tileNum, { color: theme.text }]}>{raw.length}</Text>
-          <Text style={[type.caption, { color: theme.textMuted }]}>Weigh-ins</Text>
-        </View>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-        <View style={styles.spread}>
-          <Text style={[type.caption, { color: theme.textMuted }]}>Current weight</Text>
-          <Pressable onPress={() => router.push('/log-weight' as never)} hitSlop={space.sm}>
-            <Text style={[type.label, { color: theme.protein }]}>Log weight</Text>
-          </Pressable>
-        </View>
-        <Text style={[styles.big, { color: theme.text }]}>
-          {currentKg != null ? `${(currentKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
-        </Text>
-
-        <View style={[styles.bar, { backgroundColor: theme.ringTrack }]}>
-          <View style={{ width: `${pctOfGoal * 100}%`, height: 6, borderRadius: 3, backgroundColor: theme.text }} />
-        </View>
-        <View style={styles.spread}>
-          <Text style={[type.caption, { color: theme.textMuted }]}>
-            Start: {startKg != null ? `${(startKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
-          </Text>
-          <Text style={[type.caption, { color: theme.textMuted }]}>
-            Goal: {goalKg != null ? `${(goalKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
-          </Text>
-        </View>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-        <View style={styles.spread}>
-          <Text style={[type.heading, { color: theme.text }]}>Weight progress</Text>
-          <View style={[styles.badge, { backgroundColor: theme.bgElevated }]}>
-            <Text style={[type.caption, { color: theme.text }]}>{Math.round(pctOfGoal * 100)}% of goal</Text>
+        {/* Streak credits logging INTENT, so our own failures never break it. */}
+        <View style={styles.row}>
+          <View style={[styles.tile, { backgroundColor: theme.bgSunken }]}>
+            <Icon name="flame" size={30} color={theme.text} />
+            <Text style={[styles.tileNum, { color: theme.text }]}>{streak}</Text>
+            <Text style={[type.caption, { color: theme.textMuted }]}>Day streak</Text>
+          </View>
+          <View style={[styles.tile, { backgroundColor: theme.bgSunken }]}>
+            <Icon name="scale" size={30} color={theme.text} />
+            <Text style={[styles.tileNum, { color: theme.text }]}>{raw.length}</Text>
+            <Text style={[type.caption, { color: theme.textMuted }]}>Weigh-ins</Text>
           </View>
         </View>
 
-        {raw.length === 0 ? (
-          <Text style={[type.caption, { color: theme.textMuted, marginTop: space.md }]}>
-            No weigh-ins yet. It takes about five before a slope means anything.
-          </Text>
-        ) : (
-          <WeightChart trend={visible} />
-        )}
-
-        <View style={[styles.segment, { backgroundColor: theme.bgElevated }]}>
-          {WINDOWS.map((w) => (
-            <Pressable
-              key={w.key}
-              onPress={() => setWindow(w.key)}
-              style={[styles.segItem, window === w.key && { backgroundColor: theme.bg }]}
-            >
-              <Text style={[type.label, { color: window === w.key ? theme.text : theme.textMuted }]}>
-                {w.key}
-              </Text>
+        <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+          <View style={styles.spread}>
+            <Text style={[type.caption, { color: theme.textMuted }]}>Current weight</Text>
+            <Pressable accessibilityRole="button" onPress={() => router.push('/log-weight' as never)} style={tap}>
+              <Text style={[type.label, { color: theme.protein }]}>Log weight</Text>
             </Pressable>
+          </View>
+          <Text style={[styles.big, { color: theme.text }]}>
+            {currentKg != null ? `${(currentKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
+          </Text>
+
+          <View style={[styles.bar, { backgroundColor: theme.ringTrack }]}>
+            <View style={{ width: `${pctOfGoal * 100}%`, height: 6, borderRadius: 3, backgroundColor: theme.text }} />
+          </View>
+          <View style={styles.spread}>
+            <Text style={[type.caption, { color: theme.textMuted }]}>
+              Start: {startKg != null ? `${(startKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
+            </Text>
+            <Text style={[type.caption, { color: theme.textMuted }]}>
+              Goal: {goalKg != null ? `${(goalKg * LB_PER_KG).toFixed(1)} lbs` : '—'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+          <View style={styles.spread}>
+            <Text style={[type.heading, { color: theme.text }]}>Weight progress</Text>
+            <View style={[styles.badge, { backgroundColor: theme.bgElevated }]}>
+              <Text style={[type.caption, { color: theme.text }]}>{Math.round(pctOfGoal * 100)}% of goal</Text>
+            </View>
+          </View>
+
+          {raw.length === 0 ? (
+            <Text style={[type.caption, { color: theme.textMuted, marginTop: space.md }]}>
+              No weigh-ins yet. It takes about five before a slope means anything.
+            </Text>
+          ) : (
+            <WeightChart trend={visible} />
+          )}
+
+          <View style={[styles.segment, { backgroundColor: theme.bgElevated }]}>
+            {WINDOWS.map((w) => (
+              <Pressable
+                key={w.key}
+                onPress={() => setWindow(w.key)}
+                style={[styles.segItem, window === w.key && { backgroundColor: theme.bg }]}
+              >
+                <Text style={[type.label, { color: window === w.key ? theme.text : theme.textMuted }]}>
+                  {w.key}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.legend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.dot, { backgroundColor: theme.textFaint }]} />
+              <Text style={[type.caption, { color: theme.textMuted }]}>Each weigh-in</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.line, { backgroundColor: theme.text }]} />
+              <Text style={[type.caption, { color: theme.textMuted }]}>Trend</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+          <Text style={[type.heading, { color: theme.text }]}>Weight changes</Text>
+          {CHANGE_WINDOWS.map((d) => (
+            <ChangeRow key={d} label={`${d} day`} lbs={changeOver(trend, d)} />
           ))}
-        </View>
-
-        <View style={styles.legend}>
-          <View style={styles.legendItem}>
-            <View style={[styles.dot, { backgroundColor: theme.textFaint }]} />
-            <Text style={[type.caption, { color: theme.textMuted }]}>Each weigh-in</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.line, { backgroundColor: theme.text }]} />
-            <Text style={[type.caption, { color: theme.textMuted }]}>Trend</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-        <Text style={[type.heading, { color: theme.text }]}>Weight changes</Text>
-        {CHANGE_WINDOWS.map((d) => (
-          <ChangeRow key={d} label={`${d} day`} lbs={changeOver(trend, d)} />
-        ))}
-        <ChangeRow label="All time" lbs={changeOver(trend, Number.POSITIVE_INFINITY)} />
-        <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
-          Measured on the trend line, not raw weigh-ins — a 3 lb overnight swing is water, and
-          reporting it as a change would be reporting noise as progress.
-        </Text>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-        <Text style={[type.heading, { color: theme.text }]}>Rate of change</Text>
-        <Text style={[styles.big, { color: theme.text }]}>
-          {slope == null ? '—' : `${slope > 0 ? '+' : ''}${slope.toFixed(2)} lb/wk`}
-        </Text>
-        <Text style={[type.caption, { color: theme.textMuted }]}>
-          {slope == null ? 'Not enough weigh-ins yet.' : `From ${raw.length} weigh-ins.`}
-        </Text>
-      </View>
-
-      {bodyBmi != null ? (
-        <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-          <Text style={[type.heading, { color: theme.text }]}>Your BMI</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.md }}>
-            <Text style={[styles.big, { color: theme.text }]}>{bodyBmi.toFixed(1)}</Text>
-            <Text style={[type.caption, { color: theme.textMuted }]}>{bmiBand(bodyBmi)}</Text>
-          </View>
-          <BmiScale value={bodyBmi} />
+          <ChangeRow label="All time" lbs={changeOver(trend, Number.POSITIVE_INFINITY)} />
           <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
-            BMI cannot tell muscle from fat and says nothing about an individual's health. It is
-            here because it is a common reference point, not because it is a verdict.
+            Measured on the trend line, not raw weigh-ins — a 3 lb overnight swing is water, and
+            reporting it as a change would be reporting noise as progress.
           </Text>
         </View>
-      ) : null}
 
-      {goal ? (
         <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
-          <Text style={[type.heading, { color: theme.text }]}>Daily target</Text>
-          <Text style={[styles.big, { color: theme.text }]}>{Math.round(goal.targetKcal)} kcal</Text>
+          <Text style={[type.heading, { color: theme.text }]}>Rate of change</Text>
+          <Text style={[styles.big, { color: theme.text }]}>
+            {slope == null ? '—' : `${slope > 0 ? '+' : ''}${slope.toFixed(2)} lb/wk`}
+          </Text>
           <Text style={[type.caption, { color: theme.textMuted }]}>
-            {goal.adaptive ? 'Adapting from your own trend and intake.' : 'Fixed — you set this by hand.'}
+            {slope == null ? 'Not enough weigh-ins yet.' : `From ${raw.length} weigh-ins.`}
           </Text>
         </View>
-      ) : null}
-    </ScrollView>
+
+        {bodyBmi != null ? (
+          <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+            <Text style={[type.heading, { color: theme.text }]}>Your BMI</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.md }}>
+              <Text style={[styles.big, { color: theme.text }]}>{bodyBmi.toFixed(1)}</Text>
+              <Text style={[type.caption, { color: theme.textMuted }]}>{bmiBand(bodyBmi)}</Text>
+            </View>
+            <BmiScale value={bodyBmi} />
+            <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
+              BMI cannot tell muscle from fat and says nothing about an individual's health. It is
+              here because it is a common reference point, not because it is a verdict.
+            </Text>
+          </View>
+        ) : null}
+
+        {goal ? (
+          <View style={[styles.card, { backgroundColor: theme.bgSunken }]}>
+            <Text style={[type.heading, { color: theme.text }]}>Daily target</Text>
+            <Text style={[styles.big, { color: theme.text }]}>{Math.round(goal.targetKcal)} kcal</Text>
+            <Text style={[type.caption, { color: theme.textMuted }]}>
+              {goal.adaptive ? 'Adapting from your own trend and intake.' : 'Fixed — you set this by hand.'}
+            </Text>
+          </View>
+        ) : null}
+      </ScrollView>
+      <StatusBarScrim />
+    </View>
   )
 }
 

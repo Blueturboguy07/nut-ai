@@ -8,7 +8,7 @@ import { finishRestore, importBackup, pickBackupFile } from '../../src/data/back
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
 import { APP_NAME } from '../../src/inference/publik-copy'
-import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
+import { MIN_TAP_TARGET, radius, space, tap, type } from '../../src/theme/tokens'
 
 /**
  * Restore from a backup — the escape hatch from re-doing onboarding on a new
@@ -136,9 +136,9 @@ export default function RestoreScreen() {
         </Text>
       </Pressable>
       <Pressable
+        accessibilityRole="button"
         onPress={() => (payload ? setPayload(null) : router.back())}
-        hitSlop={space.md}
-        style={{ alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }}
+        style={[tap, { alignSelf: 'center', marginBottom: Math.max(insets.bottom, space.lg) }]}
       >
         <Text style={[type.body, { color: theme.textMuted }]}>
           {payload ? 'Choose a different file' : 'Back'}

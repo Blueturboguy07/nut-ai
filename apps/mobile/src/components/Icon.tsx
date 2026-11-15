@@ -64,6 +64,7 @@ export type IconName =
   | 'plus'
   | 'close'
   | 'pencil'
+  | 'image'
   | 'heart'
   | 'clock'
   | 'target'
@@ -422,6 +423,15 @@ function render(name: IconName, c: string, s: Common) {
         <G>
           <Path {...s} d="M4 20h4L20 8a2.8 2.8 0 0 0-4-4L4 16v4Z" />
           <Path {...s} d="m14.5 5.5 4 4" />
+        </G>
+      )
+    case 'image':
+      // A photo: frame, sun, hills.
+      return (
+        <G>
+          <Path {...s} d="M5.5 4.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z" />
+          <Circle {...s} cx="9" cy="9.5" r="1.6" />
+          <Path {...s} d="m3.5 16 5-4.5 4 3.5 3-2.5 5 4" />
         </G>
       )
     case 'heart':

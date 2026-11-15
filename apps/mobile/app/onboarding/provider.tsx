@@ -102,7 +102,7 @@ export default function ProviderScreen() {
 
         <OptionCard
           label="No key for now"
-          sublabel="Barcode scans and food search still work. Photo and label scans need an AI provider."
+          sublabel="Barcode scans and food search still work. Photo scans, label scans and Describe a meal need an AI provider."
           glyph="minus"
           selected={a.provider === 'none'}
           onPress={() => setAnswer('provider', 'none')}
@@ -111,9 +111,10 @@ export default function ProviderScreen() {
 
       <View style={[styles.note, { backgroundColor: theme.bgSunken }]}>
         <Text style={[type.caption, { color: theme.textMuted, lineHeight: 19 }]}>
-          {publik ? 'The three providers below are sorted' : 'Sorted'} by price, with no recommendation. Frontier models are not measurably better at
-          judging portion size — which is where nearly all the error is — so the cheapest vision
-          model is pre-selected on purpose, not as a compromise.
+          {publik ? 'The own-key providers above are sorted' : 'The providers above are sorted'} by price, with no
+          recommendation. Frontier models are not measurably better at judging portion size — which
+          is where nearly all the error is — so the cheapest vision model is pre-selected on
+          purpose, not as a compromise.
         </Text>
       </View>
 

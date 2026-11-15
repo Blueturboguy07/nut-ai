@@ -19,7 +19,7 @@
  */
 
 import identity from '../../app-identity.json'
-import type { PlanUse, ProvisionResult } from './publik-core'
+import type { PlanStatus, PlanUse, ProvisionResult } from './publik-core'
 
 /** The app's name ("publik Nut AI"): ONE setting, `apps/mobile/app-identity.json` (app.config.ts reads it too). */
 export const APP_NAME: string = identity.displayName
@@ -82,9 +82,28 @@ export function planUseLine(u: PlanUse, now: Date = new Date()): string {
   return 'Plan active'
 }
 
-/** Where a meal photo goes on publik mode — the second disclosure a phone owes. */
+/**
+ * The plan card and Profile (blind test round 1, Nov 14 2026, B3/B5): the
+ * TRUE state, never money.
+ *
+ *   plan     "62% of your plan used · resets Monday", "Plan limit reached ·
+ *            resets Monday", or "Plan active" (no number from publik)
+ *   prepaid  "40% of your prepaid balance left", "Prepaid balance used up",
+ *            or "Prepaid balance active"
+ *   none     "No publik plan yet"
+ */
+export function planStatusLine(s: PlanStatus, now: Date = new Date()): string {
+  if (s.kind === 'none') return 'No publik plan yet'
+  if (s.kind === 'prepaid') {
+    if (s.limitReached) return 'Prepaid balance used up'
+    return s.percent != null ? `${s.percent}% of your prepaid balance left` : 'Prepaid balance active'
+  }
+  return planUseLine({ usedPercent: s.percent, resetsAt: s.resetsAt, limitReached: s.limitReached }, now)
+}
+
+/** Where a meal photo goes on publik mode — the second disclosure a phone owes. In plain words (B12). */
 export const DISCLOSURE_DATA_PATH =
-  "Your meal photo and the text around it go through publik's servers to the AI provider that answers. publik does not store request bodies beyond a 24-hour idempotency fingerprint; the AI provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
+  "Your meal photo and the text around it go through publik's servers to the AI provider that answers. publik keeps no copy of them. For 24 hours it keeps only a short code made from the request, so that the same request is not run twice. The AI provider can keep requests for a short time to check for abuse, under its own rules. You can switch to your own key at any time in Profile."
 
 /**
  * The only publik pages the app opens for sign-in, privacy and account

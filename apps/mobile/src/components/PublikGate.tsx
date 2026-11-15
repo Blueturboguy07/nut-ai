@@ -9,7 +9,8 @@ import { closePublikLink, onPublikSignOut, openPublikLink, runPublikGate, setPub
 import type { Choice, GateAction, GateScreen, GateUI } from '../inference/publik-core'
 import { isAdult } from '../onboarding/adult'
 import { useTheme } from '../theme/ThemeProvider'
-import { radius, space, type } from '../theme/tokens'
+import { StatusBarScrim } from './StatusBarScrim'
+import { radius, space, tap, type } from '../theme/tokens'
 
 /**
  * Sign in with publik, before any screen of the app (required mode, the
@@ -148,8 +149,7 @@ export function GateView({ shown, onClose }: { shown: Shown | null; onClose?: ()
         <Pressable
           accessibilityRole="button"
           onPress={onClose}
-          hitSlop={space.md}
-          style={[styles.close, { top: insets.top + space.sm }]}
+          style={[tap, styles.close, { top: insets.top }]}
         >
           <Text style={[type.label, { color: theme.textMuted }]}>Not now</Text>
         </Pressable>
@@ -209,6 +209,7 @@ export function GateView({ shown, onClose }: { shown: Shown | null; onClose?: ()
               ),
             )}
           </View>
+          <StatusBarScrim />
         </>
       ) : (
         <View style={styles.center}>

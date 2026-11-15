@@ -7,7 +7,7 @@ import {
   GET_A_PLAN_ELSEWHERE,
   LINK_STARTER_HINT,
   linkButtonLabel,
-  planUseLine,
+  planStatusLine,
   provisionFailureMessage,
   PRIVACY_URL,
   whyItCostsSentence,
@@ -15,13 +15,15 @@ import {
 import {
   inAppClaimUrl,
   isSafePublikLink,
-  planUse,
+  planStatus,
+  publikClaimState,
+  type PlanStatus,
   type ProvisionResult,
   type PublikInstall,
   type PublikWallet,
 } from '../inference/publik-core'
 import { useTheme } from '../theme/ThemeProvider'
-import { radius, space, type } from '../theme/tokens'
+import { radius, space, tap, type } from '../theme/tokens'
 import { Icon } from './Icon'
 
 /**
@@ -68,8 +70,9 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
         </Text>
       </View>
       <Pressable
+        accessibilityRole="link"
         onPress={() => void openPublikLink(PRIVACY_URL)}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.md }}
+        style={[tap, { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm }]}
       >
         <Text style={[type.caption, { color: theme.textFaint }]}>By continuing you agree to the</Text>
         <Text style={[type.label, { color: theme.protein }]}>publik privacy policy</Text>
@@ -85,16 +88,42 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
 }
 
 /**
- * The plan line, from the wallet snapshot (CONTRACT §12.1(a)): AI use as a
- * percent of the plan limit ("62% of your plan used · resets Monday"), or
- * "Plan active" / "Plan limit reached" — never an amount of money (founder
- * rule, Nov 14 2026). An unlinked phone names the next step instead.
+ * The plan line, from the wallet snapshot (CONTRACT §12.1(a)): the TRUE
+ * state (planStatus: a plan, prepaid, or none) and its use as a percent
+ * ("62% of your plan used · resets Monday", "40% of your prepaid balance
+ * left", "No publik plan yet") — never an amount of money (founder rule,
+ * Nov 14 2026). An unlinked phone names the next step instead.
  */
-export function planLine(wallet: PublikWallet | null, purchaseLinks = true): string {
-  if (wallet?.claimState === 'claimed') return planUseLine(planUse(wallet))
+export function planLine(wallet: PublikWallet | null, purchaseLinks = true, claimState = wallet?.claimState): string {
+  if (claimState === 'claimed') {
+    // Linked, but the plan is not read yet (a reinstall): say so, not "no plan".
+    return wallet ? planStatusLine(planStatus(wallet)) : 'Reading your plan…'
+  }
   // No link to get a plan outside the US storefront of an App Store build.
   if (!purchaseLinks) return 'This phone is not linked to a publik plan yet.'
   return LINK_STARTER_HINT.charAt(0).toUpperCase() + LINK_STARTER_HINT.slice(1)
+}
+
+/**
+ * The bar under the plan line: the percent of the plan used, or of a
+ * prepaid balance left. Nothing when publik sent no number. Never money.
+ * The plan card and Profile both show it (blind test round 1, B3).
+ */
+export function PlanUseBar({ status }: { status: PlanStatus | null }) {
+  const theme = useTheme()
+  if (!status || status.kind === 'none' || status.percent == null) return null
+  const used = status.kind === 'plan'
+  const low = used ? status.limitReached : status.percent <= 10
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityLabel={used ? 'publik plan used' : 'publik prepaid balance left'}
+      accessibilityValue={{ min: 0, max: 100, now: status.percent }}
+      style={[styles.track, { backgroundColor: theme.border }]}
+    >
+      <View style={[styles.fill, { width: `${status.percent}%` as const, backgroundColor: low ? theme.safety : theme.affirm }]} />
+    </View>
+  )
 }
 
 export function PublikCard({
@@ -112,8 +141,9 @@ export function PublikCard({
 }) {
   const theme = useTheme()
   const links = usePurchaseLinks()
-  const claimState = wallet?.claimState ?? install.claimState
-  const use = wallet?.claimState === 'claimed' ? planUse(wallet) : null
+  // One truth for "linked" (blind test round 1, B11): the same function as Profile.
+  const claimState = publikClaimState(install, wallet)
+  const status = claimState === 'claimed' && wallet ? planStatus(wallet) : null
   // Anonymous: publik's bare in-app claim page (also for a claim link an
   // older version stored). Claimed: the top-up page (US storefront only).
   const claim = install.claimUrl ?? wallet?.claimUrl ?? null
@@ -133,19 +163,8 @@ export function PublikCard({
         </Text>
       </View>
 
-      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{planLine(wallet, links)}</Text>
-      {use && use.usedPercent != null ? (
-        <View
-          accessibilityRole="progressbar"
-          accessibilityLabel="publik plan used"
-          accessibilityValue={{ min: 0, max: 100, now: use.usedPercent }}
-          style={[styles.track, { backgroundColor: theme.border }]}
-        >
-          <View
-            style={[styles.fill, { width: `${use.usedPercent}%` as const, backgroundColor: use.limitReached ? theme.safety : theme.affirm }]}
-          />
-        </View>
-      ) : null}
+      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{planLine(wallet, links, claimState)}</Text>
+      <PlanUseBar status={status} />
 
       <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
         {whyItCostsSentence(APP_NAME)}
@@ -178,7 +197,7 @@ export function PublikCard({
       {secondary && secondary.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.md }}>
           {secondary.map((s) => (
-            <Pressable key={s.label} onPress={s.onPress} hitSlop={space.sm}>
+            <Pressable key={s.label} accessibilityRole="button" onPress={s.onPress} style={tap}>
               <Text style={[type.label, { color: s.destructive ? theme.safety : theme.protein }]}>{s.label}</Text>
             </Pressable>
           ))}

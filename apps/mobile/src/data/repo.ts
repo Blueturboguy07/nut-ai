@@ -264,6 +264,38 @@ export async function dayTotals(date: string): Promise<DayTotals> {
 }
 
 // ---------------------------------------------------------------------------
+// Exercise
+// ---------------------------------------------------------------------------
+
+export interface ExerciseEntry {
+  id: number
+  name: string
+  kcal: number
+  /** 'manual' (typed in Log exercise) or the Health import's provenance. */
+  provenance: string
+}
+
+/**
+ * The workouts logged on one day, oldest first. Blind test round 1, Nov 14
+ * 2026 (B10): a logged workout showed nowhere; Home now lists them. They do
+ * not change the daily target (dayTotals counts food only).
+ */
+export async function exerciseOn(date: string): Promise<ExerciseEntry[]> {
+  const h = await db()
+  return h.all<ExerciseEntry>(
+    `SELECT id, name, kcal, provenance FROM exercise_entries
+     WHERE local_date = ? ORDER BY logged_at, id`,
+    [date],
+  )
+}
+
+/** Remove one workout the person typed in (a Health import is not removed here). */
+export async function deleteExercise(id: number): Promise<void> {
+  const h = await db()
+  await h.run(`DELETE FROM exercise_entries WHERE id = ? AND provenance = 'manual'`, [id])
+}
+
+// ---------------------------------------------------------------------------
 // Meals
 // ---------------------------------------------------------------------------
 

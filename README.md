@@ -21,6 +21,10 @@ account once, the first time you open it.
   touch a model), **nutrition label** (transcribes the printed panel, refuses to guess a missing
   serving weight), and **receipt** (reads the line items, then fetches each item's published
   nutrition with the merchant as the brand).
+- **No camera needed**: **Describe a meal** (write what you ate, get an AI estimate) and **Choose a
+  photo** (a meal photo from your photo library) sit next to the camera, for a phone whose camera
+  cannot be used. Both go through the same review screen as a camera photo.
+- **Food Database search** on the bundled USDA database: on the phone, no network, no key.
 - **Web lookup for branded and restaurant food**: when the local database misses — or a logo in
   frame names a brand — one search against the provider's own tool transcribes the published
   nutrition facts, source URL attached. Menu ambiguity comes back as options that each carry their
@@ -29,7 +33,8 @@ account once, the first time you open it.
 - **A health score with a published formula** — fixed arithmetic over what you logged, reasons shown
   on tap, never an "AI" number.
 - **Exercise logging** where Run and Weight lifting use MET × your body weight × minutes (no model),
-  Describe is the one AI-estimated path and says so, and Manual is your number verbatim.
+  Describe is the one AI-estimated path and says so, and Manual is your number verbatim. Home lists
+  the workouts of the day; they do not change your calorie target.
 - **Adaptive targets** that re-derive from your weigh-in trend, with hand-set targets always
   respected.
 - **Export / import**: one JSON file with everything; restore it from the first onboarding screen on
@@ -72,7 +77,7 @@ Chosen during onboarding, changeable any time, and presented neutrally:
 
 Either way, barcode scans of foods in the bundled database, food search, changing the amounts on a
 result and manual exercise entries work offline with no key at all. Photo, label and receipt scans
-need an AI provider.
+and Describe a meal need an AI provider.
 
 ## What we deliberately leave out
 
@@ -140,8 +145,8 @@ Photo scans run on **publik API** by default — no key to paste. AI use counts 
 plan, and the app shows it as a percent of the plan limit, never as money. Linking the phone to
 your publik account gives some free use to try it, once; then a plan, a pack or your own key
 takes it from there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
-later in Profile. Without any of it, barcode scans and food search still work; photo and label
-scans need an AI provider. Builders: see `docs/PUBLIK-API.md` for the one value a build needs
+later in Profile. Without any of it, barcode scans and food search still work; photo scans, label
+scans and Describe a meal need an AI provider. Builders: see `docs/PUBLIK-API.md` for the one value a build needs
 before publik mode shows up.
 
 ## Your data stays yours

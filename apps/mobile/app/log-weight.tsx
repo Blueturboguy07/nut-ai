@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { EditableValue, RulerPicker } from '../src/components/onboarding/Controls'
 import { logWeight, setting, weightHistory } from '../src/data/repo'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { MIN_TAP_TARGET, radius, space, tap, type } from '../src/theme/tokens'
 
 const LB_PER_KG = 2.20462
 
@@ -59,7 +59,7 @@ export default function LogWeight() {
     <View style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top + space.lg }}>
       <View style={styles.head}>
         <Text style={[type.title, { color: theme.text }]}>Today's weight</Text>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={space.md}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
           <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
         </Pressable>
       </View>

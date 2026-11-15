@@ -7,7 +7,8 @@ import { openPublikLink } from '../src/inference/publik'
 import { APP_NAME } from '../src/inference/publik-copy'
 import { REPORT_REASONS, isSupportSource, supportUrl, type ReportReason } from '../src/support'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { StatusBarScrim } from '../src/components/StatusBarScrim'
+import { MIN_TAP_TARGET, radius, space, tap, type } from '../src/theme/tokens'
 
 /**
  * Report a wrong result (App Store 1.2: a way to report bad AI content).
@@ -34,51 +35,53 @@ export default function ReportResult() {
   }
 
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.bg }}
-      contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.xxl }}
-    >
-      <View style={styles.head}>
-        <Text style={[type.title, { color: theme.text, flex: 1 }]}>Report a wrong result</Text>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={space.md}>
-          <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
-        </Pressable>
-      </View>
-
-      <Text style={[type.body, { color: theme.textMuted, marginTop: space.sm, lineHeight: 22 }]}>
-        What is wrong with this AI result? Pick a reason. publik's support page for {APP_NAME} opens
-        next.
-      </Text>
-
-      <View style={[styles.group, { backgroundColor: theme.bgSunken }]}>
-        {REPORT_REASONS.map((r) => (
-          <Pressable
-            key={r.id}
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={() => void report(r.id)}
-            style={({ pressed }) => [styles.row, { borderBottomColor: theme.border, opacity: pressed || busy ? 0.6 : 1 }]}
-          >
-            <Text style={[type.body, { color: theme.text, flex: 1 }]}>{r.label}</Text>
-            <Icon name="chevron" size={16} color={theme.textFaint} />
-          </Pressable>
-        ))}
-      </View>
-
-      <Text style={[type.caption, { color: theme.textFaint, marginTop: space.lg, lineHeight: 19 }]}>
-        The report sends the app name, the app version and the reason you pick. It sends no photo and
-        no meal data. You can add a photo or details on the support page if you want to.
-      </Text>
-
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.replace('/how-estimates-work' as never)}
-        hitSlop={space.sm}
-        style={{ marginTop: space.xl }}
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        style={{ backgroundColor: theme.bg }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.xxl }}
       >
-        <Text style={[type.label, { color: theme.protein }]}>How estimates work</Text>
-      </Pressable>
-    </ScrollView>
+        <View style={styles.head}>
+          <Text style={[type.title, { color: theme.text, flex: 1 }]}>Report a wrong result</Text>
+          <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
+            <Text style={[type.body, { color: theme.textMuted }]}>Cancel</Text>
+          </Pressable>
+        </View>
+
+        <Text style={[type.body, { color: theme.textMuted, marginTop: space.sm, lineHeight: 22 }]}>
+          What is wrong with this AI result? Pick a reason. publik's support page for {APP_NAME} opens
+          next.
+        </Text>
+
+        <View style={[styles.group, { backgroundColor: theme.bgSunken }]}>
+          {REPORT_REASONS.map((r) => (
+            <Pressable
+              key={r.id}
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={() => void report(r.id)}
+              style={({ pressed }) => [styles.row, { borderBottomColor: theme.border, opacity: pressed || busy ? 0.6 : 1 }]}
+            >
+              <Text style={[type.body, { color: theme.text, flex: 1 }]}>{r.label}</Text>
+              <Icon name="chevron" size={16} color={theme.textFaint} />
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={[type.caption, { color: theme.textFaint, marginTop: space.lg, lineHeight: 19 }]}>
+          The report sends the app name, the app version and the reason you pick. It sends no photo and
+          no meal data. You can add a photo or details on the support page if you want to.
+        </Text>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.replace('/how-estimates-work' as never)}
+          style={[tap, { marginTop: space.lg, alignSelf: 'flex-start' }]}
+        >
+          <Text style={[type.label, { color: theme.protein }]}>How estimates work</Text>
+        </Pressable>
+      </ScrollView>
+      <StatusBarScrim />
+    </View>
   )
 }
 

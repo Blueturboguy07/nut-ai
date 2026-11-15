@@ -31,8 +31,8 @@ export default function ThanksScreen() {
             Personalized to your goals
           </Text>
           <Text style={[type.caption, { color: theme.textMuted, textAlign: 'center', marginTop: space.xs }]}>
-            Your answers set your targets, bias how we match your food, and decide which parts of
-            the app are switched on.
+            Your answers set your daily calorie and macro targets. You can change them at any
+            time in Profile.
           </Text>
         </View>
       </View>

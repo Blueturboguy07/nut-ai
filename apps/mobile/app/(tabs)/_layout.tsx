@@ -3,6 +3,9 @@ import { useState } from 'react'
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Icon, type IconName } from '../../src/components/Icon'
+import { startScan } from '../../src/scan/orchestrator'
+import { pickMealPhoto } from '../../src/scan/pick-photo'
+import { setPhase } from '../../src/scan/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
 import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
 
@@ -31,12 +34,25 @@ interface Action {
   route: string
 }
 
+// "Describe a meal" and "Choose a photo" need no camera (blind test round 1,
+// Nov 14 2026): a simulator, a phone whose camera cannot be used, App Review.
 const ACTIONS: Action[] = [
   { label: 'Log exercise', icon: 'dumbbell', route: '/log-exercise' },
   { label: 'Saved foods', icon: 'bookmark', route: '/saved-foods' },
   { label: 'Food Database', icon: 'search', route: '/food-search' },
+  { label: 'Describe a meal', icon: 'pencil', route: '/describe-meal' },
+  { label: 'Choose a photo', icon: 'image', route: 'pick-photo' },
   { label: 'Scan food', icon: 'scan', route: '/camera' },
 ]
+
+/** "Choose a photo": a meal photo from the library, through the same scan as a camera photo. */
+async function choosePhoto(): Promise<void> {
+  const uri = await pickMealPhoto().catch(() => null)
+  if (!uri) return
+  setPhase({ kind: 'captured', photoUri: uri })
+  router.push('/result')
+  void startScan(uri)
+}
 
 export default function TabLayout() {
   const theme = useTheme()
@@ -96,7 +112,8 @@ export default function TabLayout() {
                 accessibilityRole="button"
                 onPress={() => {
                   setSheetOpen(false)
-                  router.push(a.route as never)
+                  if (a.route === 'pick-photo') void choosePhoto()
+                  else router.push(a.route as never)
                 }}
                 style={[styles.action, { backgroundColor: theme.bgElevated }]}
               >
@@ -164,7 +181,7 @@ const styles = StyleSheet.create({
   },
   action: {
     width: '47%',
-    aspectRatio: 1.35,
+    aspectRatio: 1.6,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',

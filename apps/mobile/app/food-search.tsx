@@ -3,13 +3,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { DbAdapter } from '@nutai/db-adapter'
-import { resolveByText, type ScoredCandidate } from '@nutai/resolver'
+import type { ScoredCandidate } from '@nutai/resolver'
+import { StatusBarScrim } from '../src/components/StatusBarScrim'
 import { nutritionCorpusInfo, openNutritionDb } from '../src/db/expo-adapter'
+import { searchFoods } from '../src/data/food-search'
 import { db } from '../src/data/repo'
 import { resolveSelection } from '../src/data/food-search-select'
 import { logManualFood } from '../src/data/manual-food'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
+import { MIN_TAP_TARGET, radius, space, tap, type } from '../src/theme/tokens'
 
 /**
  * What a tap on a candidate row does, end to end: resolve its grams + snapshot
@@ -51,11 +53,16 @@ export default function FoodSearch() {
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const handle = await openNutritionDb()
-      const info = await nutritionCorpusInfo(handle)
-      if (!alive) return
-      setDb(handle)
-      setCorpus(info)
+      // A database that cannot be opened says so, instead of "Loading…" forever.
+      try {
+        const handle = await openNutritionDb()
+        const info = await nutritionCorpusInfo(handle)
+        if (!alive) return
+        setDb(handle)
+        setCorpus(info)
+      } catch {
+        if (alive) setCorpus({ foods: 0, portions: 0, builtAt: null })
+      }
     })()
     return () => { alive = false }
   }, [])
@@ -65,24 +72,12 @@ export default function FoodSearch() {
     let alive = true
     setBusy(true)
     const timer = setTimeout(async () => {
-      const r = await resolveByText(db, {
-        canonicalFoodKey: query,
-        observedBrand: null,
-        prepFacet: null,
-        modelCategory: null,
-        estimatedGrams: 150,
-      })
+      const r = await searchFoods(db, query).catch(() => ({ results: [] as ScoredCandidate[], outcome: 'none' as const }))
       if (!alive) return
-      if (r.outcome.kind === 'auto_accept') {
-        setResults([r.outcome.match])
-        setOutcome('Best match')
-      } else if (r.outcome.kind === 'disambiguate') {
-        setResults(r.outcome.candidates)
-        setOutcome(`${r.outcome.candidates.length} matches — tap the right one`)
-      } else {
-        setResults([])
-        setOutcome('No match')
-      }
+      setResults(r.results)
+      setOutcome(
+        r.outcome === 'best' ? 'Best match' : r.outcome === 'many' ? `${r.results.length} matches — tap the right one` : 'No match',
+      )
       setBusy(false)
     }, 180)
     return () => { alive = false; clearTimeout(timer) }
@@ -110,6 +105,7 @@ export default function FoodSearch() {
   }, [corpus])
 
   return (
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
     <ScrollView
       style={{ backgroundColor: theme.bg }}
       keyboardShouldPersistTaps="handled"
@@ -117,7 +113,7 @@ export default function FoodSearch() {
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={[type.title, { color: theme.text }]}>Food Database</Text>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={space.md}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
           <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
         </Pressable>
       </View>
@@ -177,6 +173,8 @@ export default function FoodSearch() {
         </Text>
       )}
     </ScrollView>
+    <StatusBarScrim />
+    </View>
   )
 }
 

@@ -2,7 +2,7 @@ import { router } from 'expo-router'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { SupportSource } from '../support'
 import { useTheme } from '../theme/ThemeProvider'
-import { space, type } from '../theme/tokens'
+import { space, tap, type } from '../theme/tokens'
 
 /**
  * Under every AI result (App Store 1.2): "Report a wrong result" (publik's
@@ -16,11 +16,11 @@ export function AiResultLinks({ source }: { source: SupportSource }) {
       <Pressable
         accessibilityRole="button"
         onPress={() => router.push(`/report-result?source=${source}` as never)}
-        hitSlop={space.sm}
+        style={tap}
       >
         <Text style={[type.label, { color: theme.protein }]}>Report a wrong result</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" onPress={() => router.push('/how-estimates-work' as never)} hitSlop={space.sm}>
+      <Pressable accessibilityRole="button" onPress={() => router.push('/how-estimates-work' as never)} style={tap}>
         <Text style={[type.label, { color: theme.textMuted }]}>How estimates work</Text>
       </Pressable>
     </View>

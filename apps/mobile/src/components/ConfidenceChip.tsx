@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { Band } from '@nutai/confidence'
 import { TIER_GLYPH, rangeFor } from '@nutai/confidence'
 import { useTheme } from '../theme/ThemeProvider'
-import { radius, space, type } from '../theme/tokens'
+import { MIN_TAP_TARGET, radius, space, type } from '../theme/tokens'
 
 /**
  * The confidence chip.
@@ -50,11 +50,13 @@ export function ConfidenceChip({
       accessibilityRole="button"
       accessibilityLabel={`Estimated ${Math.round(value)} ${unit}, likely between ${Math.round(low)} and ${Math.round(high)}. Tap for why.`}
       onPress={onPress}
-      hitSlop={space.sm}
-      style={[styles.chip, { backgroundColor: theme.uncertainBg }]}
+      // The touch area is 44 pt high; the pill inside it stays small.
+      style={styles.target}
     >
-      <Text style={{ color: theme.uncertain, fontSize: 13 }}>{TIER_GLYPH[band.tier]}</Text>
-      <Text style={[type.caption, { color: theme.uncertain }]}>{label}</Text>
+      <View style={[styles.chip, { backgroundColor: theme.uncertainBg }]}>
+        <Text style={{ color: theme.uncertain, fontSize: 13 }}>{TIER_GLYPH[band.tier]}</Text>
+        <Text style={[type.caption, { color: theme.uncertain }]}>{label}</Text>
+      </View>
     </Pressable>
   )
 }
@@ -75,6 +77,7 @@ export function ConfidenceReasons({ band }: { band: Band }) {
 }
 
 const styles = StyleSheet.create({
+  target: { minHeight: MIN_TAP_TARGET, justifyContent: 'center', alignSelf: 'flex-start' },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

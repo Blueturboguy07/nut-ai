@@ -11,10 +11,12 @@ import {
 import type { PersonalPriors } from '@nutai/gram-engine'
 import {
   anthropicWireSchema,
+  describedMealBlock,
   geminiWireSchema,
   openAiWireSchema,
   LABEL_SCAN_PROMPT_VERSION,
   RECEIPT_SCAN_PROMPT_VERSION,
+  STRICT_FORMAT_BLOCK,
   type ProviderId,
 } from '@nutai/prompt'
 import { recomputeAfterEdit, runPipeline, validatePayload, type ScanResult } from '@nutai/pipeline'
@@ -24,6 +26,7 @@ import { runLabelScan, runReceiptScan, runScanWithFallback, runWebLookup, type S
 import { connectPublik, notePublikWallet, publikAvailable } from '../inference/publik'
 import { DISCONNECTED_MESSAGE, OWN_KEY_HINT, provisionFailureMessage } from '../inference/publik-copy'
 import { baseUrlOf, lookupOptionsOf, resolveInference, type ResolveFailure, type Resolved } from '../inference/resolve'
+import { afterModelCall, FOOD_DB_FAILED_MESSAGE, foundNoFood, noFoodMessage, unreadableMessage, type MealInput } from './scan-outcome'
 import { applyWebOption, getPhase, setPhase, setWebLookup } from './store'
 
 /**
@@ -46,8 +49,13 @@ import { applyWebOption, getPhase, setPhase, setWebLookup } from './store'
 
 const EMPTY_PRIORS: PersonalPriors = { get: () => null, containers: new Map() }
 
-/** Kept for retry, so a network blip does not re-run image preprocessing. */
-let lastCapture: { photoUri: string; base64: string } | null = null
+/**
+ * The last meal sent to a model, kept for Try again and Fix result: a photo
+ * (so a network blip does not re-run image preprocessing), or the words of
+ * "Describe a meal" (photoUri '').
+ */
+type MealSource = { kind: 'photo'; photoUri: string; base64: string } | { kind: 'text'; photoUri: ''; description: string }
+let lastCapture: MealSource | null = null
 
 function wireSchemaFor(provider: ProviderId): Record<string, unknown> {
   if (provider === 'anthropic') return anthropicWireSchema(VISION_WIRE_SCHEMA)
@@ -84,17 +92,22 @@ async function preprocess(photoUri: string): Promise<string> {
 
 /** "Not now" on the AI consent question: nothing was sent. */
 const CONSENT_DECLINED_MESSAGE = 'Nothing was sent. Scans need your OK to send the photo to your AI provider; you get the question again with the next scan. Barcode scans and food search work without it.'
+const CONSENT_DECLINED_TEXT_MESSAGE = 'Nothing was sent. An estimate from your words needs your OK to send the text to your AI provider; you get the question again next time. Food search works without it.'
 
 /** The copy for "nothing to scan with", per feature. */
-function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'label' | 'receipt'): { message: string; failureKind: 'no-key' | 'key-invalid' } {
+function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'describe' | 'label' | 'receipt'): { message: string; failureKind: 'no-key' | 'key-invalid' } {
   if (err.kind === 'key-missing') return { message: 'Your saved key is missing. Re-enter it in Profile.', failureKind: 'key-invalid' }
   if (err.kind === 'publik-disconnected') return { message: DISCONNECTED_MESSAGE, failureKind: 'no-key' }
-  if (err.kind === 'consent-declined') return { message: CONSENT_DECLINED_MESSAGE, failureKind: 'no-key' }
+  if (err.kind === 'consent-declined') {
+    return { message: feature === 'describe' ? CONSENT_DECLINED_TEXT_MESSAGE : CONSENT_DECLINED_MESSAGE, failureKind: 'no-key' }
+  }
   const publikHint = publikAvailable() ? ' Or turn on publik API in Profile — no key needed.' : ''
   const base =
     feature === 'scan'
       ? 'Photo scans need an API key. Add one in Profile — barcode scans and food search work without one.'
-      : feature === 'label'
+      : feature === 'describe'
+        ? 'An estimate from your words needs an API key. Add one in Profile — or find each food in the food database, which works without one.'
+        : feature === 'label'
         ? 'Reading a label needs an API key. Add one in Profile — or find the product by barcode or search instead.'
         : 'Reading a receipt needs an API key. Add one in Profile.'
   return { message: base + publikHint, failureKind: 'no-key' }
@@ -144,15 +157,28 @@ export async function startScan(photoUri: string): Promise<void> {
     return
   }
 
-  lastCapture = { photoUri, base64 }
-  await analyze(photoUri, base64)
+  lastCapture = { kind: 'photo', photoUri, base64 }
+  await analyze(lastCapture)
+}
+
+/**
+ * "Describe a meal": the person's words instead of a photo, through the same
+ * model call, pipeline and review screen. Every row is an AI estimate (or a
+ * database match the pipeline found for a named food), and can be corrected
+ * before it is logged.
+ */
+export async function startDescribedMeal(description: string): Promise<void> {
+  const text = description.trim()
+  if (!text) return
+  lastCapture = { kind: 'text', photoUri: '', description: text }
+  setPhase({ kind: 'analyzing', photoUri: '', stage: 'identifying' })
+  await analyze(lastCapture)
 }
 
 export async function retryScan(): Promise<void> {
   if (!lastCapture) return
-  const { photoUri, base64 } = lastCapture
-  setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
-  await analyze(photoUri, base64)
+  setPhase({ kind: 'analyzing', photoUri: lastCapture.photoUri, stage: 'identifying' })
+  await analyze(lastCapture)
 }
 
 interface AnalyzeOpts {
@@ -162,30 +188,63 @@ interface AnalyzeOpts {
   priorMeta?: { inputTokens: number; outputTokens: number; costUsd: number } | null
   /** Portion fraction to carry across a fix — user answers survive re-analysis. */
   keepFraction?: number
+  /** The one automatic retry with the stricter format (scan-outcome.ts). */
+  strict?: boolean
 }
 
-async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {}): Promise<void> {
+async function analyze(source: MealSource, opts: AnalyzeOpts = {}): Promise<void> {
+  const photoUri = source.photoUri
+  const input: MealInput = source.kind
   const resolved = await resolveInference()
   if (!resolved.ok) {
-    setPhase({ kind: 'failed', photoUri, canRetry: false, ...resolveFailureCopy(resolved.error, 'scan') })
+    setPhase({ kind: 'failed', photoUri, canRetry: false, ...resolveFailureCopy(resolved.error, source.kind === 'text' ? 'describe' : 'scan') })
     return
   }
   const r = resolved.value
 
   setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
+  const context = [
+    source.kind === 'text' ? describedMealBlock(source.description) : '',
+    opts.fixBlock ?? '',
+    opts.strict ? STRICT_FORMAT_BLOCK : '',
+  ].filter(Boolean).join('\n\n')
   const outcome = await runScanWithFallback({
     provider: r.dialect,
     model: r.model,
     credential: r.credential,
     ...baseUrlOf(r),
-    imagesBase64: [base64],
-    localSignalsBlock: opts.fixBlock ?? '',
+    imagesBase64: source.kind === 'photo' ? [source.base64] : [],
+    localSignalsBlock: context,
     jsonSchema: wireSchemaFor(r.dialect),
   })
 
+  if (outcome.ok && outcome.value.wallet) void notePublikWallet(outcome.value.wallet)
+  const payloadValid = outcome.ok && validatePayload(outcome.value.raw) != null
+  const next = afterModelCall({
+    callOk: outcome.ok,
+    failureKind: outcome.ok ? undefined : outcome.error.kind,
+    payloadValid,
+    strict: opts.strict === true,
+  })
+
+  if (next === 'retry-strict') {
+    // The answer came back and the call counted; its tokens go to the one meal.
+    const spent = outcome.ok
+      ? {
+          inputTokens: outcome.value.inputTokens + (opts.priorMeta?.inputTokens ?? 0),
+          outputTokens: outcome.value.outputTokens + (opts.priorMeta?.outputTokens ?? 0),
+          costUsd: outcome.value.costUsd + (opts.priorMeta?.costUsd ?? 0),
+        }
+      : (opts.priorMeta ?? null)
+    return analyze(source, { ...opts, strict: true, priorMeta: spent })
+  }
+  if (next === 'unreadable') {
+    setPhase({ kind: 'failed', photoUri, message: unreadableMessage(input), canRetry: true, failureKind: 'schema-violation' })
+    return
+  }
   if (!outcome.ok) {
     const re = await maybeReprovision(outcome.error, r)
-    if (re.again) return analyze(photoUri, base64, opts)
+    if (re.again) return analyze(source, opts)
     setPhase({
       kind: 'failed',
       photoUri,
@@ -196,10 +255,11 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
     })
     return
   }
-  if (outcome.value.wallet) void notePublikWallet(outcome.value.wallet)
 
   setPhase({ kind: 'analyzing', photoUri, stage: 'matching' })
 
+  // The answer is valid here; only the food database can fail now, and that
+  // is not the model's fault.
   let result: ScanResult | null = null
   try {
     const nutritionDb = await openNutritionDb()
@@ -220,23 +280,12 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
   }
 
   if (!result) {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message: 'The model answered in a shape we could not use. This one is on us — try once more.',
-      canRetry: true,
-      failureKind: 'schema-violation',
-    })
+    setPhase({ kind: 'failed', photoUri, message: FOOD_DB_FAILED_MESSAGE, canRetry: true })
     return
   }
 
-  if (!result.isFood) {
-    setPhase({
-      kind: 'failed',
-      photoUri,
-      message: result.refusalReason || 'That photo does not look like food.',
-      canRetry: false,
-    })
+  if (foundNoFood({ isFood: result.isFood, itemCount: result.items.length })) {
+    setPhase({ kind: 'failed', photoUri, message: noFoodMessage(input), canRetry: false })
     return
   }
 
@@ -248,7 +297,7 @@ async function analyze(photoUri: string, base64: string, opts: AnalyzeOpts = {})
 
   setPhase({
     kind: 'ready',
-    photoUri,
+    photoUri: photoUri || null,
     result,
     bands: result.items.map((i) => i.band),
     meta: {
@@ -343,7 +392,7 @@ export async function fixScan(note: string): Promise<void> {
     .map((r) => `- ${r.displayName}: ${Math.round(r.grams)} g`)
     .join('\n')
   const fixBlock = [
-    'FIX REQUEST — the user reviewed your previous analysis of this exact photo and asked for a correction.',
+    `FIX REQUEST — the user reviewed your previous analysis of this exact ${lastCapture.kind === 'photo' ? 'photo' : 'description'} and asked for a correction.`,
     'The currently accepted analysis:',
     rows,
     `The user's correction: "${note.trim()}"`,
@@ -353,10 +402,9 @@ export async function fixScan(note: string): Promise<void> {
 
   const keepFraction = phase.result.meal.portionEatenFraction
   const priorMeta = phase.meta
-  const photoUri = phase.photoUri ?? lastCapture.photoUri
 
-  setPhase({ kind: 'analyzing', photoUri, stage: 'identifying' })
-  await analyze(photoUri, lastCapture.base64, { fixBlock, priorMeta, keepFraction })
+  setPhase({ kind: 'analyzing', photoUri: lastCapture.photoUri, stage: 'identifying' })
+  await analyze(lastCapture, { fixBlock, priorMeta, keepFraction })
 }
 
 // ---------------------------------------------------------------------------
@@ -560,7 +608,7 @@ export async function startLabelScan(photoUri: string): Promise<void> {
     setPhase({ kind: 'failed', photoUri, message: 'Could not read the photo. Try taking it again.', canRetry: false })
     return
   }
-  lastCapture = { photoUri, base64 }
+  lastCapture = { kind: 'photo', photoUri, base64 }
 
   const resolved = await resolveInference()
   if (!resolved.ok) {
@@ -659,7 +707,7 @@ export async function startReceiptScan(photoUri: string): Promise<void> {
     setPhase({ kind: 'failed', photoUri, message: 'Could not read the photo. Try taking it again.', canRetry: false })
     return
   }
-  lastCapture = { photoUri, base64 }
+  lastCapture = { kind: 'photo', photoUri, base64 }
 
   const resolved = await resolveInference()
   if (!resolved.ok) {

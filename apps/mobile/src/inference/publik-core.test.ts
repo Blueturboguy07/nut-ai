@@ -10,7 +10,9 @@ import {
   setPurchaseLinks,
   gateWalletFromJson,
   notePlanResetsAt,
+  planStatus,
   planUse,
+  publikClaimState,
   inAppClaimUrl,
   isSafePublikLink,
   isUsableAppToken,
@@ -23,7 +25,7 @@ import {
   publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
-import { planLimitMessage, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
+import { planLimitMessage, planStatusLine, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -585,5 +587,68 @@ describe('ai_providers: the companies the publik AI consent names (GET /wallet)'
     expect(aiProvidersOf('OpenAI')).toBeNull()
     expect(aiProvidersOf(undefined)).toBeNull()
     expect(aiProvidersOf(Array.from({ length: 20 }, (_, i) => `Company ${i}`))).toHaveLength(12)
+  })
+})
+
+describe('the plan state is true, and its use shows as a percent with a bar (blind test round 1, B3/B5)', () => {
+  const now = new Date(2026, 10, 14, 12, 0, 0)
+  const monday = new Date(2026, 10, 16, 0, 0, 0).toISOString()
+
+  it('walletFromJson reads plan.kind (null when publik did not send it)', () => {
+    expect(walletFromJson({ plan: { kind: 'plan', label: 'Plus' } }, 'claimed').planKind).toBe('plan')
+    expect(walletFromJson({ plan: { kind: 'pack' } }, 'claimed').planKind).toBe('pack')
+    expect(walletFromJson({ plan: { kind: 'none' } }, 'claimed').planKind).toBe('none')
+    expect(walletFromJson({ plan: { kind: 'gold' } }, 'claimed').planKind).toBeNull()
+    expect(walletFromJson({}, 'claimed').planKind).toBeNull()
+    expect(emptyWallet('claimed').planKind).toBeNull()
+  })
+
+  it('a plan: the percent used and the reset', () => {
+    const s = planStatus(walletFromJson({ plan: { kind: 'plan' }, used_percent: 62.7, resets_at: monday }, 'claimed'))
+    expect(s).toEqual({ kind: 'plan', percent: 62, resetsAt: monday, limitReached: false })
+    expect(planStatusLine(s, now)).toBe('62% of your plan used · resets Monday')
+    const full = planStatus(walletFromJson({ plan: { kind: 'plan' }, remaining_percent: 0, resets_at: monday }, 'claimed'))
+    expect(planStatusLine(full, now)).toBe('100% of your plan used · resets Monday')
+    expect(full.limitReached).toBe(true)
+  })
+
+  it('prepaid (a pack, or a balance with no plan): the percent LEFT', () => {
+    const pack = planStatus(walletFromJson({ plan: { kind: 'pack' }, remaining_percent: 40, balance_micros: 1_000 }, 'claimed'))
+    expect(pack).toEqual({ kind: 'prepaid', percent: 40, resetsAt: null, limitReached: false })
+    expect(planStatusLine(pack, now)).toBe('40% of your prepaid balance left')
+    const balance = planStatus(walletFromJson({ plan: { kind: 'none' }, balance_micros: 1_250_000 }, 'claimed'))
+    expect(balance.kind).toBe('prepaid')
+    expect(planStatusLine(balance, now)).toBe('Prepaid balance active')
+    const spent = planStatus(walletFromJson({ plan: { kind: 'pack' }, balance_micros: 0 }, 'claimed'))
+    expect(planStatusLine(spent, now)).toBe('Prepaid balance used up')
+  })
+
+  it('no plan: "No publik plan yet", never "Plan active"', () => {
+    const none = planStatus(walletFromJson({ plan: { kind: 'none' }, balance_micros: 0 }, 'claimed'))
+    expect(none).toEqual({ kind: 'none', percent: null, resetsAt: null, limitReached: false })
+    expect(planStatusLine(none, now)).toBe('No publik plan yet')
+    // A snapshot an older version stored (no plan kind): a limit means a plan, a balance prepaid, else none.
+    expect(planStatus({ ...emptyWallet('claimed'), planKind: null, balanceMicros: 0 }).kind).toBe('none')
+    expect(planStatus({ ...emptyWallet('claimed'), weekBudgetMicros: 100, weekUsedMicros: 25 }).kind).toBe('plan')
+    expect(planStatus({ ...emptyWallet('claimed'), balanceMicros: 5 }).kind).toBe('prepaid')
+  })
+
+  it('no line has money in it', () => {
+    const lines = [
+      planStatusLine({ kind: 'plan', percent: 10, resetsAt: monday, limitReached: false }, now),
+      planStatusLine({ kind: 'plan', percent: null, resetsAt: null, limitReached: false }, now),
+      planStatusLine({ kind: 'prepaid', percent: 55, resetsAt: null, limitReached: false }, now),
+      planStatusLine({ kind: 'none', percent: null, resetsAt: null, limitReached: false }, now),
+    ]
+    for (const l of lines) expect(l).not.toMatch(/\$|\d+\.\d\d|price|cost/i)
+  })
+})
+
+describe('one truth for "linked" (blind test round 1, B11)', () => {
+  it('the wallet publik sent last wins; else the install in the Keychain', () => {
+    expect(publikClaimState({ claimState: 'claimed' }, null)).toBe('claimed')
+    expect(publikClaimState({ claimState: 'claimed' }, { claimState: 'anonymous' })).toBe('anonymous')
+    expect(publikClaimState({ claimState: 'anonymous' }, { claimState: 'claimed' })).toBe('claimed')
+    expect(publikClaimState(null, null)).toBe('anonymous')
   })
 })

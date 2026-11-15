@@ -172,6 +172,20 @@ export interface PublikWallet {
    * send the field. Never hard-coded: read from publik each time.
    */
   aiProviders: string[] | null
+  /**
+   * GET /wallet `plan.kind`: 'plan' (a plan with a limit that resets),
+   * 'pack' (prepaid), 'none'. null when publik did not send it (and in a
+   * snapshot an older version stored). planStatus() reads it.
+   */
+  planKind: 'plan' | 'pack' | 'none' | null
+}
+
+/** One truth for "is this phone linked": the wallet publik sent last, else the install (Keychain). */
+export function publikClaimState(
+  install: Pick<PublikInstall, 'claimState'> | null,
+  wallet: Pick<PublikWallet, 'claimState'> | null,
+): 'anonymous' | 'claimed' {
+  return wallet?.claimState ?? install?.claimState ?? 'anonymous'
 }
 
 export interface ProvisionInput {
@@ -401,6 +415,7 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
     claimUrl: claimLinkOf(w.claim_url),
     addCreditUrl: isSafePublikLink(w.add_credit_url) ? w.add_credit_url : null,
     aiProviders: aiProvidersOf(w.ai_providers),
+    planKind: w.plan?.kind === 'plan' || w.plan?.kind === 'pack' || w.plan?.kind === 'none' ? w.plan.kind : null,
   }
 }
 
@@ -494,6 +509,7 @@ export function emptyWallet(claimState: PublikWallet['claimState'] = 'anonymous'
     claimUrl: null,
     addCreditUrl: null,
     aiProviders: null,
+    planKind: null,
   }
 }
 
@@ -526,6 +542,57 @@ export function planUse(
   }
   const clamped = Math.min(100, Math.max(0, used))
   return { usedPercent: Math.floor(clamped), resetsAt, limitReached: clamped >= 100 }
+}
+
+/**
+ * The true state of the person's publik plan, for the plan card and Profile
+ * (blind test round 1, Nov 14 2026, B3/B5): "Plan active" showed on an
+ * account with no plan, and no screen showed the use.
+ *
+ *   plan     a plan with a limit: `percent` is the percent USED, with the reset
+ *   prepaid  a pack or a prepaid balance: `percent` is the percent LEFT
+ *   none     no plan and nothing prepaid
+ *
+ * Never money. `percent` is null when publik sent no number.
+ */
+export interface PlanStatus {
+  kind: 'plan' | 'prepaid' | 'none'
+  percent: number | null
+  resetsAt: string | null
+  /** plan: the limit is reached; prepaid: nothing is left. */
+  limitReached: boolean
+}
+
+type PlanStatusWallet = Pick<
+  PublikWallet,
+  'usedPercent' | 'resetsAt' | 'weekUsedMicros' | 'weekBudgetMicros' | 'weekResetsAt' | 'balanceMicros'
+> & { planKind?: PublikWallet['planKind'] }
+
+export function planStatus(w: PlanStatusWallet): PlanStatus {
+  const use = planUse(w)
+  const balance = w.balanceMicros ?? 0
+  const hasLimit = use.usedPercent != null || (w.weekBudgetMicros != null && w.weekBudgetMicros > 0)
+  const kind: PlanStatus['kind'] =
+    w.planKind === 'plan'
+      ? 'plan'
+      : w.planKind === 'pack'
+        ? 'prepaid'
+        : w.planKind === 'none'
+          ? balance > 0
+            ? 'prepaid'
+            : 'none'
+          : // publik did not say: a limit means a plan, a balance means prepaid.
+            hasLimit
+            ? 'plan'
+            : balance > 0
+              ? 'prepaid'
+              : 'none'
+  if (kind === 'none') return { kind, percent: null, resetsAt: null, limitReached: false }
+  if (kind === 'prepaid') {
+    const left = use.usedPercent == null ? null : 100 - use.usedPercent
+    return { kind, percent: left, resetsAt: null, limitReached: left === 0 || (left == null && w.balanceMicros != null && balance <= 0) }
+  }
+  return { kind, percent: use.usedPercent, resetsAt: use.resetsAt, limitReached: use.limitReached }
 }
 
 /** A percent from publik (0-100), or null. */
@@ -700,7 +767,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.7'
+export const APP_VERSION = '0.1.8'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -872,11 +939,13 @@ export async function readWallet(d: Pick<GateDevice, 'cfg' | 'fetch'>, key: stri
   }
 }
 
-const SIGN_IN_WAITING = 'Waiting for you to sign in in your browser.'
-const SIGN_IN_TIMEOUT = 'No sign-in after 10 minutes. Click Sign in with publik to try again.'
-const SIGN_IN_NO_LINK = 'publik did not send a sign-in link for this phone. Click Sign in with publik to try again.'
-const PLAN_WAITING = 'Waiting for your plan. Finish in your browser.'
-const PLAN_TIMEOUT = 'No plan after 10 minutes. Click Get a plan to try again.'
+// A phone's words: Tap, and the publik page that opens in the app (not
+// "Click" or "your browser", blind test round 1, Nov 14 2026, B12).
+const SIGN_IN_WAITING = 'Waiting for you to sign in on the publik page.'
+const SIGN_IN_TIMEOUT = 'No sign-in after 10 minutes. Tap Sign in with publik to try again.'
+const SIGN_IN_NO_LINK = 'publik did not send a sign-in link for this phone. Tap Sign in with publik to try again.'
+const PLAN_WAITING = 'Waiting for your plan. Finish on the publik page.'
+const PLAN_TIMEOUT = 'No plan after 10 minutes. Tap Get a plan to try again.'
 const KEEP_KEY_FAILED = `This phone could not keep its publik key. Restart ${APP_NAME} and try again.`
 
 /** The words of the gate. The same in every publik module. */
@@ -896,7 +965,7 @@ export function gateScreen(
       title: 'Sign in with publik',
       note,
       buttons: [{ action: 'sign_in', label: 'Sign in with publik' }],
-      body: 'This app uses your publik account. Click Sign in with publik, then sign in in your browser. This window continues when you are signed in.',
+      body: 'This app uses your publik account. Tap Sign in with publik, then sign in on the publik page that opens. This screen continues when you are signed in.',
     }
   }
   const who = w?.handle ? `You are signed in as @${w.handle}.` : 'You are signed in to publik.'
@@ -922,13 +991,18 @@ export function gateScreen(
       ],
     }
   }
-  // No amount of money on any screen (founder rule, Nov 14 2026).
+  // No amount of money on any screen (founder rule, Nov 14 2026). The true
+  // state, with no placeholder name (blind test round 1, B5).
   const what =
     w.plan.kind === 'plan'
-      ? `Your plan: ${w.plan.label ?? 'publik'}.`
+      ? w.plan.label
+        ? `Your plan: ${w.plan.label}.`
+        : 'You have a publik plan.'
       : w.plan.kind === 'pack'
-        ? `Your pack: ${w.plan.label ?? 'publik'}.`
-        : 'Your publik plan is active.'
+        ? w.plan.label
+          ? `Your prepaid pack: ${w.plan.label}.`
+          : 'You have a prepaid publik balance.'
+        : 'You have a prepaid publik balance.'
   return {
     id,
     title: 'Connect your plan',
@@ -950,7 +1024,7 @@ export function provisionGateMessage(p: Extract<ProvisionResult, { ok: false }>,
     case 'token-revoked':
       return 'This app token is not valid. Ask the developer for a new build.'
     case 'install-revoked':
-      return 'publik disconnected this install. Click Retry to set up this phone again.'
+      return 'publik disconnected this install. Tap Retry to set up this phone again.'
     case 'rate-limited':
       return `Too many phones on this network signed in to publik in the last hour. Try again in ${waitPhrase(p.retryAfterSec)}.`
     case 'replayed':

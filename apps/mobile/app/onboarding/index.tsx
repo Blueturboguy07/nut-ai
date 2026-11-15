@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle } from 'react-native-svg'
 import { PUBLIK_GATE_MODE } from '../../src/build-flags'
 import { useTheme } from '../../src/theme/ThemeProvider'
-import { radius, space, type } from '../../src/theme/tokens'
+import { radius, space, tap, type } from '../../src/theme/tokens'
 
 /**
  * Welcome.
@@ -78,8 +78,7 @@ export default function Welcome() {
         <Pressable
           accessibilityRole="button"
           onPress={() => router.push('/onboarding/restore' as never)}
-          hitSlop={space.sm}
-          style={{ marginTop: space.md, alignSelf: 'center' }}
+          style={[tap, { marginTop: space.sm, alignSelf: 'center' }]}
         >
           <Text style={[type.label, { color: theme.textMuted, textDecorationLine: 'underline' }]}>
             Restore from a backup

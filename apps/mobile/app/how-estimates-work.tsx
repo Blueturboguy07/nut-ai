@@ -3,7 +3,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { APP_NAME } from '../src/inference/publik-copy'
 import { useTheme } from '../src/theme/ThemeProvider'
-import { space, type } from '../src/theme/tokens'
+import { StatusBarScrim } from '../src/components/StatusBarScrim'
+import { space, tap, type } from '../src/theme/tokens'
 
 /**
  * How estimates work (App Store 1.2 and 1.4.1): AI estimates can be wrong,
@@ -34,24 +35,27 @@ export default function HowEstimatesWork() {
   const insets = useSafeAreaInsets()
 
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.bg }}
-      contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.xxl }}
-    >
-      <View style={styles.head}>
-        <Text style={[type.title, { color: theme.text, flex: 1 }]}>How estimates work</Text>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={space.md}>
-          <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
-        </Pressable>
-      </View>
-
-      {PARTS.map((p) => (
-        <View key={p.title} style={{ marginTop: space.xl }}>
-          <Text style={[type.heading, { color: theme.text }]}>{p.title}</Text>
-          <Text style={[type.body, { color: theme.textMuted, marginTop: space.sm, lineHeight: 23 }]}>{p.body}</Text>
+    <View style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView
+        style={{ backgroundColor: theme.bg }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.xxl }}
+      >
+        <View style={styles.head}>
+          <Text style={[type.title, { color: theme.text, flex: 1 }]}>How estimates work</Text>
+          <Pressable accessibilityRole="button" onPress={() => router.back()} style={tap}>
+            <Text style={[type.body, { color: theme.textMuted }]}>Done</Text>
+          </Pressable>
         </View>
-      ))}
-    </ScrollView>
+
+        {PARTS.map((p) => (
+          <View key={p.title} style={{ marginTop: space.xl }}>
+            <Text style={[type.heading, { color: theme.text }]}>{p.title}</Text>
+            <Text style={[type.body, { color: theme.textMuted, marginTop: space.sm, lineHeight: 23 }]}>{p.body}</Text>
+          </View>
+        ))}
+      </ScrollView>
+      <StatusBarScrim />
+    </View>
   )
 }
 
