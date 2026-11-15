@@ -7,14 +7,15 @@ import {
   GET_A_PLAN_ELSEWHERE,
   LINK_STARTER_HINT,
   linkButtonLabel,
+  planUseLine,
   provisionFailureMessage,
   PRIVACY_URL,
   whyItCostsSentence,
 } from '../inference/publik-copy'
 import {
-  formatMicros,
   inAppClaimUrl,
   isSafePublikLink,
+  planUse,
   type ProvisionResult,
   type PublikInstall,
   type PublikWallet,
@@ -33,10 +34,10 @@ import { Icon } from './Icon'
  *   "Continue with publik API" button the parent screen renders.
  *
  *   PublikCard — AFTER the mint, and forever in settings (CONTRACT §12). In
- *   this order: the balance line, the one-sentence justification, and the
- *   primary button — "Link this phone & pick a plan" while anonymous, "Add a
+ *   this order: the plan line (a percent of the plan limit with a bar, never
+ *   money), the one-sentence justification, and the primary button — "Link this phone & pick a plan" while anonymous, "Add a
  *   plan or pack" once claimed. Never a silent starter: the card is shown
- *   the moment the key exists, with the real balance on it.
+ *   the moment the key exists, with the real plan use on it.
  *
  * In an App Store build outside the US storefront (usePurchaseLinks false)
  * neither surface has a purchase link, a button or a price: one plain
@@ -55,7 +56,7 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
   return (
     <View>
       <View style={[styles.block, { backgroundColor: theme.bgSunken }]}>
-        <Text style={[type.bodyStrong, { color: theme.text }]}>Cost</Text>
+        <Text style={[type.bodyStrong, { color: theme.text }]}>How AI use is paid</Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
           {disclosureCostSentence(APP_NAME, links)}
         </Text>
@@ -84,29 +85,16 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
 }
 
 /**
- * The balance line, from the wallet snapshot (CONTRACT §12.1(a)).
- *
- * Since publik migration 0059 an unlinked phone starts at $0.00, and linking
- * it is the one thing that gives free use ($0.05, once per publik account).
- * So a $0.00 or unknown unlinked balance names that next step instead of a
- * starter the phone does not have. A nonzero unlinked balance can only be
- * what is left of a pre-0059 starter, and it still reads as free use.
+ * The plan line, from the wallet snapshot (CONTRACT §12.1(a)): AI use as a
+ * percent of the plan limit ("62% of your plan used · resets Monday"), or
+ * "Plan active" / "Plan limit reached" — never an amount of money (founder
+ * rule, Nov 14 2026). An unlinked phone names the next step instead.
  */
-export function balanceLine(wallet: PublikWallet | null, starterMicros: number | null, purchaseLinks = true): string {
-  const bal = wallet?.balanceMicros ?? null
-  if (wallet?.claimState === 'claimed') {
-    const week =
-      wallet.weekBudgetMicros != null && wallet.weekUsedMicros != null
-        ? ` · This week ${formatMicros(wallet.weekUsedMicros)} of ${formatMicros(wallet.weekBudgetMicros)}`
-        : ''
-    return `${formatMicros(bal)} left${week}`
-  }
-  // No link and no amount to get outside the US storefront of an App Store build.
-  if (!purchaseLinks && (bal == null || bal <= 0)) return 'Your publik balance is empty.'
-  if (bal == null) return LINK_STARTER_HINT.charAt(0).toUpperCase() + LINK_STARTER_HINT.slice(1)
-  if (bal <= 0) return `${formatMicros(0)} · ${LINK_STARTER_HINT}`
-  const untouched = starterMicros != null && starterMicros > 0 && bal >= starterMicros
-  return untouched ? `${formatMicros(bal)} of free use` : `${formatMicros(bal)} of free use left`
+export function planLine(wallet: PublikWallet | null, purchaseLinks = true): string {
+  if (wallet?.claimState === 'claimed') return planUseLine(planUse(wallet))
+  // No link to get a plan outside the US storefront of an App Store build.
+  if (!purchaseLinks) return 'This phone is not linked to a publik plan yet.'
+  return LINK_STARTER_HINT.charAt(0).toUpperCase() + LINK_STARTER_HINT.slice(1)
 }
 
 export function PublikCard({
@@ -125,6 +113,7 @@ export function PublikCard({
   const theme = useTheme()
   const links = usePurchaseLinks()
   const claimState = wallet?.claimState ?? install.claimState
+  const use = wallet?.claimState === 'claimed' ? planUse(wallet) : null
   // Anonymous: publik's bare in-app claim page (also for a claim link an
   // older version stored). Claimed: the top-up page (US storefront only).
   const claim = install.claimUrl ?? wallet?.claimUrl ?? null
@@ -144,7 +133,19 @@ export function PublikCard({
         </Text>
       </View>
 
-      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{balanceLine(wallet, starterMicros, links)}</Text>
+      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{planLine(wallet, links)}</Text>
+      {use && use.usedPercent != null ? (
+        <View
+          accessibilityRole="progressbar"
+          accessibilityLabel="publik plan used"
+          accessibilityValue={{ min: 0, max: 100, now: use.usedPercent }}
+          style={[styles.track, { backgroundColor: theme.border }]}
+        >
+          <View
+            style={[styles.fill, { width: `${use.usedPercent}%` as const, backgroundColor: use.limitReached ? theme.safety : theme.affirm }]}
+          />
+        </View>
+      ) : null}
 
       <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
         {whyItCostsSentence(APP_NAME)}
@@ -170,7 +171,7 @@ export function PublikCard({
       )}
       {links && claimState === 'anonymous' ? (
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.sm, lineHeight: 18 }]}>
-          Not now? Link this phone any time for $0.05 of free use, once, or add your own key in Profile.
+          Not now? Link this phone any time for some free use, once, or add your own key in Profile.
         </Text>
       ) : null}
 
@@ -190,6 +191,8 @@ export function PublikCard({
 const styles = StyleSheet.create({
   block: { padding: space.lg, borderRadius: radius.lg },
   card: { padding: space.lg, borderRadius: radius.lg },
+  track: { height: 8, borderRadius: radius.pill, marginTop: space.sm, overflow: 'hidden' },
+  fill: { height: 8, borderRadius: radius.pill },
   primary: {
     marginTop: space.lg,
     paddingVertical: space.md,

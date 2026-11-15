@@ -66,7 +66,7 @@ silently change, and the two worst bugs in this product category become structur
 Chosen during onboarding, changeable any time, and presented neutrally:
 
 - **Bring your own key** — your own Anthropic / OpenAI / Google key. Your photo goes to the provider you
-  named and nowhere else. Typically well under a cent per scan.
+  named and nowhere else.
 - **On-device** — free, private, works on a plane. Accuracy is **unproven** and will be measured and
   published before it ships as a default.
 
@@ -134,13 +134,11 @@ npm run data:build
 cd apps/mobile && npx expo run:android --variant release   # phone plugged in, USB debugging on
 ```
 
-Photo scans run on **publik API** by default — no key to paste; priced per scan at 50% of the
-model's published list price, every charge visible on your publik dashboard. A new phone starts at
-$0.00: linking it to your publik account gives $0.05 of free use, once, and a plan, a pack or your
-own key takes it from there. Scans can also run on your own Anthropic, OpenAI or Google key, added
-during onboarding or later in Profile.
-Either way it is typically well under a cent per scan, and the app works without any of it for
-barcode, label, search and manual logging. Builders: see `docs/PUBLIK-API.md` for the one value a
+Photo scans run on **publik API** by default — no key to paste. AI use counts toward your publik
+plan, and the app shows it as a percent of the plan limit, never as money. Linking the phone to
+your publik account gives some free use, once, and a plan, a pack or your own key takes it from
+there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
+later in Profile. The app works without any of it for barcode, label, search and manual logging. Builders: see `docs/PUBLIK-API.md` for the one value a
 build needs before publik mode shows up.
 
 ## Your data stays yours

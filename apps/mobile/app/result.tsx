@@ -78,17 +78,20 @@ export default function Result() {
   }
 
   if (phase.kind === 'failed') {
+    // A plan limit (publik 402, weekly or daily limit): plain words, when it
+    // resets (in the message), the storefront rule, and Use my own key.
+    const limit = phase.failureKind === 'quota-exhausted'
     return (
       <View style={[styles.center, { backgroundColor: theme.bg }]}>
         <Image source={{ uri: phase.photoUri }} style={[styles.photo, { opacity: 0.5 }]} />
         <Text style={[type.heading, { color: theme.text, marginTop: space.xl, textAlign: 'center' }]}>
-          Could not read this meal
+          {limit ? 'Limit reached' : 'Could not read this meal'}
         </Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center', lineHeight: 19 }]}>
           {phase.message}
         </Text>
-        {/* The one link a failure may carry (publik API's top_up_url, or the
-            charges page). The URL was origin-checked when the failure was
+        {/* The one link a failure may carry (publik API's top_up_url: Get a
+            plan). The URL was origin-checked when the failure was
             classified, and again by openPublikLink, which opens it in the
             in-app browser sheet. None in an App Store build outside the US
             storefront: those publik pages sell plans (usePurchaseLinks). */}
@@ -98,6 +101,14 @@ export default function Result() {
             style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
           >
             <Text style={[type.bodyStrong, { color: theme.bg }]}>{phase.action.label}</Text>
+          </Pressable>
+        ) : null}
+        {limit ? (
+          <Pressable
+            onPress={() => router.push('/provider-settings' as never)}
+            style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
+          >
+            <Text style={[type.bodyStrong, { color: theme.bg }]}>Use my own key</Text>
           </Pressable>
         ) : null}
         {phase.canRetry ? (

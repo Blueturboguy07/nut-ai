@@ -19,6 +19,7 @@ import {
   gateAtStart,
   isSafePublikLink,
   isUsableAppToken,
+  notePlanResetsAt,
   pauseTelemetry,
   provision,
   purchaseLinksFor,
@@ -119,13 +120,17 @@ async function savePublikInstall(i: PublikInstall): Promise<void> {
 export async function loadPublikWallet(): Promise<PublikWallet | null> {
   try {
     const raw = await Storage.getItem(WALLET_KEY)
-    return raw ? (JSON.parse(raw) as PublikWallet) : null
+    const w = raw ? (JSON.parse(raw) as PublikWallet) : null
+    if (w) notePlanResetsAt(w.resetsAt ?? w.weekResetsAt)
+    return w
   } catch {
     return null
   }
 }
 
 export async function savePublikWallet(w: PublikWallet): Promise<void> {
+  // The plan-limit message names this reset when a 402 names none.
+  notePlanResetsAt(w.resetsAt ?? w.weekResetsAt)
   await Storage.setItem(WALLET_KEY, JSON.stringify(w))
 }
 

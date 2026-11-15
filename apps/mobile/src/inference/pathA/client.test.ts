@@ -290,7 +290,9 @@ describe('publik mode', () => {
     if (!r.ok) {
       expect(r.error.kind).toBe('quota-exhausted')
       expect(r.error.retryable).toBe(false)
-      expect(r.error.message).toMatch(/^Your publik balance is too low/)
+      // Our own words, never the gateway's amount (founder rule, Nov 14 2026).
+      expect(r.error.message).toMatch(/^Your publik plan limit is reached\./)
+      expect(r.error.message).not.toMatch(/\$\d/)
       expect(r.error.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
     }
   })
@@ -403,8 +405,8 @@ describe('a billed call never fails silently', () => {
         expect(r.error.kind).toBe('timeout-ambiguous')
         expect(r.error.retryable).toBe(false)
         expect(r.error.message).toContain('240 seconds')
-        expect(r.error.message).toContain('probably still charged')
-        expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+        expect(r.error.message).toContain('probably still counted toward your plan')
+        expect(r.error.action).toBeUndefined()
       }
     } finally {
       vi.useRealTimers()
@@ -431,7 +433,7 @@ describe('a billed call never fails silently', () => {
       expect(r.ok).toBe(false)
       expect(r.error?.kind).toBe('timeout-ambiguous')
       expect(r.error?.message).toContain('90 seconds')
-      expect(r.error?.action?.url).toBe('https://publikhq.com/wallet')
+      expect(r.error?.action).toBeUndefined()
     } finally {
       vi.useRealTimers()
     }
@@ -448,9 +450,9 @@ describe('a billed call never fails silently', () => {
       expect(onPublik.error.kind).toBe('offline')
       expect(onPublik.error.retryable).toBe(true)
       expect(onPublik.error.message).toContain('Check the connection on this phone')
-      expect(onPublik.error.message).toContain('If the phone was online during the scan, publik may still have charged the call')
+      expect(onPublik.error.message).toContain('If the phone was online during the scan, it may still count toward your plan')
       expect(onPublik.error.message).not.toMatch(/dropped/)
-      expect(onPublik.error.action?.url).toBe('https://publikhq.com/wallet')
+      expect(onPublik.error.action).toBeUndefined()
     }
     const onVendor = await runScan(SCAN_REQ(), dead)
     expect(!onVendor.ok && onVendor.error.message).toBe('No connection to the provider.')
@@ -468,8 +470,8 @@ describe('a billed call never fails silently', () => {
     if (!r.ok) {
       expect(r.error.kind).toBe('output-truncated')
       expect(r.error.retryable).toBe(false)
-      expect(r.error.message).toContain('This call was charged')
-      expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+      expect(r.error.message).toContain('This scan still counts toward your plan')
+      expect(r.error.action).toBeUndefined()
     }
     // The same cut answer from a vendor key: named, without the publik charge sentence.
     const vendor = await runScan({ ...SCAN_REQ(), provider: 'openai' }, scripted([{ status: 200, body: cut }]).impl)
@@ -502,7 +504,7 @@ describe('a billed call never fails silently', () => {
     const r = await runLabelScan('openai', { model: 'publik-balanced', imageBase64: 'AAAA', baseUrl: 'https://publikhq.com/api/v1' }, { kind: 'api_key', value: 'pk' }, impl)
     expect(r.ok).toBe(false)
     expect(r.error?.kind).toBe('output-truncated')
-    expect(r.error?.message).toContain('This call was charged')
+    expect(r.error?.message).toContain('This scan still counts toward your plan')
   })
 
   /**

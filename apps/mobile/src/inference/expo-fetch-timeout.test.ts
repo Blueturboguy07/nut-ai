@@ -179,10 +179,11 @@ describe('a meal scan on a phone that waits too long', () => {
     expect(r.error.kind).toBe('timeout-ambiguous')
     expect(r.error.retryable).toBe(false)
     expect(r.error.message).toBe(
-      'publik API did not answer within 240 seconds. The call was probably still charged, so it is not retried. Check your charges before you scan this photo again.',
+      'publik API did not answer within 240 seconds. The scan probably still counted toward your plan, so it is not retried. Scan this photo again only if you need the result.',
     )
     expect(r.error.message).not.toMatch(/connection/i)
-    expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+    // No charges page (founder rule, Nov 14 2026).
+    expect(r.error.action).toBeUndefined()
     expect(impl).toHaveBeenCalledTimes(1)
   })
 
@@ -196,9 +197,10 @@ describe('a meal scan on a phone that waits too long', () => {
     expect(r.error.kind).toBe('timeout-ambiguous')
     expect(r.error.retryable).toBe(false)
     expect(r.error.message).toBe(
-      'publik API did not answer within 240 seconds. The call was probably still charged, so it is not retried. Check your charges before you scan this photo again.',
+      'publik API did not answer within 240 seconds. The scan probably still counted toward your plan, so it is not retried. Scan this photo again only if you need the result.',
     )
-    expect(r.error.action).toEqual({ label: 'See charges on publik', url: 'https://publikhq.com/wallet' })
+    // No charges page (founder rule, Nov 14 2026).
+    expect(r.error.action).toBeUndefined()
     expect(impl).toHaveBeenCalledTimes(1)
   })
 
@@ -217,7 +219,7 @@ describe('a meal scan on a phone that waits too long', () => {
     const { impl } = bodyStalls(platform)
     const r = await settlesAtDeadline(runScanWithFallback({ ...SCAN, baseUrl: undefined, model: 'gpt-5-mini' }, impl), SCAN_TIMEOUT_MS)
     expect(!r.ok && r.error.kind).toBe('timeout-ambiguous')
-    expect(!r.ok && r.error.message).toBe('The request timed out. It may still have been charged, so we will not retry automatically.')
+    expect(!r.ok && r.error.message).toBe('The request timed out. The provider may still have run it, so we will not retry automatically.')
   })
 
   it('a vendor key gets the same kind, with its own sentence', async () => {
@@ -226,7 +228,7 @@ describe('a meal scan on a phone that waits too long', () => {
     await vi.advanceTimersByTimeAsync(SCAN_TIMEOUT_MS)
     const r = await pending
     expect(!r.ok && r.error.kind).toBe('timeout-ambiguous')
-    expect(!r.ok && r.error.message).toBe('The request timed out. It may still have been charged, so we will not retry automatically.')
+    expect(!r.ok && r.error.message).toBe('The request timed out. The provider may still have run it, so we will not retry automatically.')
   })
 
   it('the same FetchError before the deadline is a dropped connection: offline and retryable', async () => {

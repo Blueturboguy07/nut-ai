@@ -239,7 +239,8 @@ describe('the gate words', () => {
     expect(gateScreen('choose', w(claimedPlan))).toMatchObject({ title: WORDS.connectTitle, body: `You are signed in as @mann. Your plan: Plus. ${WORDS.connectBody}` })
     expect(gateScreen('choose', w(claimedPlan)).buttons.map((b) => b.label)).toEqual([WORDS.connect, WORDS.ownKey])
     expect(gateScreen('choose', { ...w(claimedEmpty), handle: null, balanceMicros: 1_250_000 }).body).toBe(
-      `You are signed in to publik. Your balance: $1.25. ${WORDS.connectBody}`,
+      // No amount of money (founder rule, Nov 14 2026).
+      `You are signed in to publik. Your publik plan is active. ${WORDS.connectBody}`,
     )
   })
 
@@ -255,7 +256,7 @@ describe('the gate words', () => {
     const empty = gateScreen('choose', w(claimedEmpty), null, undefined, false)
     expect(empty).toMatchObject({
       title: WORDS.chooseTitle,
-      body: 'You are signed in as @mann. Your publik balance is empty. To get a plan, search for "publik" on Google. Or use your own key for AI in this app.',
+      body: 'You are signed in as @mann. You have no publik plan yet. To get a plan, search for "publik" on Google. Or use your own key for AI in this app.',
     })
     expect(empty.buttons).toEqual([{ action: 'own_key', label: WORDS.ownKey }])
     expect(empty.body).not.toMatch(/\$|Get a plan|https?:/)

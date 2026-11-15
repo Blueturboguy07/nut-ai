@@ -7,8 +7,9 @@ import {
   purchaseLinksFor,
   purchaseLinksOn,
   setPurchaseLinks,
-  formatMicros,
   gateWalletFromJson,
+  notePlanResetsAt,
+  planUse,
   inAppClaimUrl,
   isSafePublikLink,
   isUsableAppToken,
@@ -21,7 +22,7 @@ import {
   publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
-import { PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, waitPhrase } from './publik-copy'
+import { planLimitMessage, planUseLine, PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, resetPhrase, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -320,13 +321,9 @@ describe('wallet from headers', () => {
     expect(lapsed.balanceMicros).toBe(3_120_000)
   })
 
-  it('chargeUsdFromHeaders and formatMicros', () => {
+  it('chargeUsdFromHeaders (kept for the local scan log; never shown)', () => {
     expect(chargeUsdFromHeaders(new Headers({ 'x-publik-charge-micros': '41000' }))).toBe(0.041)
     expect(chargeUsdFromHeaders(new Headers({}))).toBeNull()
-    expect(formatMicros(1_920_000)).toBe('$1.92')
-    expect(formatMicros(400)).toBe('$0.0004')
-    expect(formatMicros(0)).toBe('$0.00')
-    expect(formatMicros(null)).toBe('—')
   })
 
   it('walletFromJson reads the GET /wallet shape', () => {
@@ -395,20 +392,18 @@ describe('classifyGatewayError', () => {
       },
     })
 
-  it('402 insufficient_credit → quota-exhausted with the server message and exactly one link (top_up_url)', () => {
+  it('402 insufficient_credit → quota-exhausted in our own words (never the gateway amount) and exactly one link (top_up_url)', () => {
     const f = classifyGatewayError(402, body402())
     expect(f?.kind).toBe('quota-exhausted')
     expect(f?.retryable).toBe(false)
-    expect(f?.message).toMatch(/^Your publik balance is too low/)
-    // The gateway writes for desktops; this is a phone.
-    expect(f?.message).toContain('Link this phone to your publik account')
-    expect(f?.message).not.toContain('this computer')
+    expect(f?.message).toBe('Your publik plan limit is reached. Get a plan at the link below, or use your own key in Profile → AI provider.')
+    expect(f?.message).not.toMatch(/\$\d/)
     expect(f?.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
   })
 
-  it('claimed → the button becomes "Add a plan or pack" and follows top_up_url', () => {
+  it('claimed → the button is "Get a plan" and follows top_up_url', () => {
     const f = classifyGatewayError(402, body402({ claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' }))
-    expect(f?.action).toEqual({ label: 'Add a plan or pack', url: 'https://publikhq.com/dashboard/api/add' })
+    expect(f?.action).toEqual({ label: 'Get a plan', url: 'https://publikhq.com/dashboard/api/add' })
   })
 
   it('a top_up_url off publikhq.com yields no action at all', () => {
@@ -438,7 +433,7 @@ describe('classifyGatewayError', () => {
     expect(anon402).toMatchObject({ kind: 'quota-exhausted', retryable: false })
     expect(anon402?.action).toBeUndefined()
     // Not the gateway's own message, which names a link and an amount.
-    expect(anon402?.message).toBe('Your publik balance is too low for this scan. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
+    expect(anon402?.message).toBe('Your publik plan limit is reached. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
     expect(anon402?.message).not.toMatch(/\$|pack|link|https?:/i)
     const claimed402 = classifyGatewayError(402, body402({ claim_state: 'claimed', message: undefined }), false)
     expect(claimed402?.action).toBeUndefined()
@@ -504,5 +499,73 @@ describe('provisionFailureMessage', () => {
     expect(provisionFailureMessage({ ok: false, kind: 'unavailable' })).toContain('not available for this build')
     expect(provisionFailureMessage({ ok: false, kind: 'token-revoked', status: 401 })).toContain('not available for this build')
     expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update publik Nut AI')
+  })
+})
+
+describe('no money: AI use is a percent of the plan limit (founder rule, Nov 14 2026)', () => {
+  // Saturday Nov 14 2026, noon, local time.
+  const now = new Date(2026, 10, 14, 12, 0, 0)
+  const monday = new Date(2026, 10, 16, 0, 0, 0).toISOString()
+  const base = { ...emptyWallet('claimed') }
+
+  it('planUse reads used_percent, else 100 - remaining_percent, else the week figures', () => {
+    expect(planUse(walletFromJson({ used_percent: 62.7, resets_at: monday }, 'claimed'))).toEqual({ usedPercent: 62, resetsAt: monday, limitReached: false })
+    expect(planUse(walletFromJson({ remaining_percent: 25 }, 'claimed'))).toMatchObject({ usedPercent: 75, limitReached: false })
+    expect(planUse({ ...base, weekUsedMicros: 300, weekBudgetMicros: 1200, weekResetsAt: monday })).toEqual({ usedPercent: 25, resetsAt: monday, limitReached: false })
+    expect(planUse({ ...base, weekUsedMicros: 1500, weekBudgetMicros: 1200 })).toMatchObject({ usedPercent: 100, limitReached: true })
+    expect(planUse(walletFromJson({ used_percent: 100 }, 'claimed')).limitReached).toBe(true)
+    // 99.6% is not the limit.
+    expect(planUse({ ...base, weekUsedMicros: 996, weekBudgetMicros: 1000 })).toMatchObject({ usedPercent: 99, limitReached: false })
+  })
+
+  it('with no limit to measure against: no number, only "Plan active" or "Plan limit reached"', () => {
+    expect(planUse({ ...base, balanceMicros: 40_000 })).toEqual({ usedPercent: null, resetsAt: null, limitReached: false })
+    expect(planUse({ ...base, balanceMicros: 0 })).toEqual({ usedPercent: null, resetsAt: null, limitReached: true })
+    expect(planUseLine(planUse({ ...base, balanceMicros: 40_000 }), now)).toBe('Plan active')
+    expect(planUseLine(planUse({ ...base, balanceMicros: 0 }), now)).toBe('Plan limit reached')
+    expect(planUseLine({ usedPercent: null, resetsAt: monday, limitReached: true }, now)).toBe('Plan limit reached · resets Monday')
+  })
+
+  it('planUseLine: "62% of your plan used · resets Monday"', () => {
+    expect(planUseLine({ usedPercent: 62, resetsAt: monday, limitReached: false }, now)).toBe('62% of your plan used · resets Monday')
+    expect(planUseLine({ usedPercent: 0, resetsAt: null, limitReached: false }, now)).toBe('0% of your plan used')
+  })
+
+  it('resetPhrase: a weekday within 6 days, "today", a date after that; nothing for the past or junk', () => {
+    expect(resetPhrase(monday, now)).toBe('resets Monday')
+    expect(resetPhrase(new Date(2026, 10, 14, 23, 0, 0).toISOString(), now)).toBe('resets today')
+    expect(resetPhrase(new Date(2026, 10, 24, 9, 0, 0).toISOString(), now)).toBe('resets Nov 24')
+    expect(resetPhrase(new Date(2026, 10, 13).toISOString(), now)).toBeNull()
+    expect(resetPhrase('not a date', now)).toBeNull()
+    expect(resetPhrase(null, now)).toBeNull()
+  })
+
+  it('the plan-limit message names the reset and keeps the storefront rule', () => {
+    expect(planLimitMessage(monday, true, now)).toBe('Your publik plan limit is reached. It resets Monday. Get a plan at the link below, or use your own key in Profile → AI provider.')
+    expect(planLimitMessage(monday, false, now)).toBe(
+      'Your publik plan limit is reached. It resets Monday. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.',
+    )
+    expect(planLimitMessage(null, false, now)).toBe('Your publik plan limit is reached. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
+  })
+
+  it('a 402 or a weekly limit says when it resets: from the error, else the last wallet', () => {
+    const soon = new Date(Date.now() + 2 * 86_400_000).toISOString()
+    const phrase = resetPhrase(soon)!
+    const week = classifyGatewayError(402, JSON.stringify({ error: { type: 'week_budget_reached', claim_state: 'claimed', resets_at: soon } }), false)
+    expect(week?.kind).toBe('quota-exhausted')
+    expect(week?.message).toContain(`It ${phrase}.`)
+    try {
+      notePlanResetsAt(soon)
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type: 'insufficient_credit', claim_state: 'claimed', message: 'Add $5.00 to keep going.' } }), true)
+      expect(f?.message).toContain(`It ${phrase}.`)
+      expect(f?.message).not.toMatch(/\$\d/)
+    } finally {
+      notePlanResetsAt(null)
+    }
+  })
+
+  it('a gateway message with an amount of money is never shown', () => {
+    const f = classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'That model costs $0.07 a call.' } }))
+    expect(f?.message).toBe('publik API does not know that model. Pick one in Profile → AI provider.')
   })
 })

@@ -19,8 +19,8 @@ import {
   setCountAppUse,
   signOutOfPublik,
 } from '../../src/inference/publik'
-import { formatMicros } from '../../src/inference/publik-core'
-import { APP_NAME } from '../../src/inference/publik-copy'
+import { planUse } from '../../src/inference/publik-core'
+import { APP_NAME, planUseLine } from '../../src/inference/publik-copy'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -83,15 +83,14 @@ export default function Profile() {
         } else if (p === 'publik') {
           const [connected, wallet] = await Promise.all([publikConnected(), loadPublikWallet()])
           if (!alive) return
-          // publik 0059: an unlinked phone sits at $0.00 until it is linked, so
-          // that row says so instead of "$0.00 left".
-          const unlinkedAtZero = wallet?.claimState === 'anonymous' && wallet.balanceMicros != null && wallet.balanceMicros <= 0
+          // AI use as a percent of the plan limit, never money (founder rule,
+          // Nov 14 2026); an unlinked phone says so.
           setProviderLabel(
             !connected
               ? 'publik API · disconnected'
-              : unlinkedAtZero
-                ? `publik API · ${formatMicros(0)} · not linked`
-                : `publik API · ${formatMicros(wallet?.balanceMicros)} left`,
+              : wallet?.claimState !== 'claimed'
+                ? 'publik API · not linked'
+                : `publik API · ${planUseLine(planUse(wallet))}`,
           )
         } else {
           const cred = await loadCredential(p as ProviderId)

@@ -105,8 +105,31 @@ links):
 | Delete account | `https://publikhq.com/in-app/delete-account` | Profile → publik account (`PUBLIK_DELETE_ACCOUNT_URL`) |
 
 With no claim link from publik, Sign in with publik opens nothing and asks
-again. The purchase links below ("Get a plan", top-up, "See charges on
-publik") open the normal site, and only where purchase links are allowed.
+again. The purchase links below ("Get a plan", top-up) open the normal
+site, and only where purchase links are allowed.
+
+### No money in the app
+
+Founder rule (Nov 14 2026): the app never shows how much money a person
+spends — no amount, no price per scan (publik or own key), no balance in
+dollars, no charges page, no amount in an error message (a gateway message
+with one is replaced by the app's own words). AI use shows only as a
+percent of the plan limit, with a bar on the publik card:
+
+| GET /api/v1/wallet | The app shows |
+|---|---|
+| `used_percent` (or `remaining_percent`), `resets_at` | `62% of your plan used · resets Monday` |
+| until publik sends them: `week.used_micros` of `week.budget_micros`, `week.resets_at` | the same line, computed |
+| neither, balance left or no balance read | `Plan active` |
+| neither, empty balance and no weekly limit | `Plan limit reached` |
+
+A 402 or a weekly limit shows "Limit reached": `Your publik plan limit is
+reached. It resets Monday.`, then the storefront rule (US: a "Get a plan"
+link; elsewhere `To get a plan, search for "publik" on Google.`) and a
+"Use my own key" button. `planUse` (publik-core.ts) and `planUseLine` /
+`planLimitMessage` (publik-copy.ts) hold the rule; `src/no-money.test.ts`
+fails on any user-facing "$" followed by a digit. The phone still keeps
+each scan's cost in its local scan log (never shown).
 
 ### App Store build: `EXPO_PUBLIC_APP_STORE_BUILD`
 

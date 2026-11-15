@@ -1,6 +1,6 @@
 import type { ScanFailure } from './pathA/client'
 import { startDeadline } from './deadline'
-import { APP_NAME, GET_A_PLAN_ELSEWHERE, insufficientCreditMessage, linkButtonLabel, waitPhrase } from './publik-copy'
+import { APP_NAME, GET_A_PLAN_ELSEWHERE, linkButtonLabel, planLimitMessage, waitPhrase } from './publik-copy'
 
 /**
  * publik API and Sign in with publik — the pure half of the publik module.
@@ -146,12 +146,20 @@ export interface PublikInstall {
   choice?: Choice | null
 }
 
-/** Balance line, refreshed from response headers and GET /wallet. Micros = 1e-6 USD. */
+/**
+ * The wallet snapshot, refreshed from response headers and GET /wallet.
+ * Micros = 1e-6 USD. The app never SHOWS an amount of money (founder rule,
+ * Nov 14 2026): screens show only planUse(), a percent of the plan limit.
+ */
 export interface PublikWallet {
   balanceMicros: number | null
   weekUsedMicros: number | null
   weekBudgetMicros: number | null
   weekResetsAt: string | null
+  /** GET /wallet `used_percent` (or 100 - `remaining_percent`), 0-100; null when publik did not send it. */
+  usedPercent: number | null
+  /** GET /wallet `resets_at`: when the plan limit resets; null when publik did not send it. */
+  resetsAt: string | null
   starterRemainingMicros: number | null
   claimState: 'anonymous' | 'claimed'
   /** Links from the wallet body; always on publikhq.com or dropped. */
@@ -378,6 +386,9 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
     weekUsedMicros: num(w.week?.used_micros),
     weekBudgetMicros: num(w.week?.budget_micros),
     weekResetsAt: typeof w.week?.resets_at === 'string' ? w.week.resets_at : null,
+    // The plan-limit fields (planUse): used_percent, or 100 - remaining_percent.
+    usedPercent: usedPercentOf(w),
+    resetsAt: typeof w.resets_at === 'string' && w.resets_at ? w.resets_at : null,
     starterRemainingMicros: num(w.starter?.remaining_micros),
     claimState: w.claim_state === 'claimed' || w.claim_state === 'anonymous' ? w.claim_state : claimState,
     claimUrl: claimLinkOf(w.claim_url),
@@ -407,7 +418,12 @@ export function walletPatchFromHeaders(h: Headers): PublikWalletPatch {
   if (h.has('x-publik-balance')) patch.balanceMicros = num('x-publik-balance')
   else if (h.has('x-publik-balance-micros')) patch.balanceMicros = num('x-publik-balance-micros')
 
-  if (h.has('x-publik-week-used')) patch.weekUsedMicros = num('x-publik-week-used')
+  // New week figures: the percent is computed from them again (planUse),
+  // not read from an older GET /wallet.
+  if (h.has('x-publik-week-used')) {
+    patch.weekUsedMicros = num('x-publik-week-used')
+    patch.usedPercent = null
+  }
   if (h.has('x-publik-week-budget')) patch.weekBudgetMicros = num('x-publik-week-budget')
   const resets = h.get('x-publik-week-resets-at')
   if (resets != null) patch.weekResetsAt = resets
@@ -445,6 +461,8 @@ export function emptyWallet(claimState: PublikWallet['claimState'] = 'anonymous'
     weekUsedMicros: null,
     weekBudgetMicros: null,
     weekResetsAt: null,
+    usedPercent: null,
+    resetsAt: null,
     starterRemainingMicros: null,
     claimState,
     claimUrl: null,
@@ -452,10 +470,55 @@ export function emptyWallet(claimState: PublikWallet['claimState'] = 'anonymous'
   }
 }
 
-export function formatMicros(m: number | null | undefined): string {
-  if (m == null) return '—'
-  const usd = m / 1_000_000
-  return usd >= 0.01 || usd === 0 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
+/** AI use as the app shows it: a percent of the plan limit, never money. */
+export interface PlanUse {
+  /** 0-100, rounded down; null when publik gave no limit to measure against. */
+  usedPercent: number | null
+  /** When the plan limit resets (ISO time), or null. */
+  resetsAt: string | null
+  limitReached: boolean
+}
+
+/**
+ * The percent of the plan limit used. GET /wallet's `used_percent` /
+ * `remaining_percent` when publik sends them; until then the week figures
+ * (used of budget). With neither, no number: only "limit reached" when the
+ * balance is empty and there is no weekly limit, else "active".
+ */
+export function planUse(
+  w: Pick<PublikWallet, 'usedPercent' | 'resetsAt' | 'weekUsedMicros' | 'weekBudgetMicros' | 'weekResetsAt' | 'balanceMicros'>,
+): PlanUse {
+  let used: number | null = w.usedPercent
+  if (used == null && w.weekBudgetMicros != null && w.weekBudgetMicros > 0 && w.weekUsedMicros != null) {
+    used = (w.weekUsedMicros / w.weekBudgetMicros) * 100
+  }
+  const resetsAt = w.resetsAt ?? w.weekResetsAt ?? null
+  if (used == null || !Number.isFinite(used)) {
+    const empty = w.balanceMicros != null && w.balanceMicros <= 0 && w.weekBudgetMicros == null
+    return { usedPercent: null, resetsAt, limitReached: empty }
+  }
+  const clamped = Math.min(100, Math.max(0, used))
+  return { usedPercent: Math.floor(clamped), resetsAt, limitReached: clamped >= 100 }
+}
+
+/** A percent from publik (0-100), or null. */
+function percentOf(v: unknown): number | null {
+  const n = num(v)
+  return n == null ? null : Math.min(100, Math.max(0, n))
+}
+
+/** GET /wallet `used_percent`, else 100 - `remaining_percent`, else null. */
+function usedPercentOf(w: Record<string, any>): number | null {
+  const used = percentOf(w.used_percent)
+  if (used != null) return used
+  const left = percentOf(w.remaining_percent)
+  return left == null ? null : 100 - left
+}
+
+/** The last reset time publik named; the plan-limit message uses it when the 402 itself names none. Set by publik.ts. */
+let knownResetsAt: string | null = null
+export function notePlanResetsAt(iso: string | null | undefined): void {
+  knownResetsAt = typeof iso === 'string' && iso ? iso : null
 }
 
 /** A publik credential is always the api_key shape. */
@@ -488,10 +551,14 @@ export function classifyGatewayError(status: number, body: string, links: boolea
         : null
   // No purchase link outside the US storefront of an App Store build (purchaseLinksFor).
   const action = (label: string) => (links && topUp ? { action: { label, url: topUp } } : {})
-  // The gateway's message carries the justification (CONTRACT §12.3); its
-  // device noun is written for desktops, this is a phone.
-  const serverMessage =
-    typeof e.message === 'string' && e.message.trim() ? e.message.trim().replace(/\bthis computer\b/g, 'this phone') : null
+  // The gateway's message; its device noun is written for desktops, this is
+  // a phone. A message with an amount of money in it is never shown (founder
+  // rule, Nov 14 2026): the app's own words instead.
+  const raw = typeof e.message === 'string' ? e.message.trim() : ''
+  const serverMessage = raw && !/\$\s?\d/.test(raw) ? raw.replace(/\bthis computer\b/g, 'this phone') : null
+  const resetsAt =
+    [e.resets_at, e.week?.resets_at, knownResetsAt].find((v): v is string => typeof v === 'string' && v.length > 0) ?? null
+  const limitLabel = claimState === 'anonymous' ? linkButtonLabel('anonymous') : 'Get a plan'
 
   switch (e.type) {
     case 'insufficient_credit':
@@ -499,16 +566,17 @@ export function classifyGatewayError(status: number, body: string, links: boolea
         kind: 'quota-exhausted',
         httpStatus: status,
         retryable: false,
-        // Without links: plain text, no link and no price (the gateway's own message names both).
-        message: links ? (serverMessage ?? insufficientCreditMessage(claimState)) : insufficientCreditMessage(claimState, false),
-        ...action(linkButtonLabel(claimState)),
+        // The plan limit in plain words, when it resets, and the storefront
+        // rule: US a "Get a plan" link, elsewhere the plain sentence.
+        message: planLimitMessage(resetsAt, links),
+        ...action(limitLabel),
       }
     case 'daily_cap_reached':
       return {
         kind: 'quota-exhausted',
         httpStatus: status,
         retryable: false,
-        message: "Today's publik API spending cap is reached. It resets at midnight UTC — or use your own key in Profile.",
+        message: "Today's publik API limit is reached. It resets at midnight UTC — or use your own key in Profile.",
         ...action(claimState === 'anonymous' ? linkButtonLabel('anonymous') : 'Raise the cap'),
       }
     case 'week_budget_reached':
@@ -516,8 +584,8 @@ export function classifyGatewayError(status: number, body: string, links: boolea
         kind: 'quota-exhausted',
         httpStatus: status,
         retryable: false,
-        message: "This week's publik API budget is used up. It comes back at the next weekly reset — or use your own key in Profile.",
-        ...action(linkButtonLabel(claimState)),
+        message: planLimitMessage(resetsAt, links),
+        ...action(limitLabel),
       }
     case 'model_requires_claim':
       return {
@@ -603,7 +671,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.4'
+export const APP_VERSION = '0.1.5'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -775,7 +843,6 @@ export async function readWallet(d: Pick<GateDevice, 'cfg' | 'fetch'>, key: stri
   }
 }
 
-const dollars = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`
 const SIGN_IN_WAITING = 'Waiting for you to sign in in your browser.'
 const SIGN_IN_TIMEOUT = 'No sign-in after 10 minutes. Click Sign in with publik to try again.'
 const SIGN_IN_NO_LINK = 'publik did not send a sign-in link for this phone. Click Sign in with publik to try again.'
@@ -811,7 +878,7 @@ export function gateScreen(
         id,
         title: 'Choose how to pay for AI',
         note,
-        body: `${who} Your publik balance is empty. ${GET_A_PLAN_ELSEWHERE} Or use your own key for AI in this app.`,
+        body: `${who} You have no publik plan yet. ${GET_A_PLAN_ELSEWHERE} Or use your own key for AI in this app.`,
         buttons: [{ action: 'own_key', label: 'Use my own key' }],
       }
     }
@@ -826,7 +893,13 @@ export function gateScreen(
       ],
     }
   }
-  const what = w.plan.kind === 'plan' ? `Your plan: ${w.plan.label ?? 'publik'}.` : `Your balance: ${dollars(w.balanceMicros)}.`
+  // No amount of money on any screen (founder rule, Nov 14 2026).
+  const what =
+    w.plan.kind === 'plan'
+      ? `Your plan: ${w.plan.label ?? 'publik'}.`
+      : w.plan.kind === 'pack'
+        ? `Your pack: ${w.plan.label ?? 'publik'}.`
+        : 'Your publik plan is active.'
   return {
     id,
     title: 'Connect your plan',

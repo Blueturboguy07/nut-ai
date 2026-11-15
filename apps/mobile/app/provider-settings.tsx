@@ -53,16 +53,17 @@ type Chip = ProviderId | 'publik'
 
 /**
  * The two-entry publik model list; publik-smart only once the phone is linked.
- * The figures are measured through the gateway on one plate photo (Nov 1
- * 2026, docs/PUBLIK-API.md): a reasoning tier is slower AND dearer, and
- * portion error does not shrink with it.
+ * The times are measured through the gateway on one plate photo (Nov 1
+ * 2026, docs/PUBLIK-API.md): a reasoning tier is slower and uses more of the
+ * plan, and portion error does not shrink with it. No amount of money
+ * (founder rule, Nov 14 2026).
  */
 function publikModelList(claimState: 'anonymous' | 'claimed'): Array<{ id: string; label: string; note: string }> {
   const list: Array<{ id: string; label: string; note: string }> = [
-    { id: PUBLIK_MODELS.fast, label: 'publik-fast', note: 'Default for photos. About 10 seconds and under $0.01 a scan.' },
-    { id: PUBLIK_MODELS.balanced, label: 'publik-balanced', note: 'A reasoning model. About a minute and $0.04-0.07 a scan.' },
+    { id: PUBLIK_MODELS.fast, label: 'publik-fast', note: 'Default for photos. About 10 seconds a scan.' },
+    { id: PUBLIK_MODELS.balanced, label: 'publik-balanced', note: 'A reasoning model. About a minute a scan, and it uses more of your plan.' },
   ]
-  if (claimState === 'claimed') list.push({ id: PUBLIK_MODELS.smart, label: 'publik-smart', note: 'Top tier; costs the most per scan' })
+  if (claimState === 'claimed') list.push({ id: PUBLIK_MODELS.smart, label: 'publik-smart', note: 'Top tier; uses the most of your plan per scan' })
   return list
 }
 
@@ -292,7 +293,7 @@ export default function ProviderSettings() {
                 })}
               </View>
               <Text style={[type.caption, { color: theme.textFaint, marginTop: space.md, lineHeight: 18 }]}>
-                Every scan is priced per use at 50% of the model's published list price. You can see each charge on your publik dashboard.
+                Every scan counts toward your publik plan. Profile shows how much of your plan you used.
               </Text>
             </>
           ) : (
@@ -380,9 +381,6 @@ export default function ProviderSettings() {
                   >
                     <View style={{ flex: 1 }}>
                       <Text style={[type.bodyStrong, { color: theme.text }]}>{m.label}</Text>
-                      <Text style={[type.caption, { color: theme.textMuted, marginTop: 2 }]}>
-                        ~${m.approxScanCostUsd.toFixed(4)} per scan
-                      </Text>
                     </View>
                     {active ? <Icon name="check" size={18} color={theme.text} weight={2.4} /> : null}
                   </Pressable>

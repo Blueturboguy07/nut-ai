@@ -198,7 +198,7 @@ export function CredentialForm({
           </View>
           <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
             Verified as {shape === 'bearer' ? 'an OAuth / CLI token' : 'an API key'}. Using{' '}
-            {model.label} at roughly ${model.approxScanCostUsd.toFixed(4)} per scan.
+            {model.label}.
           </Text>
         </View>
       ) : (
