@@ -35,8 +35,9 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
  *
  * publik API is the first chip when the build carries an app token. Its card
  * is the same component the onboarding first-run card uses (CONTRACT §12.2):
- * balance, justification, and the link button for as long as the install is
- * anonymous — "Add a plan or pack" once it is claimed.
+ * plan use (a percent, never money), justification, and the link button
+ * while the install is anonymous — "Get a plan" once it is claimed (US
+ * storefront only).
  *
  * This is also the setting of the sign-in gate's plan choice (the publik
  * module's setChoice): picking publik API stores "publik", saving or picking

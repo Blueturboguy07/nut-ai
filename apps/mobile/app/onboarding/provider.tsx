@@ -70,7 +70,8 @@ export default function ProviderScreen() {
       ctaDisabled={a.provider === undefined}
       onCta={() => {
         if (a.provider === 'none') void putSetting('provider', 'none')
-        router.push((a.provider === 'none' ? '/onboarding/health' : nextRoute('provider')) as never)
+        // No key: the key step is skipped (and Apple Health only shows when it is in the build).
+        router.push(nextRoute(a.provider === 'none' ? 'apikey' : 'provider') as never)
       }}
       scroll
     >
@@ -101,7 +102,7 @@ export default function ProviderScreen() {
 
         <OptionCard
           label="No key for now"
-          sublabel="Barcode, label scan, text search and manual entry all still work"
+          sublabel="Barcode scans and food search still work. Photo and label scans need an AI provider."
           glyph="minus"
           selected={a.provider === 'none'}
           onPress={() => setAnswer('provider', 'none')}
@@ -128,8 +129,8 @@ export default function ProviderScreen() {
 
       {a.provider && a.provider !== 'none' && a.provider !== 'publik' ? (
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.lg, lineHeight: 19 }]}>
-          {PROVIDER_MODELS[a.provider].length} models available. You can change model and set a
-          monthly spend cap after entering your key.
+          {PROVIDER_MODELS[a.provider].length} models available. You can change the model after you
+          enter your key.
         </Text>
       ) : null}
     </OnboardingScreen>

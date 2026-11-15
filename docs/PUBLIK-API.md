@@ -92,6 +92,23 @@ Before the first call to an AI provider, the app asks **Send meal photos to
 description never goes to a provider the person did not agree to.
 **Not now** sends nothing.
 
+App Store 5.1.2(i): the question names the company that gets the data. On
+the publik path it says `publik (publikhq.com). publik sends them to the AI
+provider that answers (for example Anthropic, Google or OpenAI).` publik's
+API (GET /api/v1/wallet, the SDK docs) does not list its model providers, so
+the app names them by example. An own-key path names the chosen provider
+only.
+
+### Report a wrong result, How estimates work, Help and support
+
+App Store 1.2 (AI content):
+
+| Where | What |
+|---|---|
+| Every AI result: the scan result screen, the Describe exercise estimate | **Report a wrong result** (`app/report-result.tsx`): a short reason picker (Wrong food, Wrong amount, Wrong calories or nutrients, Something else), then publik's support page in the in-app sheet with `app`, `version`, `source` and `reason` only (`src/support.ts`). No photo and no meal data: the person adds them on that page only if they choose to. |
+| Every AI result, Report a wrong result, Profile → Help | **How estimates work** (`app/how-estimates-work.tsx`): AI estimates can be wrong; how the numbers are made; you can correct every result; not medical advice. |
+| Profile → Help | **Help and support**: publik's support page in the in-app sheet. |
+
 ### The publik pages the app opens
 
 Every build opens publik pages only in the in-app browser sheet, and only
@@ -103,6 +120,7 @@ links):
 | Sign in / claim | the server's `claim_url` + `in_app=1` (other query values kept) → `/in-app/claim/<CODE>` | the gate; the publik card and a 402 in optional mode (`inAppClaimUrl` in `src/inference/publik-core.ts`) |
 | Privacy | `https://publikhq.com/in-app/privacy` | the publik disclosure (`PRIVACY_URL` in `src/inference/publik-copy.ts`) |
 | Delete account | `https://publikhq.com/in-app/delete-account` | Profile → publik account (`PUBLIK_DELETE_ACCOUNT_URL`) |
+| Support | `https://publikhq.com/in-app/support?app=nut-ai&version=<v>&source=<result\|exercise\|profile>[&reason=<id>]` | Profile → Help and support; Report a wrong result (`PUBLIK_SUPPORT_URL`, `supportUrl` in `src/support.ts`) |
 
 With no claim link from publik, Sign in with publik opens nothing and asks
 again. The purchase links below ("Get a plan", top-up) open the normal
@@ -128,16 +146,19 @@ reached. It resets Monday.`, then the storefront rule (US: a "Get a plan"
 link; elsewhere `To get a plan, search for "publik" on Google.`) and a
 "Use my own key" button. `planUse` (publik-core.ts) and `planUseLine` /
 `planLimitMessage` (publik-copy.ts) hold the rule; `src/no-money.test.ts`
-fails on any user-facing "$" followed by a digit. The phone still keeps
-each scan's cost in its local scan log (never shown).
+fails on any user-facing "$" followed by a digit, on the price phrases of
+earlier versions ("list price", "Add a plan or pack", "Raise the cap", "of
+free use"), and on any price word, purchase link or URL in a publik screen,
+sentence or failure built with purchase links off (outside the US
+storefront). The phone still keeps each scan's cost in its local scan log
+(never shown).
 
 ### App Store build: `EXPO_PUBLIC_APP_STORE_BUILD`
 
 On by default in an iOS release build. In an App Store build:
 
 - **Purchase links only in the US storefront.** "Get a plan", the top-up
-  link, "Add a plan or pack", "Link this phone & pick a plan" and the link
-  of a 402 show only when StoreKit says the App Store storefront is the USA
+  link, "Link this phone & pick a plan" and the link of a 402 show only when StoreKit says the App Store storefront is the USA
   (`Storefront.current.countryCode`, read once per run by
   `modules/publik-launch`; `purchaseLinksFor` in
   `src/inference/publik-core.ts`). In every other storefront, and when the

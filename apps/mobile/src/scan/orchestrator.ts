@@ -83,7 +83,7 @@ async function preprocess(photoUri: string): Promise<string> {
 }
 
 /** "Not now" on the AI consent question: nothing was sent. */
-const CONSENT_DECLINED_MESSAGE = 'Nothing was sent. Scans need your OK to send the photo to your AI provider; you get the question again with the next scan. Barcode, search and manual logging work without it.'
+const CONSENT_DECLINED_MESSAGE = 'Nothing was sent. Scans need your OK to send the photo to your AI provider; you get the question again with the next scan. Barcode scans and food search work without it.'
 
 /** The copy for "nothing to scan with", per feature. */
 function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'label' | 'receipt'): { message: string; failureKind: 'no-key' | 'key-invalid' } {
@@ -93,7 +93,7 @@ function resolveFailureCopy(err: ResolveFailure, feature: 'scan' | 'label' | 're
   const publikHint = publikAvailable() ? ' Or turn on publik API in Profile — no key needed.' : ''
   const base =
     feature === 'scan'
-      ? 'Photo scans need an API key. Add one in Profile — barcode, search and manual logging work without one.'
+      ? 'Photo scans need an API key. Add one in Profile — barcode scans and food search work without one.'
       : feature === 'label'
         ? 'Reading a label needs an API key. Add one in Profile — or find the product by barcode or search instead.'
         : 'Reading a receipt needs an API key. Add one in Profile.'
@@ -487,7 +487,7 @@ export async function startBarcodeScan(gtin: string): Promise<void> {
     setPhase({
       kind: 'failed',
       photoUri: '',
-      message: 'This barcode is not in the bundled database. The Food label mode reads the printed panel directly and works without a key.',
+      message: 'This barcode is not in the bundled database. Search the food database by name, or add an AI provider in Profile → AI provider: then the app can look the barcode up or read the printed label.',
       canRetry: false,
     })
     return

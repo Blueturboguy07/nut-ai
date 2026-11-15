@@ -6,8 +6,8 @@ export default function AccomplishScreen() {
       step="accomplish"
       field="accomplish"
       title="What would you like to accomplish?"
-      // Consumer: todayEmphasisFor(). Decides what the Today screen leads with.
-      subtitle="This decides what your Today screen puts first."
+      // Saved only: Home does not read todayEmphasisFor() yet, so no subtitle
+      // promises an effect (App Store 2.1, Nov 14 2026).
       options={[
         { value: 'healthier', label: 'Eat and live healthier', glyph: 'apple' },
         { value: 'energy', label: 'Boost my energy and mood', glyph: 'sun' },

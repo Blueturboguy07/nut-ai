@@ -6,10 +6,8 @@ export default function BlockerScreen() {
       step="blocker"
       field="blocker"
       title="What's stopping you from reaching your goals?"
-      // Consumer: featureDefaultsFor(). This answer decides which retention
-      // surfaces are ON by default, so it changes the app you get rather than
-      // just being collected.
-      subtitle="We'll turn on the parts of the app that help with this, and leave the rest off."
+      // Saved only: the settings featureDefaultsFor() writes are not read by
+      // any screen yet, so no subtitle promises an effect (App Store 2.1).
       options={[
         { value: 'consistency', label: 'Lack of consistency', glyph: 'bars' },
         { value: 'eating_habits', label: 'Unhealthy eating habits', glyph: 'burger' },

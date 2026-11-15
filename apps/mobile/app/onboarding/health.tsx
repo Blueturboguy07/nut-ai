@@ -1,6 +1,7 @@
-import { router } from 'expo-router'
+import { Redirect, router } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
+import { HEALTHKIT_IN_BUILD } from '../../src/health/build'
 import { availability, requestPermissions, type HealthAvailability } from '../../src/health/healthkit'
 import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
 import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
@@ -24,6 +25,9 @@ import { radius, space, type } from '../../src/theme/tokens'
  *
  * On the Simulator HealthKit exists but has no data, so an empty read there means
  * nothing — which is exactly why this screen never reports success from silence.
+ *
+ * A build without HealthKit (the default, SKIP_HEALTHKIT) has no such step:
+ * the flow leaves it out, and a stale link to it goes on to the next step.
  */
 export default function HealthScreen() {
   const theme = useTheme()
@@ -42,6 +46,8 @@ export default function HealthScreen() {
   }, [])
 
   const go = () => router.push(nextRoute('health') as never)
+
+  if (!HEALTHKIT_IN_BUILD) return <Redirect href={nextRoute('health') as never} />
 
   async function connect() {
     if (busy) return

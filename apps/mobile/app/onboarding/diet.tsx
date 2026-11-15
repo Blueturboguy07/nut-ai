@@ -6,10 +6,8 @@ export default function DietScreen() {
       step="diet"
       field="dietStyle"
       title="Do you follow a specific diet?"
-      // The most functional answer in the whole flow: it biases food resolution
-      // and changes the assumption-filler defaults, so a vegan's scan stops
-      // resolving to beef and "what kind of milk?" defaults to oat.
-      subtitle="We use this to rank food matches and pick sensible defaults when a scan is unsure."
+      // Saved (Profile → Diet style). Food resolution does not read it yet, so
+      // no subtitle promises that (App Store 2.1, Nov 14 2026).
       options={[
         { value: 'balanced', label: 'Balanced', glyph: 'scaleBalance' },
         { value: 'whole_food', label: 'Whole-food focus', glyph: 'bowl' },

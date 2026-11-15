@@ -75,13 +75,13 @@ export default function FoodSearch() {
       if (!alive) return
       if (r.outcome.kind === 'auto_accept') {
         setResults([r.outcome.match])
-        setOutcome(`auto-accepted (score ${r.outcome.match.score.toFixed(2)})`)
+        setOutcome('Best match')
       } else if (r.outcome.kind === 'disambiguate') {
         setResults(r.outcome.candidates)
-        setOutcome(`${r.outcome.candidates.length} candidates — tap the right one`)
+        setOutcome(`${r.outcome.candidates.length} matches — tap the right one`)
       } else {
         setResults([])
-        setOutcome('no match — this would log as an AI estimate')
+        setOutcome('No match')
       }
       setBusy(false)
     }, 180)
@@ -102,9 +102,9 @@ export default function FoodSearch() {
   }
 
   const corpusLine = useMemo(() => {
-    if (!corpus) return 'Loading corpus…'
+    if (!corpus) return 'Loading the food database…'
     if (corpus.foods === 0) {
-      return 'Corpus missing — the app bundled without nutrition.db. Run `npm run data:build`.'
+      return 'The food database did not load. Close the app and open it again.'
     }
     return `${corpus.foods.toLocaleString()} foods · ${corpus.portions.toLocaleString()} portion weights · USDA, CC0`
   }, [corpus])
@@ -166,18 +166,14 @@ export default function FoodSearch() {
               {r.brand ? ` · ${r.brand}` : ''}
             </Text>
           </View>
-          {selectingId === r.foodId ? (
-            <ActivityIndicator color={theme.textFaint} />
-          ) : (
-            <Text style={[type.micro, { color: theme.textFaint }]}>{r.score.toFixed(2)}</Text>
-          )}
+          {selectingId === r.foodId ? <ActivityIndicator color={theme.textFaint} /> : null}
         </Pressable>
       ))}
 
       {query.trim().length >= 2 && !busy && results.length === 0 && (
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.lg }]}>
-          Nothing matched. That is not a failure — it logs as an AI estimate with an amber badge,
-          and you can save it as your own food so it resolves instantly next time.
+          No food in the database matches. Try a shorter or more general name, for example
+          “rice” instead of “jasmine rice bowl”.
         </Text>
       )}
     </ScrollView>

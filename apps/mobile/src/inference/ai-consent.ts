@@ -19,12 +19,20 @@ const keyOf = (d: AiDestination) => `ai.share.${d}`
 
 const NAME: Record<AiDestination, string> = { publik: 'publik', anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' }
 
+/**
+ * App Store 5.1.2(i): name the companies that get the data. publik's API
+ * (GET /api/v1/wallet, the SDK docs) does not list its model providers, so
+ * the publik path names them by example.
+ */
+export const PUBLIK_AI_PROVIDERS_SENTENCE =
+  'publik sends them to the AI provider that answers (for example Anthropic, Google or OpenAI).'
+
 /** The question, naming where the data goes. */
 export function aiConsentCopy(d: AiDestination, appName: string): { title: string; body: string; agree: string; decline: string } {
   const name = NAME[d]
   const where =
     d === 'publik'
-      ? 'publik (publikhq.com), which sends them on to the AI company that runs the model'
+      ? `publik (publikhq.com). ${PUBLIK_AI_PROVIDERS_SENTENCE}`
       : `${name}, with your own key`
   return {
     title: `Send meal photos to ${name}?`,

@@ -4,6 +4,7 @@ import { Alert, Linking } from 'react-native'
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { ProviderId } from '@nutai/prompt'
+import { HEALTHKIT_IN_BUILD } from '../../src/health/build'
 import { availability, requestPermissions } from '../../src/health/healthkit'
 import { exportAndShareBackup, finishRestore, importBackup, pickBackupFile } from '../../src/data/backup'
 import { currentGoal, resetEverything, setting, type CurrentGoal } from '../../src/data/repo'
@@ -13,6 +14,7 @@ import {
   countAppUse,
   deletePublikAccount,
   loadPublikWallet,
+  openPublikLink,
   publikConnected,
   publikSignedIn,
   requestPublikSignIn,
@@ -22,6 +24,7 @@ import {
 import { planUse } from '../../src/inference/publik-core'
 import { APP_NAME, planUseLine } from '../../src/inference/publik-copy'
 import { PROVIDER_NAME } from '../../src/components/CredentialForm'
+import { supportUrl } from '../../src/support'
 import { Icon } from '../../src/components/Icon'
 import { useTheme } from '../../src/theme/ThemeProvider'
 import { radius, space, type } from '../../src/theme/tokens'
@@ -41,6 +44,8 @@ import { radius, space, type } from '../../src/theme/tokens'
  *     says) and Count app use. The food log itself has no account: it is only
  *     on this phone, and "Start over" deletes it.
  *   NO Follow Us. A settings screen is not a marketing surface.
+ *   Apple Health: only when HealthKit is in the build (src/health/build.ts).
+ *   Help and support: publik's in-app support page, in the in-app sheet.
  */
 export default function Profile() {
   const theme = useTheme()
@@ -63,7 +68,7 @@ export default function Profile() {
       void (async () => {
         const [g, avail, d, p] = await Promise.all([
           currentGoal(),
-          availability(),
+          HEALTHKIT_IN_BUILD ? availability() : Promise.resolve('unavailable' as const),
           setting('diet.style', 'balanced'),
           setting('provider'),
         ])
@@ -314,24 +319,26 @@ export default function Profile() {
         </Text>
       </Section>
 
-      <Section title="Apple Health">
-        {healthAvail === 'available' ? (
-          <>
-            <Row
-              label={healthBusy ? 'Connecting…' : 'Connect / Reconnect'}
-              value=""
-              onPress={connectHealth}
-            />
-            <Pressable onPress={() => void Linking.openSettings()} style={{ padding: space.lg, paddingTop: 0 }}>
-              <Text style={[type.caption, { color: theme.textMuted }]}>
-                Already answered the prompt? <Text style={{ color: theme.protein }}>Manage access in Settings</Text>
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <Row label="Apple Health" value={healthAvail === 'not-ios' ? 'iOS only' : 'Unavailable on this device'} />
-        )}
-      </Section>
+      {HEALTHKIT_IN_BUILD ? (
+        <Section title="Apple Health">
+          {healthAvail === 'available' ? (
+            <>
+              <Row
+                label={healthBusy ? 'Connecting…' : 'Connect / Reconnect'}
+                value=""
+                onPress={connectHealth}
+              />
+              <Pressable onPress={() => void Linking.openSettings()} style={{ padding: space.lg, paddingTop: 0 }}>
+                <Text style={[type.caption, { color: theme.textMuted }]}>
+                  Already answered the prompt? <Text style={{ color: theme.protein }}>Manage access in Settings</Text>
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <Row label="Apple Health" value={healthAvail === 'not-ios' ? 'iOS only' : 'Unavailable on this device'} />
+          )}
+        </Section>
+      ) : null}
 
       <Section title="Your data">
         <Row label={dataBusy ? 'Working…' : 'Export data'} value="" onPress={exportData} />
@@ -386,6 +393,11 @@ export default function Profile() {
             )
           }}
         />
+      </Section>
+
+      <Section title="Help">
+        <Row label="Help and support" value="" onPress={() => void openPublikLink(supportUrl({ source: 'profile' }))} />
+        <Row label="How estimates work" value="" onPress={() => router.push('/how-estimates-work' as never)} />
       </Section>
 
       <Section title="About">

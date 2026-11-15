@@ -70,8 +70,9 @@ Chosen during onboarding, changeable any time, and presented neutrally:
 - **On-device** — free, private, works on a plane. Accuracy is **unproven** and will be measured and
   published before it ships as a default.
 
-Either way, barcode scanning, label OCR, text search, manual entry and the entire correction flow work
-offline with no key at all.
+Either way, barcode scans of foods in the bundled database, food search, changing the amounts on a
+result and manual exercise entries work offline with no key at all. Photo, label and receipt scans
+need an AI provider.
 
 ## What we deliberately leave out
 
@@ -120,10 +121,11 @@ open ios/NutAI.xcworkspace              # then: pick your phone, press Run (⌘R
 Xcode will ask you to pick a signing team the first time — your free Apple ID works (apps signed
 this way re-install every 7 days; a $99/yr developer account removes that limit).
 
-Apple does not grant a free Apple ID the HealthKit capability, so the build above ships without
-the optional "Health reconnect" step and app.config.ts's Health entitlement — the app runs exactly
-the same otherwise. If you have a paid Apple Developer Program membership, get HealthKit back with
-`SKIP_HEALTHKIT=0 npm run prebuild` before opening Xcode.
+Apple does not grant a free Apple ID the HealthKit capability, so the build above has no HealthKit:
+no Health entitlement, the HealthKit library is not linked, and the app shows no Apple Health
+screen, row or onboarding step. The app runs the same otherwise. If you have a paid Apple Developer
+Program membership, get HealthKit back with `SKIP_HEALTHKIT=0` for the prebuild and for the Xcode
+build (app.config.ts is read again at build time).
 
 **Android** (any computer with [Android Studio](https://developer.android.com/studio)'s SDK):
 
@@ -138,8 +140,9 @@ Photo scans run on **publik API** by default — no key to paste. AI use counts 
 plan, and the app shows it as a percent of the plan limit, never as money. Linking the phone to
 your publik account gives some free use, once, and a plan, a pack or your own key takes it from
 there. Scans can also run on your own Anthropic, OpenAI or Google key, added during onboarding or
-later in Profile. The app works without any of it for barcode, label, search and manual logging. Builders: see `docs/PUBLIK-API.md` for the one value a
-build needs before publik mode shows up.
+later in Profile. Without any of it, barcode scans and food search still work; photo and label
+scans need an AI provider. Builders: see `docs/PUBLIK-API.md` for the one value a build needs
+before publik mode shows up.
 
 ## Your data stays yours
 

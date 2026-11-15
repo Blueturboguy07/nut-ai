@@ -106,8 +106,8 @@ export function appTokenOf(buildInput: unknown, committed: unknown, devBuild: bo
 // ---------------------------------------------------------------------------
 
 /**
- * A link that sells something — "Get a plan", the top-up link, "Add a plan or
- * pack", "Link this phone & pick a plan", the link of a 402 — shows in an App
+ * A link that sells something — "Get a plan", the top-up link, "Link this
+ * phone & pick a plan", the link of a 402 — shows in an App
  * Store build ONLY when the App Store storefront is the USA. Outside the US,
  * and when the storefront cannot be read, the app shows no link, no button
  * and no price: one plain sentence instead (publik-copy.ts
@@ -552,10 +552,12 @@ export function classifyGatewayError(status: number, body: string, links: boolea
   // No purchase link outside the US storefront of an App Store build (purchaseLinksFor).
   const action = (label: string) => (links && topUp ? { action: { label, url: topUp } } : {})
   // The gateway's message; its device noun is written for desktops, this is
-  // a phone. A message with an amount of money in it is never shown (founder
-  // rule, Nov 14 2026): the app's own words instead.
+  // a phone. A message with an amount of money or price words in it is never
+  // shown (founder rule, Nov 14 2026; App Store, outside the US storefront):
+  // the app's own words instead.
   const raw = typeof e.message === 'string' ? e.message.trim() : ''
-  const serverMessage = raw && !/\$\s?\d/.test(raw) ? raw.replace(/\bthis computer\b/g, 'this phone') : null
+  const serverMessage =
+    raw && !/\$\s?\d|\bprices?\b|plan or pack|raise the cap|top.?up/i.test(raw) ? raw.replace(/\bthis computer\b/g, 'this phone') : null
   const resetsAt =
     [e.resets_at, e.week?.resets_at, knownResetsAt].find((v): v is string => typeof v === 'string' && v.length > 0) ?? null
   const limitLabel = claimState === 'anonymous' ? linkButtonLabel('anonymous') : 'Get a plan'
@@ -577,7 +579,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
         httpStatus: status,
         retryable: false,
         message: "Today's publik API limit is reached. It resets at midnight UTC — or use your own key in Profile.",
-        ...action(claimState === 'anonymous' ? linkButtonLabel('anonymous') : 'Raise the cap'),
+        ...action(limitLabel),
       }
     case 'week_budget_reached':
       return {
@@ -671,7 +673,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.5'
+export const APP_VERSION = '0.1.6'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000

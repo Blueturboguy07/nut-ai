@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { WebLookupResult } from '@nutai/core-schema'
 import { healthScore } from '@nutai/totals'
+import { AiResultLinks } from '../src/components/AiResultLinks'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
@@ -248,6 +249,8 @@ export default function Result() {
             </View>
           )
         })}
+
+        <AiResultLinks source="result" />
       </ScrollView>
 
       <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg, borderColor: theme.border }]}>

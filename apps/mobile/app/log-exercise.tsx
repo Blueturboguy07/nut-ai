@@ -11,6 +11,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ExerciseEstimateZ } from '@nutai/core-schema'
+import { AiResultLinks } from '../src/components/AiResultLinks'
 import { Icon, type IconName } from '../src/components/Icon'
 import { db, localDate, setting, weightHistory } from '../src/data/repo'
 import {
@@ -269,6 +270,8 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viaPublik, setViaPublik] = useState(false)
+  // The AI estimate, shown after it is saved, with "Report a wrong result" (App Store 1.2).
+  const [saved, setSaved] = useState<{ label: string; kcal: number } | null>(null)
 
   useEffect(() => {
     void setting('provider').then((p) => setViaPublik(p === 'publik'))
@@ -311,8 +314,11 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
     }
 
     const e = parsed.data
-    await saveEntry(e.duration_min ? `${e.label} — ${Math.round(e.duration_min)} min` : e.label, Math.round(e.calories_kcal))
-    router.back()
+    const label = e.duration_min ? `${e.label} — ${Math.round(e.duration_min)} min` : e.label
+    const kcal = Math.round(e.calories_kcal)
+    await saveEntry(label, kcal)
+    setBusy(false)
+    setSaved({ label, kcal })
   }
 
   return (
@@ -352,18 +358,34 @@ function DescribeScreen({ onBack }: { onBack: () => void }) {
         ) : null}
 
         {busy ? <ActivityIndicator color={theme.textMuted} style={{ marginTop: space.xl }} /> : null}
+
+        {saved ? (
+          <View style={[styles.example, { backgroundColor: theme.uncertainBg, marginTop: space.md }]}>
+            <Text style={[type.bodyStrong, { color: theme.text }]}>Added: {saved.label}</Text>
+            <Text style={[type.body, { color: theme.textMuted, marginTop: space.xs }]}>
+              {saved.kcal} kcal burned · AI estimate
+            </Text>
+            <AiResultLinks source="exercise" />
+          </View>
+        ) : null}
       </ScrollView>
 
       <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, space.lg), backgroundColor: theme.bg }]}>
-        <Pressable
-          onPress={add}
-          disabled={!text.trim() || busy}
-          style={[styles.cta, { backgroundColor: text.trim() && !busy ? theme.text : theme.border }]}
-        >
-          <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>
-            {busy ? 'Estimating…' : 'Add Exercise'}
-          </Text>
-        </Pressable>
+        {saved ? (
+          <Pressable onPress={() => router.back()} style={[styles.cta, { backgroundColor: theme.text }]}>
+            <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>Done</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={add}
+            disabled={!text.trim() || busy}
+            style={[styles.cta, { backgroundColor: text.trim() && !busy ? theme.text : theme.border }]}
+          >
+            <Text style={[type.bodyStrong, { color: theme.bg, fontSize: 18 }]}>
+              {busy ? 'Estimating…' : 'Add Exercise'}
+            </Text>
+          </Pressable>
+        )}
       </View>
     </View>
   )

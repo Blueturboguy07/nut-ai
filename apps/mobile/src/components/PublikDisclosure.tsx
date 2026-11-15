@@ -35,8 +35,8 @@ import { Icon } from './Icon'
  *
  *   PublikCard — AFTER the mint, and forever in settings (CONTRACT §12). In
  *   this order: the plan line (a percent of the plan limit with a bar, never
- *   money), the one-sentence justification, and the primary button — "Link this phone & pick a plan" while anonymous, "Add a
- *   plan or pack" once claimed. Never a silent starter: the card is shown
+ *   money), the one-sentence justification, and the primary button — "Link this phone & pick a plan" while anonymous, "Get a
+ *   plan" once claimed. Never a silent starter: the card is shown
  *   the moment the key exists, with the real plan use on it.
  *
  * In an App Store build outside the US storefront (usePurchaseLinks false)

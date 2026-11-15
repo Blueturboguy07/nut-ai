@@ -87,6 +87,8 @@ function Root() {
         <Stack.Screen name="food-search" options={{ presentation: 'modal' }} />
         <Stack.Screen name="saved-foods" options={{ presentation: 'modal' }} />
         <Stack.Screen name="edit-goals" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="report-result" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="how-estimates-work" options={{ presentation: 'modal' }} />
       </Stack>
     </>
   )

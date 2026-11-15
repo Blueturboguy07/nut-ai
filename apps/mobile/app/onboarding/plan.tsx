@@ -15,10 +15,8 @@ import {
   activityFor,
   ageFrom,
   DIET_BIAS,
-  featureDefaultsFor,
   inferredGoal,
   kgToLb,
-  todayEmphasisFor,
   useAnswers,
 } from '../../src/onboarding/store'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -33,6 +31,10 @@ import { radius, space, type } from '../../src/theme/tokens'
  *
  * KEPT: the estimated-progress chart, the editable calorie and macro cards, the
  * "Your info" recap, and "How to reach your goals". Those are genuinely useful.
+ *
+ * REMOVED (App Store 2.1, Nov 14 2026): "What we set up for you". It listed
+ * features that do not exist (reminders, calorie rollover, diet-biased food
+ * matches, meal ideas, a Today screen that changes with your answers).
  *
  * CUT, deliberately:
  *   - "Trusted by millions: 10M+ users, 4.8 stars". We have no users. Inventing
@@ -53,11 +55,13 @@ export default function PlanScreen() {
   const derivedGoal = inferredGoal(a)
 
   const plan = useMemo(() => {
+    // Today, not a fixed date: the goal date and the age are counted from now.
+    const now = Date.now()
     const body: BodyInputs = {
       sex: a.sex ?? 'unspecified',
       weightKg: a.weightKg ?? 80,
       heightCm: a.heightCm ?? 170,
-      ageYears: ageFrom(a, Date.parse('2026-08-01T00:00:00Z')),
+      ageYears: ageFrom(a, now),
     }
 
     const currentKg = a.weightKg ?? 80
@@ -77,7 +81,7 @@ export default function PlanScreen() {
 
     // Target date from the actual arithmetic, not a flattering guess.
     const weeks = rate > 0 ? deltaLb / rate : 0
-    const date = new Date(Date.parse('2026-08-01T00:00:00Z') + weeks * 7 * 86_400_000)
+    const date = new Date(now + weeks * 7 * 86_400_000)
     const dateLabel = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
 
     return { target, macros, deltaLb, dateLabel, rate }
@@ -89,7 +93,6 @@ export default function PlanScreen() {
       ? 'Goal: maintain your weight'
       : `Goal: ${gaining ? 'gain' : 'lose'} ${plan.deltaLb.toFixed(0)} lbs by ${plan.dateLabel}`
 
-  const features = featureDefaultsFor(a.blocker)
   const diet = a.dietStyle ? DIET_BIAS[a.dietStyle] : null
 
   return (
@@ -196,28 +199,6 @@ export default function PlanScreen() {
           </View>
         </View>
 
-        {/* What your answers actually switched on. */}
-        <View style={[styles.section, { backgroundColor: theme.bgSunken }]}>
-          <Text style={[type.heading, { color: theme.text }]}>What we set up for you</Text>
-          <Text style={[type.caption, { color: theme.textMuted, marginTop: 2 }]}>
-            From your answers. All of it is changeable in Settings.
-          </Text>
-          <View style={{ marginTop: space.md, gap: space.sm }}>
-            {diet ? (
-              <Bullet text={`Food matches biased toward a ${diet.label.toLowerCase()} diet, and "what kind of milk?" defaults to ${diet.defaultMilk}.`} />
-            ) : null}
-            {features.remindersOn ? <Bullet text="Reminders on, learned from when you actually log." /> : null}
-            {features.savedMealsPinned ? <Bullet text="Saved meals pinned for one-tap relogging." /> : null}
-            {features.showHealthScore ? <Bullet text="Health score shown, with its formula published." /> : null}
-            {features.showMealIdeas ? <Bullet text="Meal ideas surfaced on the Today screen." /> : null}
-            {a.worksWithProfessional ? (
-              <Bullet text="Shareable export enabled, and we'll keep our coaching suggestions out of your way." />
-            ) : null}
-            {a.rolloverCalories ? <Bullet text="Unused calories roll over, capped at 200 a day." /> : null}
-            <Bullet text={`Today screen leads with ${todayEmphasisFor(a.accomplish)}.`} />
-          </View>
-        </View>
-
         {/* How to reach your goals */}
         <View style={[styles.section, { backgroundColor: theme.bgSunken }]}>
           <Text style={[type.heading, { color: theme.text }]}>How to reach your goals</Text>
@@ -298,16 +279,6 @@ function InfoRow({ icon, label, value }: { icon: IconName; label: string; value:
       </View>
       <Text style={[type.body, { color: theme.textMuted, flex: 1 }]}>{label}</Text>
       <Text style={[type.bodyStrong, { color: theme.text }]}>{value}</Text>
-    </View>
-  )
-}
-
-function Bullet({ text }: { text: string }) {
-  const theme = useTheme()
-  return (
-    <View style={{ flexDirection: 'row', gap: space.sm }}>
-      <Text style={{ color: theme.textMuted }}>•</Text>
-      <Text style={[type.caption, { color: theme.textMuted, flex: 1, lineHeight: 19 }]}>{text}</Text>
     </View>
   )
 }

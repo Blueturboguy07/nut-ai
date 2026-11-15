@@ -67,7 +67,7 @@ const config: ExpoConfig = {
   slug: SLUG,
   // The publik module's APP_VERSION (src/inference/publik-core.ts) says the
   // same; a test checks it.
-  version: '0.1.5',
+  version: '0.1.6',
   // The mark: a white peanut silhouette inside four scan-frame corners on
   // near-black. Source of truth is assets/icon.svg; the PNGs are rendered
   // from it (rsvg-convert), never hand-edited.
@@ -238,6 +238,11 @@ const config: ExpoConfig = {
     // it fails (plugins/withPublikTokenCheck.js); only a dev build (Metro) may
     // fall back to apps/mobile/publik-build.json (src/inference/publik.ts).
     publikAppToken: process.env.PUBLIK_APP_TOKEN ?? null,
+    // Is HealthKit in this build (SKIP_HEALTHKIT=0)? When it is not, the app
+    // shows no Apple Health screen, row or onboarding step
+    // (src/health/build.ts). Set SKIP_HEALTHKIT=0 for the prebuild AND the
+    // native build: this file is evaluated again then.
+    healthKit: !SKIP_HEALTHKIT,
   },
 }
 

@@ -84,7 +84,7 @@ export function planUseLine(u: PlanUse, now: Date = new Date()): string {
 
 /** Where a meal photo goes on publik mode — the second disclosure a phone owes. */
 export const DISCLOSURE_DATA_PATH =
-  "Your meal photo and the text around it go through publik's servers to a shared model account. publik does not store request bodies beyond a 24-hour idempotency fingerprint; the model provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
+  "Your meal photo and the text around it go through publik's servers to the AI provider that answers (for example Anthropic, Google or OpenAI). publik does not store request bodies beyond a 24-hour idempotency fingerprint; the AI provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
 
 /**
  * The only publik pages the app opens for sign-in, privacy and account
@@ -94,10 +94,12 @@ export const DISCLOSURE_DATA_PATH =
 export const PRIVACY_URL = 'https://publikhq.com/in-app/privacy'
 /** publik's account deletion page (Profile → publik account → Delete account). */
 export const PUBLIK_DELETE_ACCOUNT_URL = 'https://publikhq.com/in-app/delete-account'
+/** publik's support page (Profile → Help and support, Report a wrong result). src/support.ts adds the query. */
+export const PUBLIK_SUPPORT_URL = 'https://publikhq.com/in-app/support'
 
-/** CONTRACT §12.1(c) / §12.2: the primary button, by claim state. */
+/** CONTRACT §12.1(c) / §12.2: the primary button, by claim state (US storefront only). */
 export function linkButtonLabel(claimState: 'anonymous' | 'claimed'): string {
-  return claimState === 'anonymous' ? 'Link this phone & pick a plan' : 'Add a plan or pack'
+  return claimState === 'anonymous' ? 'Link this phone & pick a plan' : 'Get a plan'
 }
 
 /**

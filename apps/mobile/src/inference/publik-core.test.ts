@@ -421,7 +421,7 @@ describe('classifyGatewayError', () => {
   })
 
   it('caps, model gates and outages map to their own states', () => {
-    expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'daily_cap_reached', claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' } }))).toMatchObject({ kind: 'quota-exhausted', retryable: false, action: { label: 'Raise the cap' } })
+    expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'daily_cap_reached', claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' } }))).toMatchObject({ kind: 'quota-exhausted', retryable: false, action: { label: 'Get a plan' } })
     expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'rate_limit_exceeded' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
     expect(classifyGatewayError(402, JSON.stringify({ error: { type: 'model_requires_claim', claim_url: 'https://publikhq.com/claim/A' } }))).toMatchObject({ kind: 'model-unavailable', action: { url: 'https://publikhq.com/claim/A?in_app=1' } })
     expect(classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'Unknown model' } }))).toMatchObject({ kind: 'model-unavailable' })

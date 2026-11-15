@@ -1,7 +1,7 @@
-import { router } from 'expo-router'
+import { Redirect, router } from 'expo-router'
 import { StyleSheet, Text, View } from 'react-native'
 import { OnboardingScreen } from '../../src/components/onboarding/Chrome'
-import { nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
+import { FLOW, nextRoute, stepIndex, TOTAL_STEPS } from '../../src/onboarding/flow'
 import { Icon } from '../../src/components/Icon'
 import { APP_NAME } from '../../src/inference/publik-copy'
 import { useTheme } from '../../src/theme/ThemeProvider'
@@ -20,6 +20,8 @@ import { radius, space, type } from '../../src/theme/tokens'
  */
 export default function NotificationsScreen() {
   const theme = useTheme()
+  // Reminders are not built yet: the flow leaves this step out (flow.ts NOT_BUILT).
+  if (!FLOW.includes('notifications')) return <Redirect href={nextRoute('notifications') as never} />
   return (
     <OnboardingScreen
       step={stepIndex('notifications')}
