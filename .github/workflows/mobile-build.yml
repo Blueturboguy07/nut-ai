@@ -229,7 +229,10 @@ jobs:
             LOG="$RUNNER_TEMP/selftest-$attempt.log"
             SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
             PID=$!
-            for i in $(seq 1 120); do
+            # Up to 300 s: the lines come only after the bundled food
+            # database is imported and searched, on a simulator that has just
+            # booted (run 43687730207: 97 s in one job, over 120 s in the other).
+            for i in $(seq 1 300); do
               grep -q 'publik self-test:' "$LOG" && break
               kill -0 "$PID" 2>/dev/null || break
               sleep 1
