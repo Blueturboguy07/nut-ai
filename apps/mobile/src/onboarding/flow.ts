@@ -16,7 +16,7 @@ export const FLOW = [
   // agreement or a contradiction the app then has to resolve silently.
   'desired-weight',
   // 'trend' sits after the weights so its curve can follow the real direction.
-  // The reference draws a decline unconditionally, which is wrong for a bulk.
+  // A decline drawn unconditionally would be wrong for a bulk.
   'trend',
   'professional',
   'potential',

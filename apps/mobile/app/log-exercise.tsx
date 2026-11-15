@@ -30,7 +30,7 @@ import { MIN_TAP_TARGET, radius, space, type } from '../src/theme/tokens'
  * Log exercise — the four-path flow.
  *
  * Run and Weight lifting are DETERMINISTIC: MET x body weight x minutes, the
- * same three intensity anchors the incumbent shows, no model anywhere.
+ * three common intensity anchors (low, medium, high), no model anywhere.
  * Describe is the one model-owned path and says so on screen. Manual is the
  * user's own number, recorded verbatim.
  *

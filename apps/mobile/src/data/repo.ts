@@ -14,7 +14,7 @@ import { ONBOARDING_DONE_KEY } from '../onboarding/done-key'
 import { EXPORT_TABLES, WIPE_ONLY_TABLES } from './backup-core'
 import { localDate, slotFor } from './date-utils'
 import { clearCredential } from '../inference/credentials'
-import { disconnectPublik } from '../inference/publik'
+import { forgetPublikNow } from '../inference/publik'
 import { openUserDb } from '../db/expo-adapter'
 
 export { localDate, slotFor }
@@ -68,7 +68,9 @@ export async function resetEverything(): Promise<void> {
   for (const p of ['anthropic', 'openai', 'google'] as const) {
     await clearCredential(p)
   }
-  await disconnectPublik()
+  // Sign out of publik on this phone now; the revoke goes in the background.
+  const revoke = await forgetPublikNow()
+  void revoke()
 
   await Storage.removeItem(ONBOARDING_DONE_KEY)
 }

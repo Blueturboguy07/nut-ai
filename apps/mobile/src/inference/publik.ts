@@ -3,13 +3,15 @@ import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import Storage from 'expo-sqlite/kv-store'
 import * as WebBrowser from 'expo-web-browser'
+import { useEffect, useState } from 'react'
 import { AppState, Platform } from 'react-native'
-import { launchValue, printLineAndExit } from '../../modules/publik-launch'
+import { launchValue, printLineAndExit, storefrontCountry } from '../../modules/publik-launch'
 import buildConfig from '../../publik-build.json'
-import { BUILD_ENV_OVERRIDES, PUBLIK_GATE_MODE } from '../build-flags'
+import { APP_STORE_BUILD, BUILD_ENV_OVERRIDES, DEV_BUILD, PUBLIK_GATE_MODE } from '../build-flags'
 import { clearCredential, loadCredential, saveCredential } from './credentials'
 import {
   allowPublikOrigin,
+  appTokenOf,
   emptyWallet,
   ensureSignedIn,
   fetchWallet,
@@ -18,8 +20,11 @@ import {
   isUsableAppToken,
   pauseTelemetry,
   provision,
+  purchaseLinksFor,
+  purchaseLinksOn,
   resumeTelemetry,
   revokeInstall,
+  setPurchaseLinks,
   stopTelemetry,
   type Choice,
   type GateDevice,
@@ -36,13 +41,15 @@ import {
 /**
  * publik API — the Expo binding.
  *
- * ABOUT `publik-build.json`. The app token in it is a publishable identifier,
- * not a credential: it names this app to publikhq.com so an install can mint
- * its own bounded `pk_` key, and it can do nothing else (no reads, no spend,
- * no attribution to anyone but Nut AI). It ships inside every phone build,
- * and every phone build is compiled from this public repository, so
- * committing it exposes nothing a build does not. Rotating it is a commit
- * plus a guide pin bump. The rule in `credentials.ts` — keys are written only
+ * ABOUT THE APP TOKEN. The app token (pat_) is a publishable identifier, not
+ * a credential: it names this app to publikhq.com so an install can mint its
+ * own bounded `pk_` key, and it can do nothing else (no reads, no spend, no
+ * attribution to anyone but Nut AI). It ships inside every phone build. A
+ * release build takes it ONLY from the build input PUBLIK_APP_TOKEN
+ * (app.config.ts `extra.publikAppToken`; CI passes the repo secret, and the
+ * native build fails without it). The committed `publik-build.json` holds
+ * the placeholder and its other settings; its `appToken` may serve a dev
+ * build (Metro) only. The rule in `credentials.ts` — keys are written only
  * from runtime user input — still holds: the `pk_` key this token mints is
  * written here into SecureStore, after the user accepts the disclosure, and
  * never appears in source (a test forbids it).
@@ -75,20 +82,22 @@ let choiceCache: Choice | null = null
  */
 const LAUNCH_BASE_URL = launchValue('PUBLIK_API_BASE_URL')
 
+/** The build input PUBLIK_APP_TOKEN, as expo-constants wrote it into this build (app.config.ts). */
+const BUILD_APP_TOKEN: unknown = (Constants.expoConfig?.extra as { publikAppToken?: unknown } | undefined)?.publikAppToken
+
 export function publikBuildConfig(): PublikBuildConfig {
   // Then the dev override for a preview gateway, inlined by Metro at bundle
-  // time. No env override exists for the token: it is a file so an Xcode GUI
-  // build (which does not inherit the shell) cannot silently differ.
-  // A release build ignores both (BUILD_ENV_OVERRIDES is false there).
+  // time. A release build ignores both (BUILD_ENV_OVERRIDES is false there).
   const devBase = BUILD_ENV_OVERRIDES ? process.env.EXPO_PUBLIC_PUBLIK_API_BASE_URL : undefined
   const baseUrl = LAUNCH_BASE_URL || devBase || buildConfig.baseUrl
-  return { ...buildConfig, baseUrl }
+  // The token: the build input only; the committed file in a dev build only.
+  return { ...buildConfig, appToken: appTokenOf(BUILD_APP_TOKEN, buildConfig.appToken, DEV_BUILD), baseUrl }
 }
 
 // That publik's links (claim, top up) open like publikhq.com's.
 allowPublikOrigin(publikBuildConfig().baseUrl)
 
-/** False while the committed token is the placeholder — then the app is BYO-only. */
+/** False when this build has no app token (the placeholder) — then the app is BYO-only. */
 export function publikAvailable(): boolean {
   return isUsableAppToken(publikBuildConfig().appToken)
 }
@@ -121,6 +130,15 @@ export async function savePublikWallet(w: PublikWallet): Promise<void> {
   await Storage.setItem(WALLET_KEY, JSON.stringify(w))
 }
 
+/** The publik key this phone holds now; null when none (or the store cannot be read). */
+async function currentKey(): Promise<string | null> {
+  try {
+    return (await loadCredential('publik'))?.value ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Key + install identity both present: the resolver can route to publik. */
 export async function publikConnected(): Promise<boolean> {
   const [cred, install] = await Promise.all([loadCredential('publik'), loadPublikInstall()])
@@ -144,11 +162,14 @@ function deviceFacts() {
  * "Continue with publik API" (onboarding) or "Connect publik API" (settings),
  * and by the bounded re-mint after key_revoked. Never from the capture path.
  *
- * A stored install identity is reused (a Reconnect after a revoke gets the
- * same install, no second starter). If the server answers 200-replay for an
- * install whose key this phone no longer holds, a fresh install_id is minted
- * exactly once. `force` skips the local short-circuit (Reconnect after a
- * server-side revoke, the bounded re-mint after key_revoked{reprovision}).
+ * A stored install identity is reused only beside its key (a Reconnect after
+ * a revoke gets the same install, no second starter). With no key on this
+ * phone (the gate's case) it is never reused: a fresh install_id. If the
+ * server answers 200-replay for an install whose key this phone no longer
+ * holds, or install_revoked (its owner disconnected it), a fresh install_id
+ * is minted exactly once. `force` skips the local short-circuit (Reconnect
+ * after a server-side revoke, the bounded re-mint after
+ * key_revoked{reprovision}).
  */
 export async function connectPublik(
   opts: { force?: boolean } = {},
@@ -156,20 +177,18 @@ export async function connectPublik(
 ): Promise<ProvisionResult> {
   const cfg = publikBuildConfig()
   const existing = await loadPublikInstall()
+  const held = await currentKey()
   const facts = deviceFacts()
 
   // Already connected and not told otherwise (a user stepping back and forth
   // in onboarding): hand back what this phone holds instead of a re-mint.
-  if (!opts.force && existing) {
-    const cred = await loadCredential('publik')
-    if (cred) {
-      const wallet = (await loadPublikWallet()) ?? emptyWallet(existing.claimState)
-      return { ok: true, key: cred.value, install: existing, wallet, starterMicros: 0 }
-    }
+  if (!opts.force && existing && held) {
+    const wallet = (await loadPublikWallet()) ?? emptyWallet(existing.claimState)
+    return { ok: true, key: held, install: existing, wallet, starterMicros: 0 }
   }
 
-  let res = await provision({ cfg, installId: existing?.installId ?? Crypto.randomUUID(), ...facts }, fetchImpl)
-  if (!res.ok && res.kind === 'replayed') {
+  let res = await provision({ cfg, installId: existing && held ? existing.installId : Crypto.randomUUID(), ...facts }, fetchImpl)
+  if (!res.ok && (res.kind === 'replayed' || res.kind === 'install-revoked')) {
     res = await provision({ cfg, installId: Crypto.randomUUID(), ...facts }, fetchImpl)
     if (!res.ok && res.kind === 'replayed') return { ok: false, kind: 'malformed', status: 200 }
   }
@@ -185,35 +204,55 @@ export async function connectPublik(
   return { ...res, install }
 }
 
-/** Forget the key, the install identity and the snapshot on this phone (no server call). */
-async function forgetPublikLocally(): Promise<void> {
-  await clearCredential('publik')
-  try {
-    await SecureStore.deleteItemAsync(INSTALL_KEY)
-  } catch {
-    /* nothing stored */
-  }
-  await Storage.removeItem(WALLET_KEY)
+/**
+ * Forget the install identity, the key and the snapshot on this phone (no
+ * server call). The install record goes FIRST, then the key. Every delete is
+ * tried; a failed one is thrown after the others, never hidden (a missing
+ * item is not a failure). An install record left behind with no key is
+ * never reused: connectPublik reuses an install ID only beside its key.
+ */
+export async function forgetPublikLocally(): Promise<void> {
   choiceCache = null
+  const failed: string[] = []
+  const attempt = async (name: string, del: () => Promise<unknown>) => {
+    try {
+      await del()
+    } catch {
+      failed.push(name)
+    }
+  }
+  await attempt(INSTALL_KEY, () => SecureStore.deleteItemAsync(INSTALL_KEY))
+  await attempt('key.publik', () => clearCredential('publik'))
+  await attempt(WALLET_KEY, () => Storage.removeItem(WALLET_KEY))
+  if (failed.length) throw new Error(`publik: this phone could not delete ${failed.join(', ')}`)
 }
 
 /**
- * Sign out on this phone. In this order: the key into memory, the local
- * copies deleted, usage counting stopped, and only then the revoke on the
- * server (best effort, at most ACCOUNT_CALL_TIMEOUT_MS; publik's idle sweep
- * revokes a key it never hears from). No answer from publik can keep the key
- * on the phone.
+ * Sign out on this phone, the local half. In this order: the key into memory,
+ * the local copies deleted, usage counting stopped. It returns the server
+ * half, the revoke (best effort, at most ACCOUNT_CALL_TIMEOUT_MS; publik's
+ * idle sweep revokes a key it never hears from), so a caller need not wait
+ * for it. No answer from publik can keep the key on the phone.
  */
-export async function disconnectPublik(fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function forgetPublikNow(fetchImpl: typeof fetch = fetch): Promise<() => Promise<void>> {
   const cred = await loadCredential('publik').catch(() => null)
   const install = await loadPublikInstall()
   try {
     await forgetPublikLocally()
   } catch {
-    /* a store that cannot be cleared: the revoke below still ends the key */
+    /* a store that cannot be cleared: the revoke still ends the key */
   }
   stopTelemetry()
-  if (cred && install) await revokeInstall(install.baseUrl, cred.value, fetchImpl).catch(() => undefined)
+  return async () => {
+    if (!cred) return
+    await revokeInstall(install?.baseUrl ?? publikBuildConfig().baseUrl, cred.value, fetchImpl).catch(() => undefined)
+  }
+}
+
+/** Sign out on this phone, then the revoke (waited for, at most ACCOUNT_CALL_TIMEOUT_MS). */
+export async function disconnectPublik(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const revoke = await forgetPublikNow(fetchImpl)
+  await revoke()
 }
 
 /** GET /wallet → snapshot. Also notices a claim that happened on the site. */
@@ -224,13 +263,17 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
   // At most ACCOUNT_CALL_TIMEOUT_MS, the answer's body included.
   const w = await fetchWallet(install.baseUrl, cred.value, install.claimState, fetchImpl)
   if (!w) return null
+  // A sign-out (or a new key) while the call was out: write nothing back.
+  if ((await currentKey()) !== cred.value) return null
   try {
+    const now = await loadPublikInstall()
+    if (!now) return null
     await savePublikWallet(w)
-    if (w.claimState !== install.claimState || (w.claimUrl && w.claimUrl !== install.claimUrl)) {
+    if (w.claimState !== now.claimState || (w.claimUrl && w.claimUrl !== now.claimUrl)) {
       await savePublikInstall({
-        ...install,
+        ...now,
         claimState: w.claimState,
-        claimUrl: w.claimState === 'claimed' ? null : (w.claimUrl ?? install.claimUrl),
+        claimUrl: w.claimState === 'claimed' ? null : (w.claimUrl ?? now.claimUrl),
       })
     }
     return w
@@ -248,6 +291,8 @@ export async function refreshPublikWallet(fetchImpl: typeof fetch = fetch): Prom
  * written as null instead of lingering on the settings card.
  */
 export async function notePublikWallet(w: PublikWalletPatch): Promise<void> {
+  // The metered call's answer came after a sign-out: write nothing back.
+  if (!(await currentKey())) return
   const prev = (await loadPublikWallet()) ?? emptyWallet(w.claimState ?? 'anonymous')
   const merged: PublikWallet = { ...prev, ...w }
   await savePublikWallet(merged)
@@ -323,6 +368,8 @@ export async function publikPlanAllowed(): Promise<boolean> {
 
 /** The gate's GET /wallet, folded into the snapshot the settings card shows. */
 async function noteGateWallet(w: PublikWallet): Promise<void> {
+  // A sign-out while the gate's call was out: write nothing back.
+  if (!(await currentKey())) return
   await savePublikWallet(w)
   const install = await loadPublikInstall()
   if (install && install.claimState !== w.claimState) {
@@ -430,6 +477,7 @@ function phoneDevice(): GateDevice {
     saveChoice: (choice) => setPublikChoice(choice),
     noteWallet: noteGateWallet,
     planAllowed: publikPlanAllowed,
+    purchaseLinks: loadPurchaseLinks,
     countUse: countAppUse,
     wait: waitInForeground,
     value: launchValue,
@@ -471,11 +519,15 @@ export function requestPublikSignIn(): void {
   signOutListeners.forEach((listener) => listener())
 }
 
-/** Sign out of publik: delete the key on this phone, stop usage counting, revoke (best effort), then the gate again. */
-export async function signOutOfPublik(): Promise<void> {
-  stopTelemetry()
-  await disconnectPublik()
+/**
+ * Sign out of publik: the key off this phone and usage counting stopped, then
+ * Sign in with publik again AT ONCE. The revoke goes in the background (best
+ * effort); nobody waits for it, and with no network the sign-out still works.
+ */
+export async function signOutOfPublik(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const revoke = await forgetPublikNow(fetchImpl)
   requestPublikSignIn()
+  void revoke()
 }
 
 /**
@@ -484,9 +536,54 @@ export async function signOutOfPublik(): Promise<void> {
  * page in the in-app browser. The publik account itself is deleted there,
  * by the person, for every publik app. Resolves when the sheet closes.
  */
-export async function deletePublikAccount(): Promise<void> {
-  stopTelemetry()
-  await disconnectPublik()
+export async function deletePublikAccount(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const revoke = await forgetPublikNow(fetchImpl)
+  // The revoke in the background: the account page opens at once.
+  void revoke()
   await openPublikLink(PUBLIK_DELETE_ACCOUNT_URL)
   requestPublikSignIn()
+}
+
+// ---------------------------------------------------------------------------
+// Purchase links (publik-core.ts purchaseLinksFor)
+// ---------------------------------------------------------------------------
+
+let purchaseLinksLoad: Promise<boolean> | null = null
+
+/**
+ * May this phone show a link that sells a publik plan? Not an App Store build:
+ * yes. An App Store build: only when StoreKit says the storefront is the USA,
+ * read once per run; until then, and when it cannot be read, no.
+ */
+export function loadPurchaseLinks(): Promise<boolean> {
+  if (!purchaseLinksLoad) {
+    purchaseLinksLoad = (async () => {
+      const on = purchaseLinksFor(APP_STORE_BUILD, APP_STORE_BUILD ? await storefrontCountry() : null)
+      setPurchaseLinks(on)
+      return on
+    })().catch(() => {
+      setPurchaseLinks(!APP_STORE_BUILD)
+      return !APP_STORE_BUILD
+    })
+  }
+  return purchaseLinksLoad
+}
+
+// Off at once in an App Store build; the storefront read may turn the links on.
+setPurchaseLinks(!APP_STORE_BUILD)
+void loadPurchaseLinks()
+
+/** For a screen: the purchase links of this phone (false while the storefront is read in an App Store build). */
+export function usePurchaseLinks(): boolean {
+  const [on, setOn] = useState<boolean>(purchaseLinksOn)
+  useEffect(() => {
+    let live = true
+    void loadPurchaseLinks().then((v) => {
+      if (live) setOn(v)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+  return on
 }

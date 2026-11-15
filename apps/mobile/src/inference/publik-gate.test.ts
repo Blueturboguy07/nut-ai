@@ -240,6 +240,30 @@ describe('the gate words', () => {
     )
   })
 
+  it('outside the US storefront of an App Store build: no Get a plan and no price; Connect your plan and Use my own key stay', () => {
+    const w = (b: WalletBody): GateWallet => ({
+      claimState: b.claim_state,
+      claimUrl: null,
+      handle: b.account?.handle ?? null,
+      plan: { kind: b.plan.kind as 'none' | 'plan', label: b.plan.label },
+      balanceMicros: b.balance_micros,
+      topUpUrl: 'https://publikhq.com/wallet?top_up=1',
+    })
+    const empty = gateScreen('choose', w(claimedEmpty), null, undefined, false)
+    expect(empty).toMatchObject({
+      title: WORDS.chooseTitle,
+      body: 'You are signed in as @mann. Your publik balance is empty. To get a plan, search for "publik" on Google. Or use your own key for AI in this app.',
+    })
+    expect(empty.buttons).toEqual([{ action: 'own_key', label: WORDS.ownKey }])
+    expect(empty.body).not.toMatch(/\$|Get a plan|https?:/)
+    const plan = gateScreen('choose', w(claimedPlan), null, undefined, false)
+    expect(plan.buttons.map((b) => b.label)).toEqual([WORDS.connect, WORDS.ownKey])
+    const balance = gateScreen('choose', { ...w(claimedEmpty), balanceMicros: 1_250_000 }, null, undefined, false)
+    expect(balance.buttons.map((b) => b.label)).toEqual([WORDS.connect, WORDS.ownKey])
+    // In the US storefront the words are the contract's, as above.
+    expect(gateScreen('choose', w(claimedEmpty), null, undefined, true).buttons.map((b) => b.label)).toEqual([WORDS.getPlan, WORDS.ownKey])
+  })
+
   it('the module file is what the publik scan looks for, with the slug and version of this app', () => {
     const code = readFileSync(join(__dirname, 'publik-core.ts'), 'utf8')
     for (const s of [`'${V1}/installs'`, `'${V1}/telemetry'`, `'app_${'opened'}'`, `export const APP_${'SLUG'} = 'nut-ai'`]) expect(code).toContain(s)
@@ -318,6 +342,55 @@ describe('ensureSignedIn against a fake publik', () => {
     for (const s of seen) expect(s).toMatchObject({ title: WORDS.title, body: WORDS.unreachable, note: null, buttons: [{ action: 'retry', label: WORDS.retry }] })
   })
 
+  it('outside the US storefront the plan screen opens no link, and Use my own key passes the gate', async () => {
+    wallets = [claimedEmpty]
+    const p = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: true })
+    p.device.purchaseLinks = async () => false
+    const { ui, seen, opened } = scriptedUI()
+    expect(await ensureSignedIn(ui, p.device)).toMatchObject({ choice: 'own_key', chosen: true })
+    expect(seen.map((s) => s.buttons.map((b) => b.label))).toEqual([[WORDS.ownKey]])
+    expect(opened).toEqual([])
+  })
+
+  it('outside the US storefront a plan got elsewhere shows when the person comes back to the app', async () => {
+    wallets = [claimedEmpty, claimedEmpty, claimedPlan]
+    const p = phone({}, { key: KEY, claimUrl: null, choice: null, claimed: true })
+    p.device.purchaseLinks = async () => false
+    // null: "until the app is in front again", here at once.
+    p.device.wait = (ms, signal) =>
+      new Promise<'timer' | 'resumed'>((resolve) => {
+        const t = setTimeout(() => resolve(ms === null ? 'resumed' : 'timer'), 2)
+        signal.addEventListener('abort', () => {
+          clearTimeout(t)
+          resolve('timer')
+        })
+      })
+    const seen: GateScreen[] = []
+    const ui: GateUI = {
+      show(s) {
+        seen.push(s)
+        if (s.title === WORDS.connectTitle) return Promise.resolve('connect' as GateAction)
+        return new Promise<GateAction>(() => {})
+      },
+      openUrl() {
+        throw new Error('no link may open here')
+      },
+    }
+    expect(await ensureSignedIn(ui, p.device)).toMatchObject({ choice: 'publik', chosen: true })
+    expect(seen.map((s) => s.title)).toEqual([WORDS.chooseTitle, WORDS.connectTitle])
+    expect(seen[0]!.buttons.map((b) => b.label)).toEqual([WORDS.ownKey])
+  })
+
+  it('a 403 with publik\'s JSON error from GET /wallet is handled like a 401', async () => {
+    walletStatus = 403
+    const p = phone({}, { key: KEY, claimUrl: null, choice: 'publik' })
+    const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
+    await expect(ensureSignedIn(ui, p.device)).rejects.toThrow('stopped')
+    expect(p.forgot).toBe(2)
+    expect(p.provisions).toBe(1)
+    expect(seen[0]).toMatchObject({ title: WORDS.title, body: 'This key is not valid.', buttons: [{ action: 'retry', label: WORDS.retry }] })
+  })
+
   it('a revoked key (401) is forgotten and provisioned again; a second 401 waits for Retry', async () => {
     walletStatus = 401
     const p = phone({}, { key: KEY, claimUrl: null, choice: 'publik' })
@@ -335,7 +408,7 @@ describe('ensureSignedIn against a fake publik', () => {
     }
     const { ui, seen } = scriptedUI({ [WORDS.title]: 'stop' })
     await expect(ensureSignedIn(ui, p.device)).rejects.toThrow('stopped')
-    expect(seen[0]).toMatchObject({ title: WORDS.title, body: 'This phone could not keep its publik key. Restart Nut AI and try again.', buttons: [{ action: 'retry', label: WORDS.retry }] })
+    expect(seen[0]).toMatchObject({ title: WORDS.title, body: 'This phone could not keep its publik key. Restart publik Nut AI and try again.', buttons: [{ action: 'retry', label: WORDS.retry }] })
   })
 
   it('telemetry is off with DO_NOT_TRACK, and the gate still runs', async () => {

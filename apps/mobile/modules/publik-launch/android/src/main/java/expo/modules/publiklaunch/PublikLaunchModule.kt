@@ -35,5 +35,10 @@ class PublikLaunchModule : Module() {
       }
       Unit
     }
+
+    // No App Store on Android: no storefront (the JS reads "" as none).
+    Function("storefrontCountry") {
+      ""
+    }
   }
 }

@@ -332,7 +332,7 @@ async function refineMisses(result: ScanResult, rawPayload: unknown, r: Resolved
  * The re-analysis is seeded with the CURRENT ingredient state (including every
  * edit the user already made), and the instruction is explicit that items the
  * correction does not implicate must come back byte-identical. This is what
- * prevents the incumbent's canonical failure: re-analysis that deletes the
+ * prevents a common failure: re-analysis that deletes the
  * corrections you already made. Cost is merged so the ledger bills one meal.
  */
 export async function fixScan(note: string): Promise<void> {

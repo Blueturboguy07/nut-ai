@@ -8,12 +8,16 @@ import identity from './app-identity.json'
  * change rather than a grep across the codebase. `Nut AI` was chosen over the
  * research documents' working codename `Tally`.
  *
- * The display name (home screen, publik screens) is ONE setting:
- * `app-identity.json` → `displayName`. src/inference/publik-copy.ts reads the
- * same file. The bundle id, the slug (the publik listing) and the scheme
- * stay as they are on a rename.
+ * The app's name is ONE setting: `app-identity.json` → `displayName`
+ * ("publik Nut AI": the App Store name and every in-app text, including the
+ * permission strings). src/inference/publik-copy.ts reads the same file.
+ * `homeScreenName` ("Nut AI") is only the short label under the icon
+ * (CFBundleDisplayName, the Android label), because iOS cuts a home-screen
+ * label of 13 or more characters. The bundle id, the slug (the publik
+ * listing) and the scheme stay as they are on a rename.
  */
 const NAME = identity.displayName
+const HOME_SCREEN_NAME = identity.homeScreenName
 
 // Every scan sends the photo to an AI provider (publik API or the person's
 // own key); there is no on-device model, so the strings say so.
@@ -58,11 +62,12 @@ const SKIP_HEALTHKIT = process.env.SKIP_HEALTHKIT !== '0'
 const BUILD_NUMBER = /^[1-9][0-9]{0,8}$/.test(process.env.APP_BUILD_NUMBER ?? '') ? process.env.APP_BUILD_NUMBER! : '1'
 
 const config: ExpoConfig = {
-  name: NAME,
+  // The label under the icon; the App Store and in-app name is NAME.
+  name: HOME_SCREEN_NAME,
   slug: SLUG,
   // The publik module's APP_VERSION (src/inference/publik-core.ts) says the
   // same; a test checks it.
-  version: '0.1.2',
+  version: '0.1.3',
   // The mark: a white peanut silhouette inside four scan-frame corners on
   // near-black. Source of truth is assets/icon.svg; the PNGs are rendered
   // from it (rsvg-convert), never hand-edited.
@@ -97,9 +102,12 @@ const config: ExpoConfig = {
      * the app_opened / active_session counts (ProductInteraction). A meal
      * photo sent through publik API: publik keeps no request content, but the
      * AI company behind the model may, so it is declared "not linked" (that
-     * company never sees who sent it). A photo sent with the person's own key
-     * goes to the AI company they named, not to us or publik. The App Privacy
-     * answers in App Store Connect must say the same.
+     * company never sees who sent it). The same holds for the text the
+     * person types for the AI (a food or a workout described in words):
+     * OtherUserContent, not linked, for app functionality. A photo or text
+     * sent with the person's own key goes to the AI company they named, not
+     * to us or publik. The App Privacy answers in App Store Connect must say
+     * the same.
      */
     privacyManifests: {
       NSPrivacyTracking: false,
@@ -147,6 +155,13 @@ const config: ExpoConfig = {
           NSPrivacyCollectedDataTypeTracking: false,
           NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
         },
+        {
+          // Typed food and workout text sent to the AI provider.
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeOtherUserContent',
+          NSPrivacyCollectedDataTypeLinked: false,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        },
       ],
     },
     infoPlist: {
@@ -157,7 +172,7 @@ const config: ExpoConfig = {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription: CAMERA_TEXT,
       NSPhotoLibraryUsageDescription: `${NAME} can read a meal photo you already took. The photo goes to the AI provider you choose, which reads the food.`,
-      NSFaceIDUsageDescription: `${NAME} uses Face ID only when you reveal or edit a stored API key — never to log a meal.`,
+      // No NSFaceIDUsageDescription: the app does not use Face ID (expo-secure-store below adds none).
     },
   },
 
@@ -176,7 +191,8 @@ const config: ExpoConfig = {
     'expo-router',
     ['expo-camera', { cameraPermission: CAMERA_TEXT }],
     // Keys stay out of Android Auto Backup (a restored phone mints a new publik key).
-    ['expo-secure-store', { configureAndroidBackup: true }],
+    // faceIDPermission false: no Face ID string, because no key read asks for Face ID.
+    ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
     'expo-sqlite',
     ...(SKIP_HEALTHKIT
       ? []
@@ -200,7 +216,8 @@ const config: ExpoConfig = {
     // Every builder signs with their own free Apple ID — see the plugin doc
     // comment for why this can only ever set the MODE (automatic), never a team.
     './plugins/withAutomaticSigning',
-    // A release build with no publik app token (pat_) fails.
+    // A release build with no PUBLIK_APP_TOKEN fails, and so does an App Store
+    // build with the test hooks.
     './plugins/withPublikTokenCheck',
   ],
 
@@ -211,6 +228,14 @@ const config: ExpoConfig = {
     // into expo-secure-store — never from EXPO_PUBLIC_*, app config, .env, or EAS
     // secrets. Anything in `extra` ships in the bundle and is readable by anyone.
     bundleId: BUNDLE_ID,
+    // The publik APP token (pat_), from the build input PUBLIK_APP_TOKEN. It is
+    // not a key: it names this app to publik so a phone can mint its own key,
+    // and every build carries it. expo-constants evaluates this file again at
+    // native build time (Xcode phase, Gradle createExpoConfig), so the token of
+    // that build's environment is the one in the app. A release build without
+    // it fails (plugins/withPublikTokenCheck.js); only a dev build (Metro) may
+    // fall back to apps/mobile/publik-build.json (src/inference/publik.ts).
+    publikAppToken: process.env.PUBLIK_APP_TOKEN ?? null,
   },
 }
 

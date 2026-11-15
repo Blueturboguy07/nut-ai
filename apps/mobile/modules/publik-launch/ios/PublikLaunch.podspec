@@ -1,8 +1,8 @@
 Pod::Spec.new do |s|
   s.name           = 'PublikLaunch'
   s.version        = '1.0.0'
-  s.summary        = 'Launch values and the self-test line of the publik module (test builds only)'
-  s.description    = 'Reads PUBLIK_* launch values (environment or launch argument), prints the publik self-test line and exits. Compiled in only when PUBLIK_TEST_HOOKS=1 at pod install.'
+  s.summary        = 'The App Store storefront country, and the launch values and self-test line of the publik module (test builds only)'
+  s.description    = 'Reads the StoreKit storefront country (every build). Reads PUBLIK_* launch values (environment or launch argument), prints the publik self-test line and exits only when compiled with PUBLIK_TEST_HOOKS=1 at pod install.'
   s.license        = 'AGPL-3.0-or-later'
   s.author         = 'Nut AI'
   s.homepage       = 'https://github.com/Blueturboguy07/nut-ai'
@@ -12,6 +12,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  s.frameworks = 'StoreKit'
 
   s.source_files = "**/*.{h,m,swift}"
   xcconfig = {

@@ -1,6 +1,6 @@
 import type { ScanFailure } from './pathA/client'
 import { startDeadline } from './deadline'
-import { APP_NAME, insufficientCreditMessage, linkButtonLabel, waitPhrase } from './publik-copy'
+import { APP_NAME, GET_A_PLAN_ELSEWHERE, insufficientCreditMessage, linkButtonLabel, waitPhrase } from './publik-copy'
 
 /**
  * publik API and Sign in with publik — the pure half of the publik module.
@@ -89,6 +89,48 @@ export function isUsableAppToken(token: unknown): token is string {
   return typeof token === 'string' && token !== APP_TOKEN_PLACEHOLDER && APP_TOKEN_RE.test(token)
 }
 
+/**
+ * The app token of this build. A release build takes it ONLY from the build
+ * input (PUBLIK_APP_TOKEN at build time → app.config.ts
+ * `extra.publikAppToken`); the committed publik-build.json may serve a dev
+ * build (Metro) only. Neither: the placeholder, and the app is BYO-only.
+ */
+export function appTokenOf(buildInput: unknown, committed: unknown, devBuild: boolean): string {
+  if (isUsableAppToken(buildInput)) return buildInput
+  if (devBuild && isUsableAppToken(committed)) return committed
+  return APP_TOKEN_PLACEHOLDER
+}
+
+// ---------------------------------------------------------------------------
+// Purchase links (the App Store rule)
+// ---------------------------------------------------------------------------
+
+/**
+ * A link that sells something — "Get a plan", the top-up link, "Add a plan or
+ * pack", "Link this phone & pick a plan", the link of a 402 — shows in an App
+ * Store build ONLY when the App Store storefront is the USA. Outside the US,
+ * and when the storefront cannot be read, the app shows no link, no button
+ * and no price: one plain sentence instead (publik-copy.ts
+ * GET_A_PLAN_ELSEWHERE), and "Use my own key".
+ * "Connect your plan" and "Use my own key" show everywhere. A build that is
+ * not an App Store build (Android, a dev build, a CI test build) shows the
+ * links as before.
+ */
+export function purchaseLinksFor(appStoreBuild: boolean, storefront: string | null | undefined): boolean {
+  if (!appStoreBuild) return true
+  const country = typeof storefront === 'string' ? storefront.trim().toUpperCase() : ''
+  return country === 'USA' || country === 'US'
+}
+
+/** This phone's answer. publik.ts sets it at start (off in an App Store build until the storefront says USA). */
+let purchaseLinks = true
+export function setPurchaseLinks(on: boolean): void {
+  purchaseLinks = on
+}
+export function purchaseLinksOn(): boolean {
+  return purchaseLinks
+}
+
 /** The answer to the gate's plan screen: publik API (Connect your plan), or the person's own key. */
 export type Choice = 'publik' | 'own_key'
 
@@ -126,7 +168,7 @@ export interface ProvisionInput {
   deviceName: string | null
 }
 
-export type ProvisionFailureKind = 'offline' | 'rate-limited' | 'token-revoked' | 'unavailable' | 'malformed' | 'replayed'
+export type ProvisionFailureKind = 'offline' | 'rate-limited' | 'token-revoked' | 'install-revoked' | 'unavailable' | 'malformed' | 'replayed'
 
 export type ProvisionResult =
   | { ok: true; key: string; install: PublikInstall; wallet: PublikWallet; starterMicros: number }
@@ -193,17 +235,36 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     if (res.status === 429) {
       return { ok: false, kind: 'rate-limited', status: 429, retryAfterSec: Number(res.headers?.get('retry-after')) || 60 }
     }
-    if (res.status === 401 || res.status === 403) return { ok: false, kind: 'token-revoked', status: res.status }
+    if (res.status === 401 || res.status === 403) {
+      // publik's refusal names its reason (error.type). A page that is not
+      // publik's JSON (a captive portal, a proxy) is no answer from publik.
+      let type: unknown = null
+      try {
+        const b: unknown = await deadline.within(res.json())
+        if (!b || typeof b !== 'object' || Array.isArray(b)) throw new Error('not publik')
+        const e = (b as Record<string, any>).error
+        type = e && typeof e === 'object' ? e.type : null
+      } catch {
+        return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'offline', status: res.status }
+      }
+      // The install's owner disconnected it: the caller makes ONE new install
+      // with a fresh install_id (publik.ts connectPublik), as publik's own SDK does.
+      if (type === 'install_revoked') return { ok: false, kind: 'install-revoked', status: res.status }
+      return { ok: false, kind: 'token-revoked', status: res.status }
+    }
     if (!res.ok) return { ok: false, kind: 'unavailable', status: res.status }
     let j: Record<string, any>
     try {
-      j = (await deadline.within(res.json())) as Record<string, any>
+      const parsed: unknown = await deadline.within(res.json())
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not publik')
+      j = parsed as Record<string, any>
     } catch {
-      // The deadline can fire while the answer is read: that is no answer,
-      // not an answer this build cannot parse ("Update Nut AI"). `within`
-      // gives up at the deadline also when the phone's json() never settles
-      // (iOS) or throws on the cut body (Android); see ./deadline.
-      return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'malformed', status: res.status }
+      // The deadline can fire while the answer is read: that is no answer.
+      // `within` gives up at the deadline also when the phone's json() never
+      // settles (iOS) or throws on the cut body (Android); see ./deadline. A
+      // body that is not a JSON object (a captive portal's page with a 200)
+      // is not publik's answer either: "not reachable", never "Update Nut AI".
+      return { ok: false, kind: deadline.timedOut ? 'unavailable' : 'offline', status: res.status }
     }
     // A 200 replay of a known install_id carries key:null (CONTRACT §3.2). A
     // phone that lost its keychain entry mints a fresh install_id once — the
@@ -386,7 +447,7 @@ export function asCredential(key: string): { kind: 'api_key'; value: string } {
  * body that is not a publik envelope, so vendor errors keep their own
  * classification.
  */
-export function classifyGatewayError(status: number, body: string): ScanFailure | null {
+export function classifyGatewayError(status: number, body: string, links: boolean = purchaseLinks): ScanFailure | null {
   let e: Record<string, any> | null = null
   try {
     const parsed = JSON.parse(body)
@@ -403,7 +464,8 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
       : isSafePublikLink(e.add_credit_url)
         ? e.add_credit_url
         : null
-  const action = (label: string) => (topUp ? { action: { label, url: topUp } } : {})
+  // No purchase link outside the US storefront of an App Store build (purchaseLinksFor).
+  const action = (label: string) => (links && topUp ? { action: { label, url: topUp } } : {})
   // The gateway's message carries the justification (CONTRACT §12.3); its
   // device noun is written for desktops, this is a phone.
   const serverMessage =
@@ -415,7 +477,8 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
         kind: 'quota-exhausted',
         httpStatus: status,
         retryable: false,
-        message: serverMessage ?? insufficientCreditMessage(claimState),
+        // Without links: plain text, no link and no price (the gateway's own message names both).
+        message: links ? (serverMessage ?? insufficientCreditMessage(claimState)) : insufficientCreditMessage(claimState, false),
         ...action(linkButtonLabel(claimState)),
       }
     case 'daily_cap_reached':
@@ -517,7 +580,7 @@ export function classifyGatewayError(status: number, body: string): ScanFailure 
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.2'
+export const APP_VERSION = '0.1.3'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -590,6 +653,11 @@ export interface GateDevice {
   noteWallet: (snapshot: PublikWallet) => Promise<void>
   /** False for a minor or an unknown age: the plan screen is never shown then. */
   planAllowed: () => Promise<boolean>
+  /**
+   * Purchase links on this phone (purchaseLinksFor): false in an App Store
+   * build outside the US storefront. Absent: the module's setting.
+   */
+  purchaseLinks?: () => Promise<boolean>
   /** Profile → publik account → Count app use. */
   countUse: () => Promise<boolean>
   /**
@@ -692,7 +760,13 @@ const PLAN_TIMEOUT = 'No plan after 10 minutes. Click Get a plan to try again.'
 const KEEP_KEY_FAILED = `This phone could not keep its publik key. Restart ${APP_NAME} and try again.`
 
 /** The words of the gate. The same in every publik module. */
-export function gateScreen(id: GateScreen['id'], w: GateWallet | null, note: string | null = null, message?: string): GateScreen {
+export function gateScreen(
+  id: GateScreen['id'],
+  w: GateWallet | null,
+  note: string | null = null,
+  message?: string,
+  links: boolean = purchaseLinks,
+): GateScreen {
   if (id === 'unreachable') {
     return { id, title: 'Sign in with publik', body: message ?? UNREACHABLE_MESSAGE, note, buttons: [{ action: 'retry', label: 'Retry' }] }
   }
@@ -707,6 +781,16 @@ export function gateScreen(id: GateScreen['id'], w: GateWallet | null, note: str
   }
   const who = w?.handle ? `You are signed in as @${w.handle}.` : 'You are signed in to publik.'
   if (!w || (w.plan.kind === 'none' && w.balanceMicros === 0)) {
+    if (!links) {
+      // An App Store build outside the US storefront: no purchase link and no price.
+      return {
+        id,
+        title: 'Choose how to pay for AI',
+        note,
+        body: `${who} Your publik balance is empty. ${GET_A_PLAN_ELSEWHERE} Or use your own key for AI in this app.`,
+        buttons: [{ action: 'own_key', label: 'Use my own key' }],
+      }
+    }
     return {
       id,
       title: 'Choose how to pay for AI',
@@ -739,6 +823,8 @@ export function provisionGateMessage(p: Extract<ProvisionResult, { ok: false }>,
       return undefined
     case 'token-revoked':
       return 'This app token is not valid. Ask the developer for a new build.'
+    case 'install-revoked':
+      return 'publik disconnected this install. Click Retry to set up this phone again.'
     case 'rate-limited':
       return `Too many phones on this network signed in to publik in the last hour. Try again in ${waitPhrase(p.retryAfterSec)}.`
     case 'replayed':
@@ -860,9 +946,11 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
       await ask(ui, gateScreen('unreachable', null), d)
       continue
     }
-    if (r.status === 401) {
-      // publik says the key is gone (revoked): forget it and provision again,
-      // once; a second 401 in a row waits for Retry instead of looping.
+    if (r.status === 401 || r.status === 403) {
+      // publik says the key is gone or refused (401, or 403 with publik's own
+      // JSON error; any other page threw PublikUnreachable above): forget it
+      // and provision again, once; a second refusal in a row waits for Retry
+      // instead of looping.
       await d.forget().catch(() => undefined)
       refused += 1
       if (refused < 2) continue
@@ -895,18 +983,22 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
     let choice: Choice | null = USES_AI ? stored.choice : null
     let chosen = false
     if (USES_AI && !choice && (await d.planAllowed().catch(() => false))) {
-      if (w.plan.kind !== 'none' || w.balanceMicros > 0) {
+      const links = d.purchaseLinks ? await d.purchaseLinks().catch(() => false) : purchaseLinks
+      const hasPlan = (x: GateWallet) => x.plan.kind !== 'none' || x.balanceMicros > 0
+      if (hasPlan(w)) {
         // The plan is there: Connect your plan.
         if (sheet === 'plan') close()
         planNote = null
         planPoll = false
       }
-      const a = await ask(
-        ui,
-        gateScreen('choose', w, planNote),
-        d,
-        planPoll ? { key: stored.key, until: (x) => x.plan.kind !== 'none' || x.balanceMicros > 0, poll: true } : undefined,
-      )
+      // After Get a plan: check every 3 s. With no purchase link: a plan the
+      // person got elsewhere shows when they come back to the app.
+      const watch: Watch | undefined = planPoll
+        ? { key: stored.key, until: hasPlan, poll: true }
+        : !links && !hasPlan(w)
+          ? { key: stored.key, until: hasPlan, poll: false }
+          : undefined
+      const a = await ask(ui, gateScreen('choose', w, planNote, undefined, links), d, watch)
       planNote = null
       planPoll = false
       if (a === 'get_plan') {

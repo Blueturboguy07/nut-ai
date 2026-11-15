@@ -72,7 +72,7 @@ Chosen during onboarding, changeable any time, and presented neutrally:
 Either way, barcode scanning, label OCR, text search, manual entry and the entire correction flow work
 offline with no key at all.
 
-## What we deliberately do not clone
+## What we deliberately leave out
 
 No paywalled shutter button. No social feed. No streak-restore purchase. No opaque "AI health score".
 No red numbers for missed goals — red is reserved for safety warnings, never for food or bodies.

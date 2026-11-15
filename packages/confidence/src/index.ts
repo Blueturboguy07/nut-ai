@@ -21,11 +21,10 @@ import type { GramPathway, Item, IngredientRow } from '@nutai/core-schema'
  * So the model's self-report is a MODIFIER, never the signal. The primary signal
  * is measured per-pathway and per-category error from our own eval harness.
  *
- * And the bar to clear is not "perfectly calibrated Bayesian intervals". The
- * incumbent shows no confidence score, error range, or uncertainty indicator of
- * any kind, while its FAQ concedes "CalAI is about 80% accurate" and its blog
- * boilerplate claims 90% — two different self-reported numbers from one company,
- * neither per-scan, neither sourced. The bar is showing ANY honest measured
+ * And the bar to clear is not "perfectly calibrated Bayesian intervals". A
+ * photo calorie tracker commonly shows no confidence score, error range, or
+ * uncertainty indicator of any kind, only a self-reported accuracy figure that
+ * is neither per-scan nor sourced. The bar is showing ANY honest measured
  * signal at all.
  */
 

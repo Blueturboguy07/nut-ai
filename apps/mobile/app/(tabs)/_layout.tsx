@@ -14,10 +14,9 @@ import { MIN_TAP_TARGET, radius, space, type } from '../../src/theme/tokens'
  * and it is the highest eating-disorder-risk surface in this product category.
  * Cutting it is the decision, not a gap.
  *
- * The FAB is ALWAYS present and ALWAYS opens real logging. The reference
- * paywalls this button, which is the direct cause of its most-reported
- * complaint. No IAP is configured anywhere in this project, which is what leaves
- * App Store Guideline 3.1.1 nothing to attach to.
+ * The FAB is ALWAYS present and ALWAYS opens real logging. A paywall on this
+ * button would block the one thing the app is for, so there is none. No IAP is
+ * configured anywhere in this project.
  */
 
 const TABS: ReadonlyArray<{ name: string; label: string; icon: IconName }> = [

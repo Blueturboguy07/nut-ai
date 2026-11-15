@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import Foundation
+import StoreKit
 
 /// The native half of the publik module's launch switches (modules/publik-launch/index.ts).
 /// Compiled with PUBLIK_TEST_HOOKS only in a CI test build: a release build reads no launch value.
@@ -34,6 +35,12 @@ public class PublikLaunchModule: Module {
       #if PUBLIK_TEST_HOOKS
       Darwin.exit(0)
       #endif
+    }
+
+    // Every build: the App Store storefront country (ISO 3166-1 alpha-3, "USA"), or nil.
+    // An App Store build shows links that sell a publik plan only in the US storefront.
+    AsyncFunction("storefrontCountry") { () async -> String? in
+      return await Storefront.current?.countryCode
     }
   }
 }

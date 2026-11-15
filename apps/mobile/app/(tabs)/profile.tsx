@@ -29,8 +29,8 @@ import { radius, space, type } from '../../src/theme/tokens'
 /**
  * Profile.
  *
- * Structurally the reference's settings list, minus everything that only exists
- * to extract money or attention:
+ * A plain settings list, without anything that only exists to extract money
+ * or attention:
  *
  *   NO "Refer a friend and earn $10" — a referral bounty is a growth mechanic,
  *   and there is no money here to pay it with.

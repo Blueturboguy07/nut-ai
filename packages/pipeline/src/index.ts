@@ -117,8 +117,8 @@ function snapshotFrom(food: ResolvedFood): NutrientRow100g {
  * When resolution yields nothing acceptable, log the model's own
  * fallback_macros_at_estimate, flag is_estimate, and let the UI show the amber
  * "AI ESTIMATE" badge. This is the concrete mechanism behind the whole
- * accuracy-honesty position — and it is exactly what the incumbent's result screen
- * is confirmed never to show.
+ * accuracy-honesty position — and it is exactly what a plain calorie estimate
+ * never shows.
  */
 function snapshotFromFallback(item: Item, grams: number): NutrientRow100g {
   const m = item.fallback_macros_at_estimate

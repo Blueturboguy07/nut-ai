@@ -141,7 +141,7 @@ export const radius = {
 } as const
 
 /**
- * Type scale. The rhythm the incumbent gets right and is worth copying: a big
+ * Type scale. The rhythm: a big
  * bold number next to a small grey unit.
  */
 export const type = {

@@ -2,8 +2,8 @@
  * Exercise energy — deterministic MET arithmetic, not a model guess.
  *
  * kcal = MET x 3.5 x kg / 200 x minutes (the standard ACSM formula). MET
- * values are from the Compendium of Physical Activities, matched to the same
- * three intensity anchors the incumbent shows the user. D16 applies to
+ * values are from the Compendium of Physical Activities, matched to three
+ * common intensity anchors (low, medium, high). D16 applies to
  * exercise exactly as it does to food: Run and Weight lifting never touch a
  * model — only the free-text Describe path does, and it is labeled as such.
  */

@@ -27,7 +27,7 @@ async function selectFood(nutritionDb: DbAdapter, candidate: ScoredCandidate, no
 }
 
 /**
- * Foods — the library that replaces the incumbent's `Groups` social feed.
+ * Foods — the food library (there is no social feed).
  *
  * Right now it is also the honest way to test the whole resolution stack on
  * device WITHOUT an API key: type a food, and the query runs through the real

@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
 import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { cheapestModel, type ProviderId } from '@nutai/prompt'
-import { APP_STORE_BUILD } from '../build-flags'
+import { CLAUDE_SUBSCRIPTION_TOKENS } from '../build-flags'
 import { putSetting } from '../data/repo'
 import { looksPlausible, saveCredential, type CredentialKind } from '../inference/credentials'
 import { validateCredential } from '../inference/pathA/validate'
@@ -20,12 +20,13 @@ import { Icon } from './Icon'
  * On success it persists everything scans need (Keychain credential + the
  * provider/provider_model settings the orchestrator reads) and reports up.
  *
- * In an App Store build (build-flags.ts APP_STORE_BUILD) there is no "Claude
- * CLI token" tab, and a Claude subscription token is refused even when it is
+ * Only a dev build (Metro) has the "Claude CLI token" tab
+ * (build-flags.ts CLAUDE_SUBSCRIPTION_TOKENS). Every other build, Android
+ * too, has no tab and refuses a Claude subscription token even when it is
  * pasted as a key: Anthropic does not allow third-party apps to use Claude
  * subscription credentials. An Anthropic API key works as before.
  */
-const CLI_TOKEN_TAB = !APP_STORE_BUILD
+const CLI_TOKEN_TAB = CLAUDE_SUBSCRIPTION_TOKENS
 
 const CONSOLE_URL: Record<ProviderId, string> = {
   anthropic: 'https://console.anthropic.com/settings/keys',

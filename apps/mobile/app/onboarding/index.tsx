@@ -9,7 +9,7 @@ import { radius, space, type } from '../../src/theme/tokens'
 /**
  * Welcome.
  *
- * Two deliberate departures from the reference:
+ * Two deliberate choices:
  *
  *   NO "Already have an account? Sign In". The only account is the publik
  *   account, and Sign in with publik is its own screen: before onboarding in

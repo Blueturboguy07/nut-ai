@@ -31,7 +31,7 @@ const H = 170
 /**
  * "Designed to help you stay on track" — us versus no plan.
  *
- * The reference chart is pure marketing, but the shape it draws is a real,
+ * A chart like this is often pure marketing, but the shape it draws is a real,
  * well-documented phenomenon: unstructured dieting tends to produce early loss
  * followed by regain. We keep the comparison and label the y-axis honestly as a
  * trend rather than implying guaranteed numbers.

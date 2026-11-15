@@ -92,11 +92,36 @@ description never goes to a provider the person did not agree to.
 
 ### App Store build: `EXPO_PUBLIC_APP_STORE_BUILD`
 
-On by default in an iOS release build. It removes the **Claude CLI token**
-tab and refuses a saved CLI token (Anthropic does not allow third-party apps
-to use Claude subscription credentials). An Anthropic, OpenAI or Google API
-key works as before. Set `EXPO_PUBLIC_APP_STORE_BUILD=0` to keep the tab in
-a build that is not for the App Store.
+On by default in an iOS release build. In an App Store build:
+
+- **Purchase links only in the US storefront.** "Get a plan", the top-up
+  link, "Add a plan or pack", "Link this phone & pick a plan" and the link
+  of a 402 show only when StoreKit says the App Store storefront is the USA
+  (`Storefront.current.countryCode`, read once per run by
+  `modules/publik-launch`; `purchaseLinksFor` in
+  `src/inference/publik-core.ts`). In every other storefront, and when the
+  storefront cannot be read, there is no link, no button and no price: one
+  plain sentence instead, `To get a plan, search for "publik" on Google.`
+  "Connect your plan" and "Use my own key" show everywhere. A build that is
+  not an App Store build (Android, dev, CI test builds) shows the links.
+- **The gate is always required.** `EXPO_PUBLIC_PUBLIK_GATE_MODE=optional`
+  is a CI test artifact only; an App Store build that asks for it fails.
+- **No test hooks.** A build with `EXPO_PUBLIC_APP_STORE_BUILD` on and
+  `PUBLIK_TEST_HOOKS=1` (or `EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1`) fails, on iOS
+  and Android. CI test builds set `EXPO_PUBLIC_APP_STORE_BUILD=0`.
+
+Claude subscription tokens (the **Claude CLI token** tab) work in a dev
+build (Metro) only. Every other build, Android too, has no tab and refuses a
+saved CLI token (Anthropic does not allow third-party apps to use Claude
+subscription credentials). An Anthropic, OpenAI or Google API key works as
+before.
+
+### Name
+
+`apps/mobile/app-identity.json`: `displayName` is **publik Nut AI**, the App
+Store name and the name in every in-app text. `homeScreenName` (**Nut AI**)
+is only the label under the icon, because iOS cuts a longer label. The
+bundle id, slug and scheme do not change.
 
 ### Launch values (CI test-hooks builds only)
 
@@ -127,13 +152,26 @@ The self-test on a simulator:
 SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty booted com.nutai.app
 ```
 
-### A release build needs the app token
+### A release build needs the app token, from the build input only
 
-`plugins/withPublikTokenCheck.js` stops a release build that has no `pat_`
-token in `apps/mobile/publik-build.json` (or still has the placeholder): an
-Xcode build phase for the Release configuration, and a check before
-`preReleaseBuild` on Android. `src/publik-token-check.test.ts` runs the iOS
-script; the CI Android job proves the Gradle check fails with no token.
+A release build takes the app token ONLY from the build input
+`PUBLIK_APP_TOKEN` (an environment variable of the native build).
+`app.config.ts` puts it into `extra.publikAppToken`, and expo-constants
+evaluates that file again at native build time (an Xcode build phase of
+EXConstants, the Gradle task `createExpoConfig`), so the token of that
+build's environment is the one in the app. The committed
+`apps/mobile/publik-build.json` holds the placeholder; its token may serve a
+dev build (Metro) only.
+
+`plugins/withPublikTokenCheck.js` ("Check publik build settings" on iOS,
+`preBuild` / `preReleaseBuild` on Android) stops:
+
+1. a release build with no `PUBLIK_APP_TOKEN` (or the placeholder);
+2. an App Store build with the test hooks;
+3. an App Store build with the optional gate.
+
+`src/publik-token-check.test.ts` runs the iOS script; the CI Android jobs
+prove the Gradle checks fail. The checks never print the token.
 
 ### CI
 
@@ -142,16 +180,21 @@ then builds `ios-sim-app` (required mode) and `ios-sim-app-optional` (NutAI.app
 for the simulator, arm64, no certificate: only the ad-hoc signature that the
 simulator keychain needs) and `android-debug-apk` (the release variant,
 debuggable, signed with the debug key, cleartext allowed). All three are
-test-hooks builds. They take the app token from the repo secret
-`PUBLIK_APP_TOKEN` (`.github/scripts/publik-build-token.mjs`, which never
-prints it). The iOS jobs print the App Store settings of the built app
-(version, build number, iPhone only, encryption, privacy manifest) and run the
-self-test on a simulator. The Android job prints the backup rules of the
-merged manifest.
+test-hooks builds with `EXPO_PUBLIC_APP_STORE_BUILD=0`. A fourth job,
+`android-release-check`, makes a release build with the test hooks off and
+uploads nothing. The native build steps get the app token from the repo
+secret `PUBLIK_APP_TOKEN` as the build input; nothing prints it. The iOS
+jobs print the App Store settings of the built app (version, build number,
+iPhone only, encryption, no Face ID string, privacy manifest) and check that
+the app config inside the app has a token from the build input, then run
+the self-test on a simulator. The Android jobs check the build rules, the
+backup rules of the merged manifest, and the token in the APK's app config.
 
 ## The one value a build needs
 
-`apps/mobile/publik-build.json` ships in the repo:
+The app token is the build input `PUBLIK_APP_TOKEN` (above).
+`apps/mobile/publik-build.json` ships in the repo with the placeholder and
+the other settings:
 
 ```json
 {
@@ -163,29 +206,26 @@ merged manifest.
 }
 ```
 
-`appToken` is a **public app token**, not a credential. It names this app to
-publikhq.com so an install can mint its own `pk_live_` key; it can read
-nothing, spend nothing, and attribute nothing to anyone but Nut AI. It ships
-inside every phone build, and every phone build is compiled from this public
-repository, so committing it exposes nothing a build does not (the same
-exposure as any packaged binary). Rotating it is a commit.
+The app token is a **public app token**, not a credential. It names this
+app to publikhq.com so an install can mint its own `pk_live_` key; it can
+read nothing, spend nothing, and attribute nothing to anyone but Nut AI. It
+ships inside every phone build. It is not committed: release builds take it
+from the build input, so the token in a build is the one the builder chose.
 
-While the value is the placeholder `pat_nut-ai_REPLACE_ME`, the app behaves
-as if publik API did not exist: no publik card in onboarding, no publik chip
-in settings, the vendor picker is the whole screen.
+A build with no token (the placeholder) behaves as if publik API did not
+exist: no publik card in onboarding, no publik chip in settings, the vendor
+picker is the whole screen. A release build with no token does not build.
 
 ### Filling it (publik side, once)
 
 1. On the publik repo: `scripts/mint-app-token.mts nut-ai` (service role from
    `.env.local`). It prints the `pat_nut-ai_<32 base36>` value once.
-2. Paste it as `appToken` in `apps/mobile/publik-build.json`, commit, push.
-3. Bump the publik install guide's pinned SHA (`~/publik/lib/guides/nut-ai.ts`)
-   to that commit. Phones built from the pinned commit provision against the
-   new token; the old token stays valid 90 days.
+2. Store it as the repo secret `PUBLIK_APP_TOKEN` (CI), or set it in the
+   environment of a local release build. Never commit it.
 
-A test (`apps/mobile/src/inference/publik-build.test.ts`) pins the shape of
-this file and refuses any real `pk_`/`sk-` key anywhere under `apps/mobile`
-or `packages`.
+A test (`apps/mobile/src/inference/publik-build.test.ts`) pins the
+placeholder in this file and refuses any real `pk_`/`sk-` key or minted
+`pat_nut-ai_` token anywhere under `apps/mobile` or `packages`.
 
 ## Models
 

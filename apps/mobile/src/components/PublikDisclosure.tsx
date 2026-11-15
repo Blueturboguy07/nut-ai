@@ -1,9 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native'
-import { openPublikLink } from '../inference/publik'
+import { openPublikLink, usePurchaseLinks } from '../inference/publik'
 import {
   APP_NAME,
   DISCLOSURE_DATA_PATH,
   disclosureCostSentence,
+  GET_A_PLAN_ELSEWHERE,
   LINK_STARTER_HINT,
   linkButtonLabel,
   provisionFailureMessage,
@@ -35,6 +36,11 @@ import { Icon } from './Icon'
  *   primary button — "Link this phone & pick a plan" while anonymous, "Add a
  *   plan or pack" once claimed. Never a silent starter: the card is shown
  *   the moment the key exists, with the real balance on it.
+ *
+ * In an App Store build outside the US storefront (usePurchaseLinks false)
+ * neither surface has a purchase link, a button or a price: one plain
+ * sentence (GET_A_PLAN_ELSEWHERE), and "use your own key" (publik-core.ts
+ * purchaseLinksFor).
  */
 
 /** The copy lives in publik-copy.ts (pure, tested); this name is kept for the screens. */
@@ -44,12 +50,13 @@ export function explainProvision(r: Extract<ProvisionResult, { ok: false }>): st
 
 export function PublikDisclosureBody({ error }: { error: string | null }) {
   const theme = useTheme()
+  const links = usePurchaseLinks()
   return (
     <View>
       <View style={[styles.block, { backgroundColor: theme.bgSunken }]}>
         <Text style={[type.bodyStrong, { color: theme.text }]}>Cost</Text>
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.xs, lineHeight: 19 }]}>
-          {disclosureCostSentence(APP_NAME)}
+          {disclosureCostSentence(APP_NAME, links)}
         </Text>
       </View>
       <View style={[styles.block, { backgroundColor: theme.bgSunken, marginTop: space.md }]}>
@@ -84,7 +91,7 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
  * starter the phone does not have. A nonzero unlinked balance can only be
  * what is left of a pre-0059 starter, and it still reads as free use.
  */
-export function balanceLine(wallet: PublikWallet | null, starterMicros: number | null): string {
+export function balanceLine(wallet: PublikWallet | null, starterMicros: number | null, purchaseLinks = true): string {
   const bal = wallet?.balanceMicros ?? null
   if (wallet?.claimState === 'claimed') {
     const week =
@@ -93,6 +100,8 @@ export function balanceLine(wallet: PublikWallet | null, starterMicros: number |
         : ''
     return `${formatMicros(bal)} left${week}`
   }
+  // No link and no amount to get outside the US storefront of an App Store build.
+  if (!purchaseLinks && (bal == null || bal <= 0)) return 'Your publik balance is empty.'
   if (bal == null) return LINK_STARTER_HINT.charAt(0).toUpperCase() + LINK_STARTER_HINT.slice(1)
   if (bal <= 0) return `${formatMicros(0)} · ${LINK_STARTER_HINT}`
   const untouched = starterMicros != null && starterMicros > 0 && bal >= starterMicros
@@ -113,6 +122,7 @@ export function PublikCard({
   secondary?: Array<{ label: string; onPress: () => void; destructive?: boolean }>
 }) {
   const theme = useTheme()
+  const links = usePurchaseLinks()
   const claimState = wallet?.claimState ?? install.claimState
   const link =
     claimState === 'anonymous'
@@ -130,24 +140,31 @@ export function PublikCard({
         </Text>
       </View>
 
-      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{balanceLine(wallet, starterMicros)}</Text>
+      <Text style={[type.heading, { color: theme.text, marginTop: space.md }]}>{balanceLine(wallet, starterMicros, links)}</Text>
 
       <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, lineHeight: 19 }]}>
         {whyItCostsSentence(APP_NAME)}
       </Text>
 
-      <Pressable
-        accessibilityRole="button"
-        disabled={!canOpen}
-        onPress={() => {
-          // The in-app browser sheet, never the Safari app.
-          if (canOpen) void openPublikLink(link)
-        }}
-        style={[styles.primary, { backgroundColor: theme.text }, !canOpen && { opacity: 0.4 }]}
-      >
-        <Text style={[type.bodyStrong, { color: theme.bg }]}>{linkButtonLabel(claimState)}</Text>
-      </Pressable>
-      {claimState === 'anonymous' ? (
+      {links ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={!canOpen}
+          onPress={() => {
+            // The in-app browser sheet, never the Safari app.
+            if (canOpen) void openPublikLink(link)
+          }}
+          style={[styles.primary, { backgroundColor: theme.text }, !canOpen && { opacity: 0.4 }]}
+        >
+          <Text style={[type.bodyStrong, { color: theme.bg }]}>{linkButtonLabel(claimState)}</Text>
+        </Pressable>
+      ) : (
+        // No purchase link here (an App Store build outside the US storefront).
+        <Text style={[type.caption, { color: theme.textMuted, marginTop: space.md, lineHeight: 19 }]}>
+          {GET_A_PLAN_ELSEWHERE} Or use your own key in Profile → AI provider.
+        </Text>
+      )}
+      {links && claimState === 'anonymous' ? (
         <Text style={[type.caption, { color: theme.textFaint, marginTop: space.sm, lineHeight: 18 }]}>
           Not now? Link this phone any time for $0.05 of free use, once, or add your own key in Profile.
         </Text>

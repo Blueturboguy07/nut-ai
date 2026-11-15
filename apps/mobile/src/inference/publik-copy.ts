@@ -18,8 +18,15 @@
 import identity from '../../app-identity.json'
 import type { ProvisionResult } from './publik-core'
 
-/** The display name: ONE setting, `apps/mobile/app-identity.json` (app.config.ts reads it too). */
+/** The app's name ("publik Nut AI"): ONE setting, `apps/mobile/app-identity.json` (app.config.ts reads it too). */
 export const APP_NAME: string = identity.displayName
+
+/**
+ * Where a purchase link would be, in an App Store build outside the US
+ * storefront (publik-core.ts purchaseLinksFor): this one plain sentence, with
+ * no link, no button and no price.
+ */
+export const GET_A_PLAN_ELSEWHERE = 'To get a plan, search for "publik" on Google.'
 
 /** CONTRACT §12.1(b): the one-sentence justification, verbatim from the site. */
 export function whyItCostsSentence(app = APP_NAME): string {
@@ -36,8 +43,15 @@ export const LINK_STARTER_HINT = 'link this phone for $0.05 of free use'
  * The install disclosure's cost sentence (R21 §2.1). The free-use clause
  * follows the site's since 0059: a new phone starts at $0.00, and linking it
  * is what gives $0.05 of free use, once.
+ *
+ * `purchaseLinks` false (an App Store build outside the US storefront,
+ * publik-core.ts purchaseLinksFor): the same cost facts with no plan, pack
+ * or amount to buy.
  */
-export function disclosureCostSentence(app = APP_NAME): string {
+export function disclosureCostSentence(app = APP_NAME, purchaseLinks = true): string {
+  if (!purchaseLinks) {
+    return `${app} runs on publik API by default: the AI model behind it is run by a provider that charges per use, and publik passes that on at 50% of the model's published list price with no markup, from your publik balance. ${GET_A_PLAN_ELSEWHERE} Nothing is charged behind your back, and when the balance is empty ${app} tells you and keeps working with your own key.`
+  }
   const linkStarter = LINK_STARTER_SENTENCE.charAt(0).toLowerCase() + LINK_STARTER_SENTENCE.slice(1)
   return `${app} runs on publik API by default: the AI model behind it is run by a provider that charges per use, and publik passes that on at 50% of the model's published list price with no markup, from your publik balance. A new phone starts at $0.00 and no card is asked for: ${linkStarter}, and a plan, a pack or your own key takes it from there; nothing is charged behind your back, and when the balance runs out ${app} tells you and keeps working with your own key — most people spend under $2 a month.`
 }
@@ -53,8 +67,12 @@ export function linkButtonLabel(claimState: 'anonymous' | 'claimed'): string {
   return claimState === 'anonymous' ? 'Link this phone & pick a plan' : 'Add a plan or pack'
 }
 
-/** The 402 fallback when the gateway's own message is missing. */
-export function insufficientCreditMessage(claimState: 'anonymous' | 'claimed'): string {
+/**
+ * The 402 fallback when the gateway's own message is missing. With
+ * `purchaseLinks` false: plain text, no link and no price.
+ */
+export function insufficientCreditMessage(claimState: 'anonymous' | 'claimed', purchaseLinks = true): string {
+  if (!purchaseLinks) return `Your publik balance is too low for this scan. ${GET_A_PLAN_ELSEWHERE} Or use your own key in Profile → AI provider.`
   const next =
     claimState === 'anonymous'
       ? 'Link this phone to your publik account at the link below for $0.05 of free use, pick a plan there, or use your own key.'

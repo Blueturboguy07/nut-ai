@@ -1,5 +1,5 @@
 import { cheapestModel, type ProviderId } from '@nutai/prompt'
-import { APP_STORE_BUILD } from '../build-flags'
+import { CLAUDE_SUBSCRIPTION_TOKENS } from '../build-flags'
 import { setting } from '../data/repo'
 import { ensureAiConsent } from './ai-consent'
 import { loadCredential } from './credentials'
@@ -76,7 +76,8 @@ export async function resolveInference(): Promise<ResolveOutcome> {
 
   const credential = await loadCredential(provider)
   if (!credential) return { ok: false, error: { kind: 'key-missing' } }
-  if (APP_STORE_BUILD && credential.kind === 'oauth') return { ok: false, error: { kind: 'key-missing' } }
+  // A saved Claude subscription token works in a dev build only (build-flags.ts).
+  if (!CLAUDE_SUBSCRIPTION_TOKENS && credential.kind === 'oauth') return { ok: false, error: { kind: 'key-missing' } }
   if (!(await ensureAiConsent(provider))) return { ok: false, error: { kind: 'consent-declined' } }
   const model = (await setting('provider_model')) || cheapestModel(provider).id
   return { ok: true, value: { dialect: provider, selected: provider, model, textModel: model, credential, metered: false, webSearch: true } }

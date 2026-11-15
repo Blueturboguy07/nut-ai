@@ -348,7 +348,9 @@ describe('the key check and the publik link on a phone', () => {
     expect(reads.started).toBe(1)
   })
 
-  it('linking publik API: a body that is not JSON at all, read in time, is still "malformed"', async () => {
+  // Review of 27bdd59: a page that is not JSON (a captive portal answering
+  // 200/201) is not publik's answer, so it is "not reachable", never "Update Nut AI".
+  it('linking publik API: a body that is not JSON at all, read in time, is "offline" (not reachable), not "malformed"', async () => {
     const garbage = vi.fn(async () => ({
       ok: true,
       status: 201,
@@ -357,7 +359,7 @@ describe('the key check and the publik link on a phone', () => {
         throw new SyntaxError('Unexpected token < in JSON at position 0')
       },
     })) as unknown as typeof fetch
-    expect(await provision(PROVISION_INPUT, garbage)).toEqual({ ok: false, kind: 'malformed', status: 201 })
+    expect(await provision(PROVISION_INPUT, garbage)).toEqual({ ok: false, kind: 'offline', status: 201 })
   })
 })
 

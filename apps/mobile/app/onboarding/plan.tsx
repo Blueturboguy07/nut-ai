@@ -28,8 +28,8 @@ import { radius, space, type } from '../../src/theme/tokens'
 /**
  * The plan reveal.
  *
- * This is where every earlier answer cashes out, and where we diverge hardest
- * from the reference — not in layout, but in what the screen is willing to claim.
+ * This is where every earlier answer cashes out, and where the screen is most
+ * careful about what it is willing to claim.
  *
  * KEPT: the estimated-progress chart, the editable calorie and macro cards, the
  * "Your info" recap, and "How to reach your goals". Those are genuinely useful.
@@ -41,8 +41,8 @@ import { radius, space, type } from '../../src/theme/tokens'
  *   - The "Without Nut AI ❌ / With Nut AI ✅" comparison. It is an ad, placed
  *     where a person is looking at their own body data.
  *
- * ADDED: the arithmetic. The reference shows 3826 kcal with no way to see where
- * it came from. Every number here can be traced, and the safety floor explains
+ * ADDED: the arithmetic. A target with no way to see where it came from is a
+ * black box. Every number here can be traced, and the safety floor explains
  * itself in words whenever it fires.
  */
 export default function PlanScreen() {
@@ -160,7 +160,7 @@ export default function PlanScreen() {
           </View>
         ))}
 
-        {/* Where the number came from. The reference shows none of this. */}
+        {/* Where the number came from. */}
         <View style={[styles.section, { backgroundColor: theme.bgSunken }]}>
           <Text style={[type.heading, { color: theme.text }]}>How we got there</Text>
           <Text style={[type.caption, { color: theme.textMuted, marginTop: 2 }]}>

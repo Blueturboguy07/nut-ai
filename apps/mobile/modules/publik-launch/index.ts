@@ -9,7 +9,12 @@ import { PUBLIK_TEST_HOOKS } from '../../src/build-flags'
  * A CI TEST BUILD ONLY. Both halves are compiled out of a release build: this
  * file reads nothing unless EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1 was set at bundle
  * time, and the native side (ios/, android/) reads nothing unless it was
- * compiled with PUBLIK_TEST_HOOKS=1. In a test build the values come from
+ * compiled with PUBLIK_TEST_HOOKS=1. An App Store build never has the hooks
+ * (build-flags.ts, plugins/withPublikTokenCheck.js).
+ *
+ * In EVERY build the module also reads the App Store storefront country
+ * (StoreKit, iOS): links that sell a publik plan show in an App Store build
+ * only in the US storefront (src/inference/publik.ts usePurchaseLinks). In a test build the values come from
  * the launch: an environment variable or a launch argument on iOS (only
  * Xcode, `xcrun simctl` or a debugger can set one), an intent extra on
  * Android (`adb shell am start -e`). No URL scheme, web content or saved
@@ -20,9 +25,35 @@ interface PublikLaunchNative {
   value(name: string): string | null
   printLine(line: string): void
   exit(): void
+  /** iOS: StoreKit's storefront country (ISO 3166-1 alpha-3, "USA"), or null. Android: "". */
+  storefrontCountry?(): Promise<string | null> | string | null
 }
 
-const native = PUBLIK_TEST_HOOKS ? requireOptionalNativeModule<PublikLaunchNative>('PublikLaunch') : null
+// Loaded in every build for the storefront; the launch values stay test-build only (guards below).
+const native = requireOptionalNativeModule<PublikLaunchNative>('PublikLaunch')
+
+const STOREFRONT_TIMEOUT_MS = 5_000
+
+/**
+ * The App Store storefront country of this phone ("USA"), or null when it
+ * cannot be read (no module, Android, no answer within 5 s): then an App
+ * Store build shows no purchase link.
+ */
+export async function storefrontCountry(): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    const read = Promise.resolve(native?.storefrontCountry?.() ?? null)
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), STOREFRONT_TIMEOUT_MS)
+    })
+    const v = await Promise.race([read, late])
+    return typeof v === 'string' && /^[A-Za-z]{2,3}$/.test(v.trim()) ? v.trim().toUpperCase() : null
+  } catch {
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 export function launchValue(name: string): string | null {
   if (!PUBLIK_TEST_HOOKS) return null

@@ -17,7 +17,7 @@ import { healthScore } from '@nutai/totals'
 import { ConfidenceChip, ConfidenceReasons } from '../src/components/ConfidenceChip'
 import { Icon, type IconName } from '../src/components/Icon'
 import { logMeal } from '../src/data/repo'
-import { openPublikLink } from '../src/inference/publik'
+import { openPublikLink, usePurchaseLinks } from '../src/inference/publik'
 import { fixScan, lookupOther, retryScan } from '../src/scan/orchestrator'
 import {
   answerQuestion,
@@ -48,6 +48,7 @@ export default function Result() {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const phase = useScan()
+  const purchaseLinks = usePurchaseLinks()
   const [expandedBand, setExpandedBand] = useState(false)
   const [logging, setLogging] = useState(false)
   const [fixOpen, setFixOpen] = useState(false)
@@ -86,10 +87,12 @@ export default function Result() {
         <Text style={[type.caption, { color: theme.textMuted, marginTop: space.sm, textAlign: 'center', lineHeight: 19 }]}>
           {phase.message}
         </Text>
-        {/* The one link a failure may carry (publik API's top_up_url). The URL
-            was origin-checked when the failure was classified, and again by
-            openPublikLink, which opens it in the in-app browser sheet. */}
-        {phase.action ? (
+        {/* The one link a failure may carry (publik API's top_up_url, or the
+            charges page). The URL was origin-checked when the failure was
+            classified, and again by openPublikLink, which opens it in the
+            in-app browser sheet. None in an App Store build outside the US
+            storefront: those publik pages sell plans (usePurchaseLinks). */}
+        {phase.action && purchaseLinks ? (
           <Pressable
             onPress={() => void openPublikLink(phase.action!.url)}
             style={[styles.primary, { backgroundColor: theme.text, marginTop: space.xl, paddingHorizontal: space.xl }]}
@@ -449,7 +452,7 @@ function Macro({
 }
 
 /**
- * Two stat pages, swipeable like the incumbent's: macros, then
+ * Two swipeable stat pages: macros, then
  * fiber/sugar/sodium with the health score. The score is arithmetic from
  * @nutai/totals — tap it and every point shows its named rule.
  */

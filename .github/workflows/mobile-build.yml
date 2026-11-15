@@ -8,20 +8,29 @@
 #                         the app keeps its publik key) refuses an app with no
 #                         signature. The job also runs the publik self-test on
 #                         a simulator.
-#   ios-sim-app-optional  the same with PUBLIK_GATE_MODE=optional (no wall).
+#   ios-sim-app-optional  the same with PUBLIK_GATE_MODE=optional (no wall). A
+#                         test artifact only: an App Store build is always
+#                         required (the native build fails otherwise).
 #   android-debug-apk     a test APK: the release variant (the JS bundle is
 #                         inside, no Metro, no dev launcher), debuggable,
 #                         signed with the debug key, cleartext allowed for a
 #                         local fake publik.
+#   android-release-check no artifact: a release build with the test hooks
+#                         OFF, as a store build is made, to prove it builds,
+#                         and that the build rules hold.
 #
-# All three are CI TEST-HOOKS builds: PUBLIK_TEST_HOOKS=1 (native, at pod
-# install and in Gradle) and EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1 (JS, at bundle
-# time) compile in the launch values PUBLIK_SELF_TEST and PUBLIK_API_BASE_URL.
-# A store build sets neither, and then nothing reads them.
+# The three artifacts are CI TEST-HOOKS builds: PUBLIK_TEST_HOOKS=1 (native,
+# at pod install and in Gradle) and EXPO_PUBLIC_PUBLIK_TEST_HOOKS=1 (JS, at
+# bundle time) compile in the launch values PUBLIK_SELF_TEST and
+# PUBLIK_API_BASE_URL. A test-hooks build is never an App Store build:
+# EXPO_PUBLIC_APP_STORE_BUILD=0 here, and a build with both fails
+# (plugins/withPublikTokenCheck.js).
 #
-# The app token comes from the repo secret PUBLIK_APP_TOKEN and goes into
-# apps/mobile/publik-build.json for the build only. It is never printed.
-# Nothing here signs for a store, tags or releases.
+# The app token comes ONLY from the repo secret PUBLIK_APP_TOKEN, passed as
+# the build input PUBLIK_APP_TOKEN to the native build steps (expo-constants
+# writes it into the app from app.config.ts). The committed
+# apps/mobile/publik-build.json holds the placeholder. The token is never
+# printed. Nothing here signs for a store, tags or releases.
 
 name: mobile build
 
@@ -67,13 +76,14 @@ jobs:
         include:
           - gate: required
             artifact: ios-sim-app
-            zip: NutAI-0.1.2-simulator-arm64.zip
+            zip: NutAI-0.1.3-simulator-arm64.zip
           - gate: optional
             artifact: ios-sim-app-optional
-            zip: NutAI-0.1.2-optional-simulator-arm64.zip
+            zip: NutAI-0.1.3-optional-simulator-arm64.zip
     env:
       PUBLIK_TEST_HOOKS: '1'
       EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_APP_STORE_BUILD: '0'
       EXPO_PUBLIC_PUBLIK_GATE_MODE: ${{ matrix.gate }}
       APP_BUILD_NUMBER: ${{ github.run_number }}
     steps:
@@ -83,10 +93,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Put the app token in publik-build.json
-        env:
-          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
-        run: node .github/scripts/publik-build-token.mjs apps/mobile/publik-build.json
       - name: Prebuild ios/
         working-directory: apps/mobile
         run: |
@@ -95,6 +101,8 @@ jobs:
           cd ios && pod install
       - name: Build NutAI.app for the simulator (arm64, ad-hoc, no certificate)
         working-directory: apps/mobile/ios
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
         run: |
           set -o pipefail
           xcodebuild -workspace NutAI.xcworkspace -scheme NutAI -configuration Release \
@@ -123,16 +131,35 @@ jobs:
             const f = JSON.parse(require("fs").readFileSync(0, "utf8"))
             console.log("UIDeviceFamily =", JSON.stringify(f))
             if (JSON.stringify(f) !== "[1]") process.exit(1)'
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.2
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$P")" = 0.1.3
           test "$(plutil -extract CFBundleVersion raw -o - "$P")" = "$APP_BUILD_NUMBER"
+          # The label under the icon is the short name; the App Store and in-app name is "publik Nut AI".
+          test "$(plutil -extract CFBundleDisplayName raw -o - "$P")" = "Nut AI"
+          # The app does not use Face ID, so it asks for no Face ID permission.
+          if plutil -extract NSFaceIDUsageDescription raw -o - "$P" >/dev/null 2>&1; then
+            echo "NSFaceIDUsageDescription is in Info.plist"; exit 1
+          fi
+          echo "NSFaceIDUsageDescription: absent"
           test -f "$APP/PrivacyInfo.xcprivacy"
           plutil -convert json -o - "$APP/PrivacyInfo.xcprivacy" | node -e '
             const m = JSON.parse(require("fs").readFileSync(0, "utf8"))
             console.log("NSPrivacyTracking =", m.NSPrivacyTracking)
             for (const a of m.NSPrivacyAccessedAPITypes) console.log(a.NSPrivacyAccessedAPIType, a.NSPrivacyAccessedAPITypeReasons.join(","))
             for (const c of m.NSPrivacyCollectedDataTypes) console.log(c.NSPrivacyCollectedDataType, "linked:", c.NSPrivacyCollectedDataTypeLinked, "tracking:", c.NSPrivacyCollectedDataTypeTracking)
-            if (m.NSPrivacyTracking !== false) process.exit(1)'
-          grep -q 'Check publik app token' NutAI.xcodeproj/project.pbxproj
+            const o = m.NSPrivacyCollectedDataTypes.find((c) => c.NSPrivacyCollectedDataType === "NSPrivacyCollectedDataTypeOtherUserContent")
+            if (m.NSPrivacyTracking !== false || !o || o.NSPrivacyCollectedDataTypeLinked !== false || o.NSPrivacyCollectedDataTypeTracking !== false) process.exit(1)
+            if (o.NSPrivacyCollectedDataTypePurposes.join() !== "NSPrivacyCollectedDataTypePurposeAppFunctionality") process.exit(1)'
+          grep -q 'Check publik build settings' NutAI.xcodeproj/project.pbxproj
+          # The app token came from the build input: a token-shaped value, not
+          # the placeholder, in the app config inside the app. Never printed.
+          CONF=$(find "$APP" -name app.config -print -quit)
+          test -n "$CONF"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$CONF"
         working-directory: apps/mobile/ios
       - name: publik self-test on a simulator
         run: |
@@ -161,7 +188,7 @@ jobs:
             kill "$PID" 2>/dev/null || true
             echo "attempt $attempt:"
             grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; }
-            if grep -q 'publik self-test: ok nut-ai 0.1.2' "$LOG"; then ok=1; break; fi
+            if grep -q 'publik self-test: ok nut-ai 0.1.3' "$LOG"; then ok=1; break; fi
             grep -q 'not reachable' "$LOG" || break
             sleep 15
           done
@@ -173,6 +200,7 @@ jobs:
     env:
       PUBLIK_TEST_HOOKS: '1'
       EXPO_PUBLIC_PUBLIK_TEST_HOOKS: '1'
+      EXPO_PUBLIC_APP_STORE_BUILD: '0'
       APP_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Free disk space
@@ -187,10 +215,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Put the app token in publik-build.json
-        env:
-          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
-        run: node .github/scripts/publik-build-token.mjs apps/mobile/publik-build.json
       - name: Prebuild android/ (test settings)
         working-directory: apps/mobile
         run: |
@@ -203,30 +227,31 @@ jobs:
             printf '\nandroid { buildTypes { getByName("release") { isDebuggable = true } } }\n' >> android/app/build.gradle.kts
           fi
           printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
-      - name: A release build with no app token fails (negative test)
+      - name: Build rules hold (negative tests)
         working-directory: apps/mobile/android
         run: |
-          cp ../publik-build.json "$RUNNER_TEMP/publik-build.keep.json"
-          node -e '
-            const f = "../publik-build.json", fs = require("fs")
-            const j = JSON.parse(fs.readFileSync(f, "utf8")); j.appToken = ""
-            fs.writeFileSync(f, JSON.stringify(j, null, 2))'
+          # 1. A release build with no PUBLIK_APP_TOKEN fails (this step has none).
           if ./gradlew :app:preReleaseBuild --no-daemon -q > "$RUNNER_TEMP/no-token.log" 2>&1; then
             echo "preReleaseBuild passed with no app token"; exit 1
           fi
           grep -m1 'has no publik app token' "$RUNNER_TEMP/no-token.log" || { tail -40 "$RUNNER_TEMP/no-token.log"; exit 1; }
-          cp "$RUNNER_TEMP/publik-build.keep.json" ../publik-build.json
-          rm -f "$RUNNER_TEMP/publik-build.keep.json"
+          # 2. An App Store build with the test hooks fails.
+          if EXPO_PUBLIC_APP_STORE_BUILD=1 ./gradlew :app:preBuild --no-daemon -q > "$RUNNER_TEMP/store-hooks.log" 2>&1; then
+            echo "preBuild passed for an App Store build with the test hooks"; exit 1
+          fi
+          grep -m1 'must not have the test hooks' "$RUNNER_TEMP/store-hooks.log" || { tail -40 "$RUNNER_TEMP/store-hooks.log"; exit 1; }
       - name: Build the test APK
         working-directory: apps/mobile/android
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
         run: |
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
           mkdir -p "$RUNNER_TEMP/out"
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.2-test.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.3-test.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: ${{ runner.temp }}/out/nut-ai-0.1.2-test.apk
+          path: ${{ runner.temp }}/out/nut-ai-0.1.3-test.apk
           if-no-files-found: error
       - name: Keys stay out of Android backups (merged manifest)
         working-directory: apps/mobile/android
@@ -238,3 +263,71 @@ jobs:
           R=$(find app/build/intermediates -name 'secure_store_backup_rules.xml' -print -quit)
           if [ -n "$R" ]; then echo "== $R"; cat "$R"; fi
           grep -q 'android:fullBackupContent=' "$M"
+          grep -q 'android:versionName="0.1.3"' "$M"
+      - name: The app token in the APK came from the build input (never printed)
+        run: |
+          unzip -p "$RUNNER_TEMP/out/nut-ai-0.1.3-test.apk" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$RUNNER_TEMP/app.config.json"
+          rm -f "$RUNNER_TEMP/app.config.json"
+
+  android-release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # No test hooks: built as a store build is built. No artifact.
+    env:
+      APP_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/.ghcup && df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Prebuild android/ (no test settings)
+        working-directory: apps/mobile
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> android/gradle.properties
+      - name: An App Store build with the optional gate fails (negative test)
+        working-directory: apps/mobile/android
+        run: |
+          if EXPO_PUBLIC_APP_STORE_BUILD=1 EXPO_PUBLIC_PUBLIK_GATE_MODE=optional ./gradlew :app:preBuild --no-daemon -q > "$RUNNER_TEMP/store-optional.log" 2>&1; then
+            echo "preBuild passed for an App Store build with the optional gate"; exit 1
+          fi
+          grep -m1 'always has the required gate' "$RUNNER_TEMP/store-optional.log" || { tail -40 "$RUNNER_TEMP/store-optional.log"; exit 1; }
+      - name: Release build, test hooks off
+        working-directory: apps/mobile/android
+        env:
+          PUBLIK_APP_TOKEN: ${{ secrets.PUBLIK_APP_TOKEN }}
+        run: |
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --stacktrace
+          A=app/build/outputs/apk/release/app-release.apk
+          test -f "$A"
+          ls -l "$A"
+          # The native test hooks are compiled out (BuildConfig.PUBLIK_TEST_HOOKS = false).
+          B=$(find ../modules/publik-launch -name BuildConfig.java -path '*elease*' -print -quit 2>/dev/null || true)
+          if [ -n "$B" ]; then
+            grep 'PUBLIK_TEST_HOOKS' "$B"
+            grep -q 'PUBLIK_TEST_HOOKS = false' "$B"
+          else
+            echo "note: the BuildConfig of modules/publik-launch is not under modules/publik-launch"
+          fi
+          unzip -p "$A" assets/app.config > "$RUNNER_TEMP/app.config.json"
+          node -e '
+            const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+            const t = c.extra && c.extra.publikAppToken
+            const ok = typeof t === "string" && /^pat_[A-Za-z0-9_-]{8,200}$/.test(t) && !t.includes("REPLACE_ME")
+            console.log("app config: name =", c.name, "| publikAppToken from the build input:", ok ? "yes" : "NO")
+            if (!ok) process.exit(1)' "$RUNNER_TEMP/app.config.json"
+          rm -f "$RUNNER_TEMP/app.config.json"

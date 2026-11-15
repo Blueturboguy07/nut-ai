@@ -9,12 +9,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const settings = new Map<string, string>()
 const creds = new Map<string, { kind: 'api_key' | 'oauth'; value: string }>()
 let install: any = null
-// The App Store flag and the consent answers, per test.
-const h = vi.hoisted(() => ({ appStore: false, consent: true, asked: [] as string[] }))
+// The dev-build flag (Claude subscription tokens) and the consent answers, per test.
+const h = vi.hoisted(() => ({ dev: true, consent: true, asked: [] as string[] }))
 
 vi.mock('../build-flags', () => ({
-  get APP_STORE_BUILD() {
-    return h.appStore
+  get CLAUDE_SUBSCRIPTION_TOKENS() {
+    return h.dev
   },
 }))
 vi.mock('./ai-consent', () => ({
@@ -48,7 +48,7 @@ beforeEach(() => {
   settings.clear()
   creds.clear()
   install = null
-  h.appStore = false
+  h.dev = true
   h.consent = true
   h.asked = []
 })
@@ -178,8 +178,8 @@ describe('consent and the App Store build', () => {
     expect(h.asked).toEqual([])
   })
 
-  it('an App Store build refuses a saved Claude CLI token; an API key works as before', async () => {
-    h.appStore = true
+  it('every build but a dev build refuses a saved Claude CLI token (Android too); an API key works as before', async () => {
+    h.dev = false
     settings.set('provider', 'anthropic')
     creds.set('anthropic', { kind: 'oauth', value: 'sk-ant-oat01-x' })
     expect(await resolveInference()).toEqual({ ok: false, error: { kind: 'key-missing' } })
@@ -187,7 +187,7 @@ describe('consent and the App Store build', () => {
     creds.set('anthropic', { kind: 'api_key', value: 'sk-ant-api03-x' })
     const r = await resolveInference()
     expect(r.ok && r.value.credential).toEqual({ kind: 'api_key', value: 'sk-ant-api03-x' })
-    h.appStore = false
+    h.dev = true
     creds.set('anthropic', { kind: 'oauth', value: 'sk-ant-oat01-x' })
     expect((await resolveInference()).ok).toBe(true)
   })

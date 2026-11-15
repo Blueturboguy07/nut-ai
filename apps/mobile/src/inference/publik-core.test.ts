@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  APP_TOKEN_PLACEHOLDER,
+  appTokenOf,
   chargeUsdFromHeaders,
   classifyGatewayError,
+  purchaseLinksFor,
+  purchaseLinksOn,
+  setPurchaseLinks,
   formatMicros,
   isSafePublikLink,
   isUsableAppToken,
   provision,
+  provisionGateMessage,
   walletFromHeaders,
   walletPatchFromHeaders,
   walletFromJson,
@@ -126,6 +132,47 @@ describe('provision', () => {
     expect(bad.ok && bad.install.baseUrl).toBe('https://publikhq.com/api/v1')
   })
 
+  it('403 install_revoked is its own outcome (the caller makes ONE new install), not a revoked app token', async () => {
+    const r = await provision(INPUT, scripted(403, { error: { type: 'install_revoked', message: 'This install was disconnected by its owner. Provision a new install.', reprovision: false } }).impl)
+    expect(r).toEqual({ ok: false, kind: 'install-revoked', status: 403 })
+    expect(r.ok === false && provisionGateMessage(r, CFG)).toContain('Retry')
+  })
+
+  it('a 401 / 403 page that is not publik\'s JSON (a captive portal, a proxy) is "not reachable", not a revoked token', async () => {
+    for (const status of [401, 403]) {
+      const portal = vi.fn(async () => ({
+        ok: false,
+        status,
+        headers: new Headers(),
+        json: async () => {
+          throw new SyntaxError('Unexpected token < in JSON at position 0')
+        },
+      })) as unknown as typeof fetch
+      const r = await provision(INPUT, portal)
+      expect(r).toEqual({ ok: false, kind: 'offline', status })
+      expect(r.ok === false && provisionGateMessage(r, CFG)).toBeUndefined()
+    }
+  })
+
+  it('a 200 that is not JSON (a captive portal) is "not reachable", never "Update Nut AI"', async () => {
+    for (const body of ['<html>', null, ['not', 'an', 'object']]) {
+      const page = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => {
+          if (body === '<html>') throw new SyntaxError('Unexpected token < in JSON at position 0')
+          return body
+        },
+      })) as unknown as typeof fetch
+      const r = await provision(INPUT, page)
+      expect(r).toEqual({ ok: false, kind: 'offline', status: 200 })
+      // The gate shows the Retry screen's "not reachable" line (undefined = UNREACHABLE_MESSAGE).
+      expect(r.ok === false && provisionGateMessage(r, CFG)).toBeUndefined()
+      expect(r.ok === false && provisionFailureMessage(r)).toMatch(/^No connection/)
+    }
+  })
+
   it('200 replay with key:null is a named outcome, not a key', async () => {
     const r = await provision(INPUT, scripted(200, { ...MINT_201, key: null, starter_micros: 0 }).impl)
     expect(r).toMatchObject({ ok: false, kind: 'replayed' })
@@ -135,6 +182,9 @@ describe('provision', () => {
     expect(await provision(INPUT, scripted(429, {}, { 'retry-after': '120' }).impl)).toMatchObject({ ok: false, kind: 'rate-limited', retryAfterSec: 120 })
     expect(await provision(INPUT, scripted(401, {}).impl)).toMatchObject({ ok: false, kind: 'token-revoked' })
     expect(await provision(INPUT, scripted(403, {}).impl)).toMatchObject({ ok: false, kind: 'token-revoked' })
+    // The server's reasons (app/api/v1/installs): 401 invalid_app_token, 403 app_suspended, 403 install_revoked.
+    expect(await provision(INPUT, scripted(401, { error: { type: 'invalid_app_token', message: 'x' } }).impl)).toMatchObject({ ok: false, kind: 'token-revoked', status: 401 })
+    expect(await provision(INPUT, scripted(403, { error: { type: 'app_suspended', message: 'x' } }).impl)).toMatchObject({ ok: false, kind: 'token-revoked', status: 403 })
     expect(await provision(INPUT, scripted(503, {}).impl)).toMatchObject({ ok: false, kind: 'unavailable', status: 503 })
     const thrower = vi.fn(async () => { throw new TypeError('Network request failed') }) as unknown as typeof fetch
     expect(await provision(INPUT, thrower)).toMatchObject({ ok: false, kind: 'offline' })
@@ -164,6 +214,45 @@ describe('app token shape', () => {
     expect(isUsableAppToken('pat_nut-ai_REPLACE_ME')).toBe(false)
     expect(isUsableAppToken('')).toBe(false)
     expect(isUsableAppToken(undefined)).toBe(false)
+  })
+})
+
+describe('the app token of a build', () => {
+  const FILE = `pat_nut-ai_${'f'.repeat(32)}`
+  it('a release build takes it ONLY from the build input (PUBLIK_APP_TOKEN)', () => {
+    expect(appTokenOf(TOKEN, FILE, false)).toBe(TOKEN)
+    expect(appTokenOf(undefined, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf(null, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf('', FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+    expect(appTokenOf(APP_TOKEN_PLACEHOLDER, FILE, false)).toBe(APP_TOKEN_PLACEHOLDER)
+  })
+  it('the committed file serves a dev build only, and the build input still wins there', () => {
+    expect(appTokenOf(undefined, FILE, true)).toBe(FILE)
+    expect(appTokenOf(TOKEN, FILE, true)).toBe(TOKEN)
+    expect(appTokenOf(undefined, APP_TOKEN_PLACEHOLDER, true)).toBe(APP_TOKEN_PLACEHOLDER)
+  })
+})
+
+describe('purchase links (the App Store rule)', () => {
+  it('an App Store build shows them only in the US storefront; unknown = hidden', () => {
+    expect(purchaseLinksFor(true, 'USA')).toBe(true)
+    expect(purchaseLinksFor(true, 'usa')).toBe(true)
+    expect(purchaseLinksFor(true, 'US')).toBe(true)
+    for (const c of ['GBR', 'CAN', 'DEU', 'IND', 'JPN', '', null, undefined]) expect(purchaseLinksFor(true, c)).toBe(false)
+  })
+  it('a build that is not an App Store build shows them everywhere', () => {
+    for (const c of ['USA', 'GBR', null]) expect(purchaseLinksFor(false, c)).toBe(true)
+  })
+  it('the module setting is what classifyGatewayError and gateScreen use by default', () => {
+    const before = purchaseLinksOn()
+    try {
+      setPurchaseLinks(false)
+      expect(purchaseLinksOn()).toBe(false)
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type: 'insufficient_credit', claim_state: 'claimed', top_up_url: 'https://publikhq.com/wallet' } }))
+      expect(f?.action).toBeUndefined()
+    } finally {
+      setPurchaseLinks(before)
+    }
   })
 })
 
@@ -311,6 +400,26 @@ describe('classifyGatewayError', () => {
     expect(classifyGatewayError(503, JSON.stringify({ error: { type: 'gateway_unavailable' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
   })
 
+  it('outside the US storefront of an App Store build: no link and no price, in every link case', () => {
+    const anon402 = classifyGatewayError(402, body402(), false)
+    expect(anon402).toMatchObject({ kind: 'quota-exhausted', retryable: false })
+    expect(anon402?.action).toBeUndefined()
+    // Not the gateway's own message, which names a link and an amount.
+    expect(anon402?.message).toBe('Your publik balance is too low for this scan. To get a plan, search for "publik" on Google. Or use your own key in Profile → AI provider.')
+    expect(anon402?.message).not.toMatch(/\$|pack|link|https?:/i)
+    const claimed402 = classifyGatewayError(402, body402({ claim_state: 'claimed', message: undefined }), false)
+    expect(claimed402?.action).toBeUndefined()
+    expect(claimed402?.message).not.toMatch(/\$|pack|https?:/i)
+    for (const type of ['daily_cap_reached', 'week_budget_reached', 'model_requires_claim']) {
+      const f = classifyGatewayError(402, JSON.stringify({ error: { type, claim_state: 'claimed', top_up_url: 'https://publikhq.com/wallet', claim_url: 'https://publikhq.com/claim/A' } }), false)
+      expect(f).not.toBeNull()
+      expect(f?.action).toBeUndefined()
+      expect(f?.message).not.toMatch(/\$/)
+    }
+    // In the US storefront (or not an App Store build) the link is there as before.
+    expect(classifyGatewayError(402, body402(), true)?.action).toEqual({ label: 'Link this phone & pick a plan', url: 'https://publikhq.com/claim/HK7F-2QWD' })
+  })
+
   it('a non-publik body is not claimed', () => {
     expect(classifyGatewayError(402, 'Payment Required')).toBeNull()
     expect(classifyGatewayError(400, JSON.stringify({ error: { message: 'bad', type: 'invalid_request_error' } }))).toBeNull()
@@ -361,6 +470,6 @@ describe('provisionFailureMessage', () => {
     expect(provisionFailureMessage({ ok: false, kind: 'offline' })).toMatch(/^No connection\. Nothing was set up/)
     expect(provisionFailureMessage({ ok: false, kind: 'unavailable' })).toContain('not available for this build')
     expect(provisionFailureMessage({ ok: false, kind: 'token-revoked', status: 401 })).toContain('not available for this build')
-    expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update Nut AI')
+    expect(provisionFailureMessage({ ok: false, kind: 'malformed' })).toContain('Update publik Nut AI')
   })
 })

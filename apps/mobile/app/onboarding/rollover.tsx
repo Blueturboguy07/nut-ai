@@ -13,7 +13,7 @@ import { radius, space, type } from '../../src/theme/tokens'
  *
  * This is a REAL setting with a real consumer: when on, up to 200 unused calories
  * carry into the next day's target. It is also the one screen in the flow with a
- * Yes/No pair instead of Continue, matching the reference.
+ * Yes/No pair instead of Continue.
  *
  * The cap matters and is not cosmetic. Uncapped rollover lets someone bank a week
  * of deficit into one day, which is the mechanic that turns a tracker into a
