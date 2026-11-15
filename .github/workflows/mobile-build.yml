@@ -144,18 +144,28 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
-          LOG="$RUNNER_TEMP/selftest.log"
-          SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
-          PID=$!
-          for i in $(seq 1 120); do
-            grep -q 'publik self-test:' "$LOG" && break
-            kill -0 "$PID" 2>/dev/null || break
-            sleep 1
+          # A simulator that just booted can be without network for a short
+          # time, so a "not reachable" answer gets up to 3 launches. Any other
+          # answer is final.
+          ok=0
+          for attempt in 1 2 3; do
+            LOG="$RUNNER_TEMP/selftest-$attempt.log"
+            SIMCTL_CHILD_PUBLIK_SELF_TEST=1 xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.nutai.app > "$LOG" 2>&1 &
+            PID=$!
+            for i in $(seq 1 120); do
+              grep -q 'publik self-test:' "$LOG" && break
+              kill -0 "$PID" 2>/dev/null || break
+              sleep 1
+            done
+            sleep 2
+            kill "$PID" 2>/dev/null || true
+            echo "attempt $attempt:"
+            grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; }
+            if grep -q 'publik self-test: ok nut-ai 0.1.2' "$LOG"; then ok=1; break; fi
+            grep -q 'not reachable' "$LOG" || break
+            sleep 15
           done
-          sleep 2
-          kill "$PID" 2>/dev/null || true
-          grep 'publik self-test:' "$LOG" || { echo "No self-test line. Log:"; cat "$LOG"; exit 1; }
-          grep -q 'publik self-test: ok nut-ai 0.1.2' "$LOG"
+          test "$ok" = 1
 
   android-apk:
     runs-on: ubuntu-latest
@@ -213,16 +223,18 @@ jobs:
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon --stacktrace
           mkdir -p "$RUNNER_TEMP/out"
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/out/nut-ai-0.1.2-test.apk"
-      - name: Keys stay out of Android backups (merged manifest)
-        working-directory: apps/mobile/android
-        run: |
-          M=$(find app/build/intermediates -name AndroidManifest.xml -path '*elease*' | grep -i merged | head -1)
-          echo "$M"
-          grep -oE 'android:(allowBackup|fullBackupContent|dataExtractionRules|versionCode|versionName)="[^"]*"' "$M"
-          for f in app/src/main/res/xml/*.xml; do echo "== $f"; cat "$f"; done
-          grep -q 'android:fullBackupContent=' "$M"
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
           path: ${{ runner.temp }}/out/nut-ai-0.1.2-test.apk
           if-no-files-found: error
+      - name: Keys stay out of Android backups (merged manifest)
+        working-directory: apps/mobile/android
+        run: |
+          M=$(find app/build/intermediates -path '*merged_manifest*' -path '*elease*' -name AndroidManifest.xml -print -quit)
+          test -n "$M"
+          echo "$M"
+          grep -oE 'android:(allowBackup|fullBackupContent|dataExtractionRules|versionCode|versionName)="[^"]*"' "$M"
+          R=$(find app/build/intermediates -name 'secure_store_backup_rules.xml' -print -quit)
+          if [ -n "$R" ]; then echo "== $R"; cat "$R"; fi
+          grep -q 'android:fullBackupContent=' "$M"

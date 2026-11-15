@@ -20,7 +20,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }))
 function phase(configuration: string, appToken: unknown): number {
   writeFileSync(join(root, 'publik-build.json'), JSON.stringify({ appToken, appSlug: 'nut-ai' }, null, 2))
   try {
-    execFileSync('/bin/sh', ['-c', plugin.SCRIPT], { env: { PATH: process.env.PATH ?? '/usr/bin:/bin', CONFIGURATION: configuration, PROJECT_DIR: join(root, 'ios') }, stdio: 'pipe' })
+    execFileSync('/bin/sh', ['-c', plugin.SCRIPT], { env: { ...process.env, CONFIGURATION: configuration, PROJECT_DIR: join(root, 'ios') }, stdio: 'pipe' })
     return 0
   } catch (e) {
     return (e as { status?: number }).status ?? 1
