@@ -8,6 +8,8 @@ import {
   purchaseLinksOn,
   setPurchaseLinks,
   formatMicros,
+  gateWalletFromJson,
+  inAppClaimUrl,
   isSafePublikLink,
   isUsableAppToken,
   provision,
@@ -19,7 +21,7 @@ import {
   publikScanModel,
   type PublikBuildConfig,
 } from './publik-core'
-import { provisionFailureMessage, waitPhrase } from './publik-copy'
+import { PRIVACY_URL, PUBLIK_DELETE_ACCOUNT_URL, provisionFailureMessage, waitPhrase } from './publik-copy'
 
 /**
  * The pure half of publik API against a scripted fetch: what the mint posts,
@@ -93,7 +95,7 @@ describe('provision', () => {
     if (r.ok) {
       expect(r.key).toBe(KEY)
       expect(r.starterMicros).toBe(0)
-      expect(r.install.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
+      expect(r.install.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
       expect(r.install.claimState).toBe('anonymous')
       expect(r.install.baseUrl).toBe('https://publikhq.com/api/v1')
       expect(r.install.models.fast).toBe('publik-fast')
@@ -331,7 +333,38 @@ describe('wallet from headers', () => {
     const w = walletFromJson(MINT_201.wallet, 'anonymous')
     expect(w.balanceMicros).toBe(0)
     expect(w.weekResetsAt).toBe('2026-09-26T00:00:00Z')
-    expect(w.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD')
+    expect(w.claimUrl).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
+  })
+})
+
+describe('the publik pages the app opens', () => {
+  it('inAppClaimUrl adds in_app=1 and keeps the other query values and the fragment', () => {
+    expect(inAppClaimUrl('https://publikhq.com/claim/HK7F-2QWD')).toBe('https://publikhq.com/claim/HK7F-2QWD?in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?ref=app&x=1')).toBe('https://publikhq.com/claim/A?ref=app&x=1&in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?')).toBe('https://publikhq.com/claim/A?in_app=1')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A#top')).toBe('https://publikhq.com/claim/A?in_app=1#top')
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?ref=app#top')).toBe('https://publikhq.com/claim/A?ref=app&in_app=1#top')
+    // An old in_app value is replaced, not doubled.
+    expect(inAppClaimUrl('https://publikhq.com/claim/A?in_app=0&ref=app')).toBe('https://publikhq.com/claim/A?ref=app&in_app=1')
+    // Given its own result, the same link.
+    const once = inAppClaimUrl('https://publikhq.com/claim/A?ref=app')
+    expect(inAppClaimUrl(once)).toBe(once)
+  })
+
+  it('every claim_url from publik becomes the in-app claim link; a link off publik stays null', () => {
+    const gate = gateWalletFromJson({ claim_state: 'anonymous', claim_url: 'https://publikhq.com/claim/A?ref=app', top_up_url: 'https://publikhq.com/wallet?top_up=1' })
+    expect(gate.claimUrl).toBe('https://publikhq.com/claim/A?ref=app&in_app=1')
+    // Get a plan (US storefront only): the site, as before.
+    expect(gate.topUpUrl).toBe('https://publikhq.com/wallet?top_up=1')
+    expect(gateWalletFromJson({ claim_state: 'anonymous', claim_url: 'https://evil.example/claim/A' }).claimUrl).toBeNull()
+    expect(walletFromJson({ claim_url: 'https://publikhq.com.evil/claim/A' }, 'anonymous').claimUrl).toBeNull()
+  })
+
+  it('privacy and account deletion open publik\'s bare in-app pages', () => {
+    expect(PRIVACY_URL).toBe('https://publikhq.com/in-app/privacy')
+    expect(PUBLIK_DELETE_ACCOUNT_URL).toBe('https://publikhq.com/in-app/delete-account')
+    expect(isSafePublikLink(PRIVACY_URL)).toBe(true)
+    expect(isSafePublikLink(PUBLIK_DELETE_ACCOUNT_URL)).toBe(true)
   })
 })
 
@@ -395,7 +428,7 @@ describe('classifyGatewayError', () => {
   it('caps, model gates and outages map to their own states', () => {
     expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'daily_cap_reached', claim_state: 'claimed', top_up_url: 'https://publikhq.com/dashboard/api/add' } }))).toMatchObject({ kind: 'quota-exhausted', retryable: false, action: { label: 'Raise the cap' } })
     expect(classifyGatewayError(429, JSON.stringify({ error: { type: 'rate_limit_exceeded' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
-    expect(classifyGatewayError(402, JSON.stringify({ error: { type: 'model_requires_claim', claim_url: 'https://publikhq.com/claim/A' } }))).toMatchObject({ kind: 'model-unavailable', action: { url: 'https://publikhq.com/claim/A' } })
+    expect(classifyGatewayError(402, JSON.stringify({ error: { type: 'model_requires_claim', claim_url: 'https://publikhq.com/claim/A' } }))).toMatchObject({ kind: 'model-unavailable', action: { url: 'https://publikhq.com/claim/A?in_app=1' } })
     expect(classifyGatewayError(400, JSON.stringify({ error: { type: 'unknown_model', message: 'Unknown model' } }))).toMatchObject({ kind: 'model-unavailable' })
     expect(classifyGatewayError(503, JSON.stringify({ error: { type: 'gateway_unavailable' } }))).toMatchObject({ kind: 'error-retryable', retryable: true })
   })

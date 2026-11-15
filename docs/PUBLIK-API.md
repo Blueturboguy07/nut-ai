@@ -38,7 +38,9 @@ run time can change it. CI builds both (`ios-sim-app`, `ios-sim-app-optional`).
    key store that cannot be read counts as "no key" (a new key), never as a
    lockout;
 2. reads `GET /api/v1/wallet` and shows **Sign in with publik** until
-   `claim_state` is `claimed`. The button opens `claim_url` in an in-app
+   `claim_state` is `claimed`. The button opens `claim_url` with `in_app=1`
+   added (publik redirects it to its bare `/in-app/claim/<CODE>` page: no
+   site navigation, no prices, no plan links) in an in-app
    browser sheet (`expo-web-browser`: SFSafariViewController on iOS, a Custom
    Tab on Android), never the Safari app. The gate checks `GET /wallet` every
    3 s while the app is in the foreground, for at most 10 minutes, and at once
@@ -72,8 +74,8 @@ screen.
 | Row | What it does |
 |---|---|
 | **Sign in with publik** | optional mode, not signed in: opens the gate screens |
-| **Sign out** | confirm; the key is read into memory, the local copies are deleted, usage counting stops, then the key is revoked (best effort, 15 s) |
-| **Delete account** | confirm (the publik account is for all publik apps); asks whether to delete the food log on this phone too; signs out as above; opens `https://publikhq.com/settings/profile#delete-account-title` in the in-app browser |
+| **Sign out** | confirm; the key is read into memory, the local copies are deleted, usage counting stops, and Sign in with publik shows again at once; the key is revoked in the background (best effort, 15 s; offline sign-out works) |
+| **Delete account** | confirm (the publik account is for all publik apps); asks whether to delete the food log on this phone too; signs out as above; opens `https://publikhq.com/in-app/delete-account` in the in-app browser |
 | **Count app use** | the usage counting switch |
 
 Profile → AI provider keeps **Sign out of publik** and **Ask again at the next
@@ -89,6 +91,22 @@ Before the first call to an AI provider, the app asks **Send meal photos to
 `src/inference/ai-consent.ts`). One consent per provider: a photo or a
 description never goes to a provider the person did not agree to.
 **Not now** sends nothing.
+
+### The publik pages the app opens
+
+Every build opens publik pages only in the in-app browser sheet, and only
+these bare in-app pages (no site navigation, no footer, no prices, no plan
+links):
+
+| Page | URL | Where |
+|---|---|---|
+| Sign in / claim | the server's `claim_url` + `in_app=1` (other query values kept) → `/in-app/claim/<CODE>` | the gate; the publik card and a 402 in optional mode (`inAppClaimUrl` in `src/inference/publik-core.ts`) |
+| Privacy | `https://publikhq.com/in-app/privacy` | the publik disclosure (`PRIVACY_URL` in `src/inference/publik-copy.ts`) |
+| Delete account | `https://publikhq.com/in-app/delete-account` | Profile → publik account (`PUBLIK_DELETE_ACCOUNT_URL`) |
+
+With no claim link from publik, Sign in with publik opens nothing and asks
+again. The purchase links below ("Get a plan", top-up, "See charges on
+publik") open the normal site, and only where purchase links are allowed.
 
 ### App Store build: `EXPO_PUBLIC_APP_STORE_BUILD`
 

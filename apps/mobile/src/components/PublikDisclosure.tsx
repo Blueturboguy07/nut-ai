@@ -8,11 +8,12 @@ import {
   LINK_STARTER_HINT,
   linkButtonLabel,
   provisionFailureMessage,
-  TERMS_URL,
+  PRIVACY_URL,
   whyItCostsSentence,
 } from '../inference/publik-copy'
 import {
   formatMicros,
+  inAppClaimUrl,
   isSafePublikLink,
   type ProvisionResult,
   type PublikInstall,
@@ -66,11 +67,11 @@ export function PublikDisclosureBody({ error }: { error: string | null }) {
         </Text>
       </View>
       <Pressable
-        onPress={() => void openPublikLink(TERMS_URL)}
+        onPress={() => void openPublikLink(PRIVACY_URL)}
         style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.md }}
       >
         <Text style={[type.caption, { color: theme.textFaint }]}>By continuing you agree to the</Text>
-        <Text style={[type.label, { color: theme.protein }]}>publik API terms</Text>
+        <Text style={[type.label, { color: theme.protein }]}>publik privacy policy</Text>
         <Icon name="chevron" size={12} color={theme.protein} />
       </Pressable>
       {error ? (
@@ -124,9 +125,12 @@ export function PublikCard({
   const theme = useTheme()
   const links = usePurchaseLinks()
   const claimState = wallet?.claimState ?? install.claimState
+  // Anonymous: publik's bare in-app claim page (also for a claim link an
+  // older version stored). Claimed: the top-up page (US storefront only).
+  const claim = install.claimUrl ?? wallet?.claimUrl ?? null
   const link =
     claimState === 'anonymous'
-      ? (install.claimUrl ?? wallet?.claimUrl ?? null)
+      ? claim && inAppClaimUrl(claim)
       : (wallet?.addCreditUrl ?? 'https://publikhq.com/dashboard/api/add')
   const canOpen = isSafePublikLink(link)
 

@@ -9,6 +9,7 @@ import { launchValue, printLineAndExit, storefrontCountry } from '../../modules/
 import buildConfig from '../../publik-build.json'
 import { APP_STORE_BUILD, BUILD_ENV_OVERRIDES, DEV_BUILD, PUBLIK_GATE_MODE } from '../build-flags'
 import { clearCredential, loadCredential, saveCredential } from './credentials'
+import { PUBLIK_DELETE_ACCOUNT_URL } from './publik-copy'
 import {
   allowPublikOrigin,
   appTokenOf,
@@ -66,8 +67,6 @@ const WALLET_KEY = 'publik.wallet'
 const TELEMETRY_ID_KEY = 'publik.telemetry_install_id'
 /** Profile → publik account → Count app use: '0' is off; anything else (or nothing) is on. */
 const COUNT_USE_KEY = 'publik.count_use'
-/** publik's account deletion page (Profile → publik account → Delete account). */
-export const PUBLIK_DELETE_ACCOUNT_URL = 'https://publikhq.com/settings/profile#delete-account-title'
 
 /** The gate's plan choice as it last read or wrote it; screens read it without a SecureStore round trip. */
 let choiceCache: Choice | null = null

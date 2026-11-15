@@ -60,7 +60,14 @@ export function disclosureCostSentence(app = APP_NAME, purchaseLinks = true): st
 export const DISCLOSURE_DATA_PATH =
   "Your meal photo and the text around it go through publik's servers to a shared model account. publik does not store request bodies beyond a 24-hour idempotency fingerprint; the model provider's own abuse-monitoring retention applies. You can switch to your own key at any time in Profile."
 
-export const TERMS_URL = 'https://publikhq.com/terms#api'
+/**
+ * The only publik pages the app opens for sign-in, privacy and account
+ * deletion: publik's bare in-app pages, with no site navigation, no prices
+ * and no plan links. (The claim link: publik-core.ts inAppClaimUrl.)
+ */
+export const PRIVACY_URL = 'https://publikhq.com/in-app/privacy'
+/** publik's account deletion page (Profile → publik account → Delete account). */
+export const PUBLIK_DELETE_ACCOUNT_URL = 'https://publikhq.com/in-app/delete-account'
 
 /** CONTRACT §12.1(c) / §12.2: the primary button, by claim state. */
 export function linkButtonLabel(claimState: 'anonymous' | 'claimed'): string {

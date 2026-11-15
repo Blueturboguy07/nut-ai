@@ -4,7 +4,8 @@ An open-source AI photo calorie tracker that never shows a number it cannot just
 
 Point your camera at a meal and get calories and macros — with an honest uncertainty range, the
 assumptions it made shown as editable chips, and a correction flow that recomputes everything locally
-and instantly. No subscription, no paywall, no account, no server.
+and instantly. No subscription and no paywall. The app asks you to sign in with a free publik
+account once, the first time you open it.
 
 <img src="docs/img/hero.png" alt="Nut AI home screen" width="320" />
 
@@ -103,8 +104,8 @@ because most of the accuracy lives between the model and the number.
 
 ## Put it on your phone
 
-You build it yourself — that is the deal with an app that has no server, no account, and no store
-listing taking a cut. One-time setup, ~20 minutes.
+You can build it yourself. One-time setup, ~20 minutes. The first time it opens, the app asks you
+to sign in with publik; a release build needs the publik app token (see `docs/PUBLIK-API.md`).
 
 **iPhone** (needs a Mac with [Xcode](https://apps.apple.com/app/xcode/id497799835)):
 

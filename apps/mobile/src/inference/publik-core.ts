@@ -200,6 +200,28 @@ export function isSafePublikLink(url: unknown): url is string {
   }
 }
 
+/**
+ * The claim link of Sign in with publik, for the in-app browser sheet: the
+ * server's claim_url with `in_app=1` added (its other query values and its
+ * #fragment kept, an old in_app value replaced). publik redirects it to its
+ * bare /in-app/claim/<CODE> page: no site navigation, no prices and no plan
+ * links. Given its own result, it gives the same link again.
+ */
+export function inAppClaimUrl(url: string): string {
+  const hashAt = url.indexOf('#')
+  const head = hashAt === -1 ? url : url.slice(0, hashAt)
+  const hash = hashAt === -1 ? '' : url.slice(hashAt)
+  const q = head.indexOf('?')
+  const path = q === -1 ? head : head.slice(0, q)
+  const params = q === -1 ? [] : head.slice(q + 1).split('&').filter((kv) => kv !== '' && kv.split('=')[0] !== 'in_app')
+  return `${path}?${[...params, 'in_app=1'].join('&')}${hash}`
+}
+
+/** A claim_url from publik: its in-app claim link when it is a publik link, else null. */
+function claimLinkOf(url: unknown): string | null {
+  return isSafePublikLink(url) ? inAppClaimUrl(url) : null
+}
+
 /** `https://publikhq.com` from `https://publikhq.com/api/v1` (also a base URL given without `/api/v1`). */
 export function originOf(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '').replace(/\/api\/v1$/, '')
@@ -274,7 +296,7 @@ export async function provision(input: ProvisionInput, fetchImpl: typeof fetch =
     const claimState = j.claim_state === 'claimed' ? 'claimed' : 'anonymous'
     const install: PublikInstall = {
       installId: input.installId,
-      claimUrl: isSafePublikLink(j.claim_url) ? j.claim_url : null,
+      claimUrl: claimLinkOf(j.claim_url),
       claimState,
       disclosureVersion: cfg.disclosureVersion,
       models: { ...PUBLIK_MODELS, ...(j.models && typeof j.models === 'object' ? j.models : {}) },
@@ -358,7 +380,7 @@ export function walletFromJson(w: Record<string, any>, claimState: PublikWallet[
     weekResetsAt: typeof w.week?.resets_at === 'string' ? w.week.resets_at : null,
     starterRemainingMicros: num(w.starter?.remaining_micros),
     claimState: w.claim_state === 'claimed' || w.claim_state === 'anonymous' ? w.claim_state : claimState,
-    claimUrl: isSafePublikLink(w.claim_url) ? w.claim_url : null,
+    claimUrl: claimLinkOf(w.claim_url),
     addCreditUrl: isSafePublikLink(w.add_credit_url) ? w.add_credit_url : null,
   }
 }
@@ -460,7 +482,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
   const topUp = isSafePublikLink(e.top_up_url)
     ? e.top_up_url
     : claimState === 'anonymous' && isSafePublikLink(e.claim_url)
-      ? e.claim_url
+      ? inAppClaimUrl(e.claim_url)
       : isSafePublikLink(e.add_credit_url)
         ? e.add_credit_url
         : null
@@ -569,7 +591,8 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 //
 // What a phone changes: the key and the choice live in SecureStore
 // (`key.publik`, `publik.install`), not in a credential file; "Sign in with
-// publik" opens the claim link in an in-app browser sheet, and the gate
+// publik" opens the claim link (with in_app=1: publik's bare in-app claim
+// page) in an in-app browser sheet, and the gate
 // checks GET /wallet every 3 s while the app is in the foreground and at once
 // when the person comes back; it closes the sheet when publik says
 // "claimed". A phone that signed in before opens without a connection. The
@@ -580,7 +603,7 @@ export function classifyGatewayError(status: number, body: string, links: boolea
 /** The listing slug (publikhq.com/nut-ai). The publik scan reads this literal. */
 export const APP_SLUG = 'nut-ai'
 /** The release version. app.config.ts says the same; a test checks it. */
-export const APP_VERSION = '0.1.3'
+export const APP_VERSION = '0.1.4'
 /** Nut AI calls a model (photo scans, labels, lookups), so the gate asks how to pay for AI. */
 export const USES_AI: boolean = true
 export const POLL_MS = 3_000
@@ -698,7 +721,7 @@ export function gateWalletFromJson(b: Record<string, any>): GateWallet {
   const kind = b.plan?.kind === 'plan' || b.plan?.kind === 'pack' ? (b.plan.kind as 'plan' | 'pack') : 'none'
   return {
     claimState: b.claim_state === 'claimed' ? 'claimed' : 'anonymous',
-    claimUrl: isSafePublikLink(b.claim_url) ? b.claim_url : null,
+    claimUrl: claimLinkOf(b.claim_url),
     handle: typeof b.account?.handle === 'string' && b.account.handle ? b.account.handle : null,
     plan: { kind, label: typeof b.plan?.label === 'string' ? b.plan.label : null },
     balanceMicros: num(b.balance_micros) ?? 0,
@@ -755,6 +778,7 @@ export async function readWallet(d: Pick<GateDevice, 'cfg' | 'fetch'>, key: stri
 const dollars = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`
 const SIGN_IN_WAITING = 'Waiting for you to sign in in your browser.'
 const SIGN_IN_TIMEOUT = 'No sign-in after 10 minutes. Click Sign in with publik to try again.'
+const SIGN_IN_NO_LINK = 'publik did not send a sign-in link for this phone. Click Sign in with publik to try again.'
 const PLAN_WAITING = 'Waiting for your plan. Finish in your browser.'
 const PLAN_TIMEOUT = 'No plan after 10 minutes. Click Get a plan to try again.'
 const KEEP_KEY_FAILED = `This phone could not keep its publik key. Restart ${APP_NAME} and try again.`
@@ -968,9 +992,18 @@ export async function ensureSignedIn(ui: GateUI, d: GateDevice): Promise<GateRes
     if (w.claimState !== 'claimed') {
       const a = await ask(ui, gateScreen('sign_in', w, signNote), d, { key: stored.key, until: (x) => x.claimState === 'claimed', poll: signPoll })
       if (a === 'sign_in') {
-        open(w.claimUrl ?? stored.claimUrl ?? `${origin}/wallet`, 'sign_in')
-        signNote = SIGN_IN_WAITING
-        signPoll = true
+        // Only publik's bare in-app claim page (inAppClaimUrl), never the
+        // full site: with no claim link, ask again (the next press reads the
+        // wallet again).
+        const claim = w.claimUrl ?? stored.claimUrl
+        if (claim) {
+          open(inAppClaimUrl(claim), 'sign_in')
+          signNote = SIGN_IN_WAITING
+          signPoll = true
+        } else {
+          signNote = SIGN_IN_NO_LINK
+          signPoll = false
+        }
       }
       if (a === 'done') close()
       if (a === 'timeout') {

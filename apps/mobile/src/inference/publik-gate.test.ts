@@ -76,6 +76,8 @@ let offline: boolean
 let requests: Req[]
 /** When set, GET /wallet answers this instead (a captive portal, a proxy, a rate limit). */
 let walletRaw: (() => Response) | null
+/** The claim_url of /installs and /wallet; null: publik sends none. */
+let claimUrl: string | null
 
 function reply(status: number, body: unknown) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body } as unknown as Response
@@ -88,13 +90,13 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
   requests.push({ path, auth: headers.authorization ?? null, body: typeof init?.body === 'string' ? init.body : '' })
   if (path === `${V1}/installs`) {
     if (installsStatus !== 201) return reply(installsStatus, { error: { type: 'invalid_app_token', message: 'This app token is not valid.' } })
-    return reply(201, { key: KEY, install_id: JSON.parse(String(init?.body)).install_id, claim_url: 'https://publikhq.com/claim/abc', claim_state: 'anonymous' })
+    return reply(201, { key: KEY, install_id: JSON.parse(String(init?.body)).install_id, claim_url: claimUrl ?? undefined, claim_state: 'anonymous' })
   }
   if (path === `${V1}/wallet`) {
     if (walletRaw) return walletRaw()
     if (walletStatus !== 200) return reply(walletStatus, { error: { type: 'invalid_key', message: 'This key is not valid.' } })
     const w = wallets.length > 1 ? wallets.shift()! : wallets[0]!
-    return reply(200, { ...w, claim_url: 'https://publikhq.com/claim/abc', top_up_url: 'https://publikhq.com/wallet?top_up=1', linked_at: null })
+    return reply(200, { ...w, claim_url: claimUrl ?? undefined, top_up_url: 'https://publikhq.com/wallet?top_up=1', linked_at: null })
   }
   if (path === `${V1}/telemetry`) return reply(204, null)
   return reply(404, {})
@@ -213,6 +215,7 @@ beforeEach(() => {
   offline = false
   requests = []
   walletRaw = null
+  claimUrl = 'https://publikhq.com/claim/abc'
 })
 
 afterEach(() => {
@@ -286,7 +289,8 @@ describe('ensureSignedIn against a fake publik', () => {
       [WORDS.chooseTitle, null],
       [WORDS.connectTitle, null],
     ])
-    expect(opened).toEqual(['https://publikhq.com/claim/abc', 'https://publikhq.com/wallet?top_up=1'])
+    // Sign in: publik's bare in-app claim page (in_app=1). Get a plan (US storefront): the site, as before.
+    expect(opened).toEqual(['https://publikhq.com/claim/abc?in_app=1', 'https://publikhq.com/wallet?top_up=1'])
     // The in-app browser sheet closes once publik sees the sign-in, and again once it sees the plan.
     expect(closed).toEqual([1, 2])
     expect(gate).toMatchObject({ key: KEY, choice: 'publik', chosen: true, offline: false })
@@ -340,6 +344,21 @@ describe('ensureSignedIn against a fake publik', () => {
     await expect(ensureSignedIn(ui, phone().device)).rejects.toThrow('stuck')
     expect(seen.length).toBe(7)
     for (const s of seen) expect(s).toMatchObject({ title: WORDS.title, body: WORDS.unreachable, note: null, buttons: [{ action: 'retry', label: WORDS.retry }] })
+  })
+
+  it('Sign in with publik opens only the in-app claim page: never the site, also for a claim link stored by an older version', async () => {
+    // publik sends no claim link: nothing opens, and the screen asks again.
+    claimUrl = null
+    const none = scriptedUI({ [WORDS.title]: WORDS.signInButton })
+    await expect(ensureSignedIn(none.ui, phone().device)).rejects.toThrow('stuck')
+    expect(none.opened).toEqual([])
+    expect(none.seen[1]?.note).toBe('publik did not send a sign-in link for this phone. Click Sign in with publik to try again.')
+    // A claim link an older version stored (no in_app): opened as the in-app page.
+    const old = phone({}, { key: KEY, claimUrl: 'https://publikhq.com/claim/old?ref=app', choice: null, claimed: false })
+    const ui = scriptedUI({ [WORDS.title]: WORDS.signInButton })
+    await expect(ensureSignedIn(ui.ui, old.device)).rejects.toThrow('stuck')
+    expect(ui.opened[0]).toBe('https://publikhq.com/claim/old?ref=app&in_app=1')
+    expect(ui.opened.every((u) => u.includes('in_app=1'))).toBe(true)
   })
 
   it('outside the US storefront the plan screen opens no link, and Use my own key passes the gate', async () => {
