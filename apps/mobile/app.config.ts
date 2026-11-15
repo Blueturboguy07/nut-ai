@@ -189,7 +189,9 @@ const config: ExpoConfig = {
 
   plugins: [
     'expo-router',
-    ['expo-camera', { cameraPermission: CAMERA_TEXT }],
+    // microphonePermission false: the camera takes photos only (no video, no audio), so the app
+    // asks for no microphone permission (expo-camera adds a generic one by default).
+    ['expo-camera', { cameraPermission: CAMERA_TEXT, microphonePermission: false }],
     // Keys stay out of Android Auto Backup (a restored phone mints a new publik key).
     // faceIDPermission false: no Face ID string, because no key read asks for Face ID.
     ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
